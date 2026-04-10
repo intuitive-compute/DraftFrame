@@ -72,21 +72,18 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
         // Editor starts hidden
         codeEditor.isHidden = true
 
-        // Set initial widths — sidebar and session bar get fixed defaults,
-        // terminal fills the rest
-        sidebar.widthAnchor.constraint(greaterThanOrEqualToConstant: sidebarMinWidth).isActive = true
-        sessionBar.widthAnchor.constraint(greaterThanOrEqualToConstant: sessionBarMinWidth).isActive = true
+        // Holding priorities: sidebar and session bar hold their size, terminal yields
+        splitView.setHoldingPriority(.defaultHigh + 1, forSubviewAt: 0) // sidebar holds
+        splitView.setHoldingPriority(.defaultLow - 1, forSubviewAt: 1)  // terminal yields
+        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 2)     // editor holds
+        splitView.setHoldingPriority(.defaultHigh + 2, forSubviewAt: 3) // session bar holds firm
 
-        let sidebarW = sidebar.widthAnchor.constraint(equalToConstant: sidebarDefaultWidth)
-        sidebarW.priority = .defaultHigh - 1
-        sidebarW.isActive = true
-
-        let sessionBarW = sessionBar.widthAnchor.constraint(equalToConstant: sessionBarDefaultWidth)
-        sessionBarW.priority = .defaultHigh - 1
-        sessionBarW.isActive = true
-
-        terminalPane.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        terminalPane.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Set initial divider positions once window is on screen
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.setInitialDividerPositions()
+        }
 
         // Vertical: splitView on top, status bar on bottom
         let vStack = NSStackView(views: [splitView, statusBar])
@@ -115,7 +112,7 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
             dashboard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        // NSSplitView handles initial layout via content hugging priorities
+        // NSSplitView handles resize via holding priorities
 
         // Listen for editor toggle
         NotificationCenter.default.addObserver(
@@ -185,8 +182,20 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
         }
     }
 
-    // Let NSSplitView handle resize with its default behavior.
-    // We only constrain via min/max coordinate methods above.
+    private var didSetInitialPositions = false
+
+    private func setInitialDividerPositions() {
+        guard !didSetInitialPositions else { return }
+        let w = splitView.frame.width
+        guard w > 0 else { return }
+        didSetInitialPositions = true
+
+        // sidebar | terminal | (hidden editor) | session bar
+        // Divider 0: after sidebar
+        splitView.setPosition(sidebarDefaultWidth, ofDividerAt: 0)
+        // Divider 1: before session bar (editor is hidden, so this is terminal/sessionBar boundary)
+        splitView.setPosition(w - sessionBarDefaultWidth, ofDividerAt: 1)
+    }
 
     /// Custom divider color matching Theme.surface3.
     func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
