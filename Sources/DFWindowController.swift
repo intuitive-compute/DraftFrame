@@ -1,6 +1,6 @@
 import AppKit
 
-final class DFWindowController: NSWindowController, NSSplitViewDelegate {
+final class DFWindowController: NSWindowController {
 
     let sidebar = DFSidebar()
     let terminalPane = DFTerminalPane()
@@ -8,23 +8,8 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
     let sessionBar = DFSessionBar()
     let statusBar = DFStatusBar()
     let dashboard = DFDashboard()
-    private var splitView: NSSplitView!
 
-    // Sidebar: min 180, max 350, default 220
-    private let sidebarMinWidth: CGFloat = 180
-    private let sidebarMaxWidth: CGFloat = 350
-    private let sidebarDefaultWidth: CGFloat = 220
-
-    // Editor: min 300, max 700, default 400
-    private let editorMinWidth: CGFloat = 300
-    private let editorMaxWidth: CGFloat = 700
-    private let editorDefaultWidth: CGFloat = 400
     private var editorVisible = false
-
-    // Session bar: min 250, max 400, default 300
-    private let sessionBarMinWidth: CGFloat = 250
-    private let sessionBarMaxWidth: CGFloat = 400
-    private let sessionBarDefaultWidth: CGFloat = 300
 
     init() {
         let window = NSWindow(
@@ -57,36 +42,15 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
         guard let contentView = window?.contentView else { return }
         contentView.wantsLayer = true
 
-        // Main horizontal split: sidebar | terminal | session bar
-        splitView = ThemedSplitView()
-        splitView.isVertical = true
-        splitView.dividerStyle = .thin
-        splitView.delegate = self
-        splitView.translatesAutoresizingMaskIntoConstraints = false
+        // Main horizontal stack: sidebar | terminal | session bar
+        let hStack = NSStackView(views: [sidebar, terminalPane, sessionBar])
+        hStack.orientation = .horizontal
+        hStack.spacing = 1
+        hStack.distribution = .fill
+        hStack.translatesAutoresizingMaskIntoConstraints = false
 
-        splitView.addArrangedSubview(sidebar)
-        splitView.addArrangedSubview(terminalPane)
-        splitView.addArrangedSubview(codeEditor)
-        splitView.addArrangedSubview(sessionBar)
-
-        // Editor starts hidden
-        codeEditor.isHidden = true
-
-        // Holding priorities: sidebar and session bar hold their size, terminal yields
-        splitView.setHoldingPriority(.defaultHigh + 1, forSubviewAt: 0) // sidebar holds
-        splitView.setHoldingPriority(.defaultLow - 1, forSubviewAt: 1)  // terminal yields
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 2)     // editor holds
-        splitView.setHoldingPriority(.defaultHigh + 2, forSubviewAt: 3) // session bar holds firm
-
-        // Set initial divider positions once window is on screen
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.setInitialDividerPositions()
-        }
-
-        // Vertical: splitView on top, status bar on bottom
-        let vStack = NSStackView(views: [splitView, statusBar])
+        // Vertical: hStack on top, status bar on bottom
+        let vStack = NSStackView(views: [hStack, statusBar])
         vStack.orientation = .vertical
         vStack.spacing = 0
         vStack.translatesAutoresizingMaskIntoConstraints = false
@@ -112,7 +76,11 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
             dashboard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        // NSSplitView handles resize via holding priorities
+        // Sidebar and session bar get fixed widths, terminal fills the rest
+        NSLayoutConstraint.activate([
+            sidebar.widthAnchor.constraint(equalToConstant: 220),
+            sessionBar.widthAnchor.constraint(equalToConstant: 300),
+        ])
 
         // Listen for editor toggle
         NotificationCenter.default.addObserver(
@@ -123,85 +91,7 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
 
     // MARK: - NSSplitViewDelegate
 
-    /// Returns the index of a divider based on which panes are visible.
-    /// Layout: sidebar(0) | terminal(1) | editor(2) | sessionBar(3)
-    /// When editor is hidden, NSSplitView skips it, so dividers shift.
-    private var sessionBarDividerIndex: Int {
-        return editorVisible ? 2 : 1
-    }
-    private var editorDividerIndex: Int { return 1 } // only valid when editorVisible
-
-    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat,
-                   ofSubviewAt dividerIndex: Int) -> CGFloat {
-        if dividerIndex == 0 {
-            return sidebarMinWidth
-        } else if editorVisible && dividerIndex == 1 {
-            // Between terminal and editor: terminal min
-            return sidebarMinWidth + 200
-        } else {
-            // Between (editor or terminal) and session bar
-            if editorVisible {
-                return sidebarMinWidth + 200 + editorMinWidth
-            } else {
-                return sidebarMinWidth + 200
-            }
-        }
-    }
-
-    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-                   ofSubviewAt dividerIndex: Int) -> CGFloat {
-        let totalWidth = splitView.frame.width
-        if dividerIndex == 0 {
-            return sidebarMaxWidth
-        } else if editorVisible && dividerIndex == 1 {
-            // Terminal/editor divider: leave room for editor min + session bar min
-            return totalWidth - editorMinWidth - sessionBarMinWidth - splitView.dividerThickness
-        } else {
-            return totalWidth - sessionBarMinWidth
-        }
-    }
-
-    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool {
-        return false
-    }
-
-    func splitView(_ splitView: NSSplitView, constrainSplitPosition proposedPosition: CGFloat,
-                   ofSubviewAt dividerIndex: Int) -> CGFloat {
-        let totalWidth = splitView.frame.width
-        if dividerIndex == 0 {
-            return min(max(proposedPosition, sidebarMinWidth), sidebarMaxWidth)
-        } else if editorVisible && dividerIndex == 1 {
-            // Clamp: leave room for editor min + session bar
-            let maxPos = totalWidth - editorMinWidth - sessionBarMinWidth - splitView.dividerThickness
-            return min(max(proposedPosition, sidebarMinWidth + 200), maxPos)
-        } else {
-            // Session bar divider
-            let sessionBarWidth = totalWidth - proposedPosition
-            let clampedWidth = min(max(sessionBarWidth, sessionBarMinWidth), sessionBarMaxWidth)
-            return totalWidth - clampedWidth
-        }
-    }
-
-    private var didSetInitialPositions = false
-
-    private func setInitialDividerPositions() {
-        guard !didSetInitialPositions else { return }
-        let w = splitView.frame.width
-        guard w > 0 else { return }
-        didSetInitialPositions = true
-
-        // sidebar | terminal | (hidden editor) | session bar
-        // Divider 0: after sidebar
-        splitView.setPosition(sidebarDefaultWidth, ofDividerAt: 0)
-        // Divider 1: before session bar (editor is hidden, so this is terminal/sessionBar boundary)
-        splitView.setPosition(w - sessionBarDefaultWidth, ofDividerAt: 1)
-    }
-
-    /// Custom divider color matching Theme.surface3.
-    func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
-                   forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
-        return proposedEffectiveRect
-    }
+    // No NSSplitView delegate needed — using NSStackView with fixed widths
 
     // MARK: - Editor Toggle
 
@@ -215,63 +105,18 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
     }
 
     func toggleEditor() {
-        if editorVisible {
-            // Hide editor
-            codeEditor.isHidden = true
-            editorVisible = false
-
-            // Re-layout: just sidebar | terminal | sessionBar
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.splitView.adjustSubviews()
-                let terminalEnd = self.splitView.frame.width - self.sessionBarDefaultWidth
-                self.splitView.setPosition(terminalEnd, ofDividerAt: 1)
-            }
-        } else {
-            // Show editor
-            codeEditor.isHidden = false
-            editorVisible = true
-
-            // Layout: sidebar | terminal | editor | sessionBar
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.splitView.adjustSubviews()
-                let totalWidth = self.splitView.frame.width
-                let sessionBarPos = totalWidth - self.sessionBarDefaultWidth
-                let editorStart = sessionBarPos - self.editorDefaultWidth
-                // Divider 1: between terminal and editor
-                self.splitView.setPosition(editorStart, ofDividerAt: 1)
-                // Divider 2: between editor and session bar
-                self.splitView.setPosition(sessionBarPos, ofDividerAt: 2)
-            }
-        }
+        editorVisible = !editorVisible
+        codeEditor.isHidden = !editorVisible
     }
 
-    /// Show the editor pane (does nothing if already visible).
     func showEditor() {
-        if !editorVisible {
-            toggleEditor()
-        }
+        if !editorVisible { toggleEditor() }
     }
 
     // MARK: - Sidebar Toggle
 
-    private var sidebarCollapsed = false
-    private var savedSidebarWidth: CGFloat = 220
-
     func toggleSidebar() {
-        if sidebarCollapsed {
-            // Restore sidebar
-            sidebar.isHidden = false
-            splitView.setPosition(savedSidebarWidth, ofDividerAt: 0)
-            sidebarCollapsed = false
-        } else {
-            // Collapse sidebar
-            savedSidebarWidth = sidebar.frame.width
-            splitView.setPosition(0, ofDividerAt: 0)
-            sidebar.isHidden = true
-            sidebarCollapsed = true
-        }
+        sidebar.isHidden = !sidebar.isHidden
     }
 
     private func setupShortcuts() {
@@ -399,10 +244,3 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
 }
 
 // MARK: - Themed Split View
-
-/// NSSplitView subclass that draws dividers in Theme.surface3.
-final class ThemedSplitView: NSSplitView {
-    override var dividerColor: NSColor {
-        return Theme.surface3
-    }
-}
