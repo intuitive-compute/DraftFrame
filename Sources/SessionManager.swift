@@ -46,8 +46,10 @@ final class Session {
     var tokensIn: Int
     var tokensOut: Int
     var worktreePath: String?
-    var terminalView: LocalProcessTerminalView?
-    private var outputBuffer: String = ""
+    var terminalView: ClaudeTerminalView?
+
+    /// Real-time PTY stream analyzer for Claude Code state detection.
+    let ptyAnalyzer = PTYStreamAnalyzer()
 
     init(name: String, worktreePath: String? = nil) {
         self.id = UUID()
@@ -58,114 +60,14 @@ final class Session {
         self.tokensIn = 0
         self.tokensOut = 0
         self.worktreePath = worktreePath
-    }
 
-    private var lastBufferSnapshot: String = ""
-
-    /// Poll the terminal buffer and detect session state from visible content.
-    /// Called periodically by SessionManager's timer.
-    func pollTerminalState() {
-        guard let tv = terminalView else { return }
-        let terminal = tv.getTerminal()
-        let rows = terminal.rows
-
-        // Read ALL visible lines
-        var lines: [String] = []
-        for row in 0..<rows {
-            guard let line = terminal.getLine(row: row) else { continue }
-            lines.append(line.translateToString())
-        }
-
-        let snapshot = lines.joined(separator: "\n")
-        lastBufferSnapshot = snapshot
-        let oldState = state
-
-        // Get non-empty lines from bottom up for prompt detection
-        let bottomLines = lines.reversed().filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let lastLine = bottomLines.first ?? ""
-        let trimmedLast = lastLine.trimmingCharacters(in: .whitespaces)
-
-        // --- Claude Code state detection ---
-        // Only look at the BOTTOM few lines for active status — not scrollback.
-        // Claude's status bar and prompt are always at the bottom.
-        let bottomText = bottomLines.prefix(5).joined(separator: " ").lowercased()
-        let lower = snapshot.lowercased()
-
-        // "esc to interrupt" on the BOTTOM of screen = actively working right now
-        let isWorking = bottomText.contains("esc to interrupt")
-
-        // Thinking: "thinking" keyword in the bottom area
-        let isThinking = bottomText.contains("thinking") && isWorking
-
-        // Generating: tool use visible in bottom, or working but not thinking
-        let hasToolUse = bottomText.contains("read(") || bottomText.contains("edit(") ||
-                         bottomText.contains("write(") || bottomText.contains("bash(") ||
-                         bottomText.contains("grep(") || bottomText.contains("glob(") ||
-                         bottomText.contains("agent(")
-        let isGenerating = isWorking && !isThinking
-
-        // Needs attention: permission prompts
-        let needsAttention = (snapshot.contains("Allow") && snapshot.contains("Deny")) ||
-                             snapshot.contains("[Y/n]") || snapshot.contains("(y/N)") ||
-                             snapshot.contains("Do you want to")
-
-        // Shell prompt = idle (Claude not running)
-        let hasShellPrompt = trimmedLast.hasSuffix("$ ") || trimmedLast.hasSuffix("% ") ||
-                             trimmedLast.hasSuffix("# ") ||
-                             (trimmedLast.contains("❯") && !lower.contains("esc to interrupt"))
-
-        // Claude waiting for user input: ">" prompt at bottom with NO working indicators
-        let hasClaudePrompt = trimmedLast.hasPrefix(">") && !isWorking
-
-        // Priority-based state assignment (most specific first)
-        if needsAttention {
-            state = .needsAttention
-        } else if isThinking {
-            state = .thinking
-        } else if isGenerating {
-            state = .generating
-        } else if hasShellPrompt && !isWorking {
-            state = .idle
-        } else if hasClaudePrompt {
-            state = .userInput
-        }
-        // else: keep current state — avoids flickering on transient frames
-        // else: keep current state (don't flicker)
-
-        // --- Cost detection from Claude's status bar ---
-        // Claude shows cost in its bottom bar like "$0.42" or "Cost: $1.23"
-        for line in lines {
-            if let range = line.range(of: #"\$(\d+\.?\d{0,2})"#, options: .regularExpression) {
-                let match = String(line[range]).dropFirst()
-                if let parsed = Double(match), parsed > 0 && parsed < 1000 {
-                    cost = max(cost, parsed) // cost only goes up
-                }
+        // Wire up state changes from the PTY analyzer
+        ptyAnalyzer.onStateChange = { [weak self] newState in
+            guard let self = self else { return }
+            self.state = newState
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
             }
-        }
-
-        // --- Token detection ---
-        for line in lines {
-            // Match "12.5K tokens" or "1,234 tokens" patterns
-            if let range = line.range(of: #"(\d[\d,.]*)\s*[Kk]?\s*tokens?"#, options: .regularExpression) {
-                let match = String(line[range])
-                if let numRange = match.range(of: #"[\d,.]+"#, options: .regularExpression) {
-                    let numStr = String(match[numRange]).replacingOccurrences(of: ",", with: "")
-                    if let num = Double(numStr) {
-                        let tokens = match.lowercased().contains("k") ? Int(num * 1000) : Int(num)
-                        tokensIn = max(tokensIn, tokens)
-                    }
-                }
-            }
-        }
-
-        // --- Model detection from Claude's status bar ---
-        let flat = snapshot.lowercased()
-        if flat.contains("opus") { model = "opus" }
-        else if flat.contains("haiku") { model = "haiku" }
-        else if flat.contains("sonnet") { model = "sonnet" }
-
-        if state != oldState {
-            NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
         }
     }
 }
@@ -194,17 +96,7 @@ final class SessionManager {
         sessions.reduce(0) { $0 + $1.tokensOut }
     }
 
-    private var pollTimer: Timer?
-
-    private init() {
-        // Poll all sessions every 500ms on the main thread (SwiftTerm requires main thread)
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            for session in self.sessions {
-                session.pollTerminalState()
-            }
-        }
-    }
+    private init() {}
 
     /// Create a new session and return it.
     @discardableResult
@@ -212,14 +104,19 @@ final class SessionManager {
         let sessionName = name ?? "session-\(sessions.count + 1)"
         let session = Session(name: sessionName, worktreePath: worktreePath)
 
-        // Create the terminal view
-        let tv = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        // Create the terminal view (ClaudeTerminalView intercepts PTY data)
+        let tv = ClaudeTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         tv.nativeForegroundColor = Theme.text1
         tv.nativeBackgroundColor = Theme.bg
         tv.selectedTextBackgroundColor = Theme.selected
         tv.caretColor = Theme.accent
         tv.font = Theme.mono(13)
         session.terminalView = tv
+
+        // Wire PTY data stream to the analyzer for real-time state detection
+        tv.onPtyData = { [weak session] bytes in
+            session?.ptyAnalyzer.feed(bytes)
+        }
 
         // Start the process
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
