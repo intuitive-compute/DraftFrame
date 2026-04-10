@@ -66,7 +66,7 @@ final class DFSidebar: NSView {
         addSubview(toolkitStack)
 
         NSLayoutConstraint.activate([
-            title.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            title.topAnchor.constraint(equalTo: topAnchor, constant: 38),
             title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
 
             sep.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 12),
