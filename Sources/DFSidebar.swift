@@ -401,7 +401,6 @@ final class DFSidebar: NSView {
             row.filePath = fullPath
             row.isDirectory = isDir.boolValue
             row.heightAnchor.constraint(equalToConstant: 24).isActive = true
-            row.widthAnchor.constraint(equalTo: filesStack.widthAnchor).isActive = true
             filesStack.addArrangedSubview(row)
         }
     }
