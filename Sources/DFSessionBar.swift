@@ -99,6 +99,7 @@ final class SessionCard: NSView {
 
     private let session: Session
     private let index: Int
+    private var glowLayer: CALayer?
 
     init(session: Session, isActive: Bool, index: Int) {
         self.session = session
@@ -112,6 +113,28 @@ final class SessionCard: NSView {
         if isActive {
             layer?.borderColor = Theme.selectedBorder.cgColor
             layer?.borderWidth = 1
+        }
+
+        // Pulsing border glow for attention/input states
+        let needsPulse = session.state == .needsAttention || session.state == .userInput
+        if needsPulse {
+            let glow = CALayer()
+            glow.cornerRadius = 8
+            glow.borderWidth = 1.5
+            glow.borderColor = session.state.color.cgColor
+            glow.frame = bounds
+            glow.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+            layer?.addSublayer(glow)
+            glowLayer = glow
+
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 0.3
+            pulse.toValue = 1.0
+            pulse.duration = 1.4
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            glow.add(pulse, forKey: "borderPulse")
         }
 
         buildCard()
@@ -174,6 +197,25 @@ final class SessionCard: NSView {
         dot.layer?.backgroundColor = session.state.color.cgColor
         dot.layer?.cornerRadius = 3.5
         dot.translatesAutoresizingMaskIntoConstraints = false
+
+        // Breathing pulse on the dot for attention/input states
+        if session.state == .needsAttention || session.state == .userInput {
+            let dotPulse = CABasicAnimation(keyPath: "opacity")
+            dotPulse.fromValue = 0.35
+            dotPulse.toValue = 1.0
+            dotPulse.duration = 1.4
+            dotPulse.autoreverses = true
+            dotPulse.repeatCount = .infinity
+            dotPulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            dot.layer?.add(dotPulse, forKey: "dotPulse")
+
+            // Soft glow shadow behind the dot
+            dot.layer?.shadowColor = session.state.color.cgColor
+            dot.layer?.shadowOffset = .zero
+            dot.layer?.shadowRadius = 6
+            dot.layer?.shadowOpacity = 0.8
+            dot.layer?.masksToBounds = false
+        }
 
         let statusLabel = NSTextField(labelWithString: session.state.label)
         statusLabel.font = Theme.mono(9, weight: .medium)
