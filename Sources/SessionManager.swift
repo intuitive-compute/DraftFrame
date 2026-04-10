@@ -86,34 +86,23 @@ final class Session {
         let trimmedLast = lastLine.trimmingCharacters(in: .whitespaces)
 
         // --- Claude Code state detection ---
-        // Claude Code renders a full TUI. We scan the entire visible buffer.
+        // Only look at the BOTTOM few lines for active status — not scrollback.
+        // Claude's status bar and prompt are always at the bottom.
+        let bottomText = bottomLines.prefix(5).joined(separator: " ").lowercased()
         let lower = snapshot.lowercased()
 
-        // Signals that Claude is ACTIVELY WORKING (not waiting for user)
-        let isWorking = lower.contains("esc to interrupt") ||
-                        lower.contains("thinking") ||
-                        lower.contains("…") ||       // ellipsis in status like "Jitterbugging…"
-                        lower.contains("searching") ||
-                        lower.contains("reading") ||
-                        lower.contains("writing") ||
-                        lower.contains("editing") ||
-                        lower.contains("creating") ||
-                        lower.contains("updating") ||
-                        lower.contains("running")
+        // "esc to interrupt" on the BOTTOM of screen = actively working right now
+        let isWorking = bottomText.contains("esc to interrupt")
 
-        // Spinner characters (various braille patterns Claude uses)
-        let spinners: Set<Character> = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏","⣾","⣽","⣻","⢿","⡿","⣟","⣯","⣷"]
-        let hasSpinner = snapshot.contains(where: { spinners.contains($0) })
+        // Thinking: "thinking" keyword in the bottom area
+        let isThinking = bottomText.contains("thinking") && isWorking
 
-        // Thinking: "thinking" keyword or spinner + working indicator
-        let isThinking = lower.contains("thinking") || (hasSpinner && isWorking)
-
-        // Generating: tool use visible, or streaming content with "esc to interrupt"
-        let hasToolUse = snapshot.contains("Read(") || snapshot.contains("Edit(") || snapshot.contains("Write(") ||
-                         snapshot.contains("Bash(") || snapshot.contains("Grep(") || snapshot.contains("Glob(") ||
-                         snapshot.contains("Agent(")
-        let hasStreamCursor = snapshot.contains("▍") || snapshot.contains("▊")
-        let isGenerating = hasToolUse || hasStreamCursor || (isWorking && !isThinking)
+        // Generating: tool use visible in bottom, or working but not thinking
+        let hasToolUse = bottomText.contains("read(") || bottomText.contains("edit(") ||
+                         bottomText.contains("write(") || bottomText.contains("bash(") ||
+                         bottomText.contains("grep(") || bottomText.contains("glob(") ||
+                         bottomText.contains("agent(")
+        let isGenerating = isWorking && !isThinking
 
         // Needs attention: permission prompts
         let needsAttention = (snapshot.contains("Allow") && snapshot.contains("Deny")) ||
