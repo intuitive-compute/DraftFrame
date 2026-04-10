@@ -52,7 +52,7 @@ final class DFSessionBar: NSView {
         addSubview(cardStack)
 
         NSLayoutConstraint.activate([
-            title.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            title.topAnchor.constraint(equalTo: topAnchor, constant: 38),
             title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             sep.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 10),
             sep.leadingAnchor.constraint(equalTo: leadingAnchor),
