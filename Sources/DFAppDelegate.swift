@@ -75,9 +75,9 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
         // App menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Draftframe", action: #selector(showAbout), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About DraftFrame", action: #selector(showAbout), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "Quit Draftframe", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit DraftFrame", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
@@ -113,7 +113,7 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
         // Help menu
         let helpMenuItem = NSMenuItem()
         let helpMenu = NSMenu(title: "Help")
-        helpMenu.addItem(withTitle: "About Draftframe", action: #selector(showAbout), keyEquivalent: "")
+        helpMenu.addItem(withTitle: "About DraftFrame", action: #selector(showAbout), keyEquivalent: "")
         helpMenuItem.submenu = helpMenu
         mainMenu.addItem(helpMenuItem)
 
@@ -183,7 +183,7 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showAbout() {
         let alert = NSAlert()
-        alert.messageText = "Draftframe"
+        alert.messageText = "DraftFrame"
         alert.informativeText = "A multi-session terminal for Claude Code.\n\nManage parallel Claude sessions with worktree isolation, live status tracking, and a built-in toolkit."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")

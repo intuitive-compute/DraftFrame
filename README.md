@@ -1,4 +1,4 @@
-# Draftframe
+# DraftFrame
 
 A multi-session terminal for [Claude Code](https://claude.ai/claude-code). Run parallel Claude sessions with git worktree isolation, live status tracking, and a built-in toolkit.
 
@@ -30,7 +30,7 @@ A multi-session terminal for [Claude Code](https://claude.ai/claude-code). Run p
 
 ```bash
 swift build
-.build/debug/Draftframe
+.build/debug/DraftFrame
 ```
 
 ## Keyboard Shortcuts

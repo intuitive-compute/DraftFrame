@@ -1,4 +1,4 @@
-# Draftframe TODO
+# DraftFrame TODO
 
 ## Done ✅
 - [x] Real terminal (SwiftTerm) with ANSI colors

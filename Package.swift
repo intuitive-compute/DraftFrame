@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "Draftframe",
+    name: "DraftFrame",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.2.0"),
     ],
     targets: [
         .executableTarget(
-            name: "Draftframe",
+            name: "DraftFrame",
             dependencies: ["SwiftTerm"],
             path: "Sources"
         ),

@@ -34,7 +34,7 @@ final class DFSidebar: NSView {
 
     private func buildUI() {
         // Title
-        let title = label("DRAFTFRAME", size: 10, color: Theme.text3, weight: .medium)
+        let title = label("DRAFTFRAME", size: 10, color: Theme.text3, weight: .medium)  // All-caps looks the same either way
         title.translatesAutoresizingMaskIntoConstraints = false
         addSubview(title)
 

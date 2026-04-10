@@ -18,7 +18,7 @@ final class DFWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Draftframe"
+        window.title = "DraftFrame"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.backgroundColor = Theme.bg
@@ -223,7 +223,7 @@ final class DFWindowController: NSWindowController {
 
         // Update window title
         let dirName = (path as NSString).lastPathComponent
-        window?.title = "Draftframe — \(dirName)"
+        window?.title = "DraftFrame — \(dirName)"
 
         // Check for saved sessions to restore
         var shouldRestore = false
