@@ -1,29 +1,41 @@
 # Draftframe TODO
 
-## Critical — Core Functionality
-- [ ] **Cost/token tracking from JSONL** — Read `~/.claude/projects/` session files to get real cost, token counts, and model info instead of showing $0.00
-- [ ] **Session status accuracy** — Verify thinking/generating/idle transitions work reliably across different Claude interactions. May need tuning.
-- [ ] **Toolkit output feedback** — Show command output in a popover or bottom panel when clicking Run Tests/Build/Lint
-- [ ] **Dashboard action buttons** — Wire Terminate/Restart buttons in the Cmd+D dashboard view
+## Done ✅
+- [x] Real terminal (SwiftTerm) with ANSI colors
+- [x] 3-pane dark UI (sidebar, terminal, session cards)
+- [x] Multi-tab terminal sessions (Cmd+T, click to switch)
+- [x] Session cards with pixel avatars, status, model, cost
+- [x] Claude auto-launch on new tab
+- [x] Git worktree creation/removal with context menus
+- [x] Open session from worktree click
+- [x] Real-time Claude status detection via PTY stream interception
+- [x] Keyboard shortcuts (Cmd+T/W/1-9/D/N/O)
+- [x] Toolkit buttons with output popovers
+- [x] Status bar with branch/tokens/cost
+- [x] Dashboard overlay (Cmd+D) with terminate/restart buttons
+- [x] JSONL cost/token tracking from ~/.claude/projects/
+- [x] Tab close buttons (×)
+- [x] Double-click to rename sessions
+- [x] macOS menu bar (File/View/Session/Help)
+- [x] macOS notifications for background sessions
+- [x] Draggable sidebar dividers (NSSplitView)
+- [x] Directory picker on launch
+- [x] Titlebar offset fix for traffic lights
 
-## Important — Key Scape Features
+## Remaining — Key Scape Features
 - [ ] **Watchdogs** — Semi-autonomous session monitors that watch Claude sessions and auto-respond based on triggers (session needs input, error detected, periodic check)
-- [ ] **Code editor/inspector** — Right-side pane (Cmd+E) with syntax highlighting, line numbers, file tabs, search. Use tree-sitter or regex-based highlighting.
+- [ ] **Code editor/inspector** — Toggleable pane (Cmd+E) with syntax highlighting, line numbers, file tabs, search
 - [ ] **PR inspector** — View GitHub PRs inline via `gh` CLI integration
 
-## Nice to Have
+## Remaining — Nice to Have
 - [ ] **Voice transcription** — On-device speech-to-text via Apple Speech framework, push-to-talk (Cmd+Shift+V), transcribed text sent to active session
 - [ ] **Configurable toolkit** — Load commands from `~/.config/draftframe/toolkit.json` instead of hardcoded defaults
 - [ ] **Worktree auto-cleanup** — Clean up orphaned worktrees on app quit
 - [ ] **Session persistence** — Remember open sessions across app restarts
-- [ ] **Notification support** — macOS notifications when a session needs attention
 
-## Polish
+## Remaining — Polish
 - [ ] **App icon** — Custom icon for the dock
-- [ ] **Menu bar** — Proper macOS menu bar with File/Edit/View/Session menus
 - [ ] **Font bundling** — Bundle IBM Plex Mono / Archivo instead of system mono
 - [ ] **Preferences window** — Configure theme, font size, default model, keybindings
-- [ ] **Sidebar resize** — Draggable dividers between sidebar/terminal/session bar
-- [ ] **Tab close buttons** — X button on each tab, not just Cmd+W
-- [ ] **Session rename** — Double-click session card or tab to rename
 - [ ] **Scroll performance** — Ensure terminal stays responsive with long output
+- [ ] **Session status tuning** — Verify thinking/generating/idle transitions across different Claude interactions
