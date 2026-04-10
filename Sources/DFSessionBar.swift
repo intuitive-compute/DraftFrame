@@ -1,17 +1,36 @@
 import AppKit
 
-/// Right sidebar: session cards with live status.
+/// Right sidebar: session cards with live status, driven by SessionManager.
 final class DFSessionBar: NSView {
+
+    private let cardStack = NSStackView()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = Theme.surface1.cgColor
         buildUI()
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sessionsChanged),
+            name: .sessionsDidChange, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sessionsChanged),
+            name: .activeSessionDidChange, object: nil
+        )
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func sessionsChanged() {
+        refreshCards()
+    }
 
     private func buildUI() {
         let title = NSTextField(labelWithString: "SESSIONS")
@@ -26,17 +45,11 @@ final class DFSessionBar: NSView {
         sep.translatesAutoresizingMaskIntoConstraints = false
         addSubview(sep)
 
-        // Mock session cards
-        let card1 = SessionCard(name: "main", status: .generating, model: "opus", cost: 0.42)
-        let card2 = SessionCard(name: "fix-tests", status: .thinking, model: "sonnet", cost: 0.07)
-        let card3 = SessionCard(name: "api-docs", status: .idle, model: "sonnet", cost: 0.15)
-
-        let stack = NSStackView(views: [card1, card2, card3])
-        stack.orientation = .vertical
-        stack.spacing = 6
-        stack.alignment = .leading
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        cardStack.orientation = .vertical
+        cardStack.spacing = 6
+        cardStack.alignment = .leading
+        cardStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(cardStack)
 
         NSLayoutConstraint.activate([
             title.topAnchor.constraint(equalTo: topAnchor, constant: 14),
@@ -45,54 +58,83 @@ final class DFSessionBar: NSView {
             sep.leadingAnchor.constraint(equalTo: leadingAnchor),
             sep.trailingAnchor.constraint(equalTo: trailingAnchor),
             sep.heightAnchor.constraint(equalToConstant: 1),
-            stack.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 8),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            cardStack.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 8),
+            cardStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            cardStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
     }
-}
 
-// MARK: - Session Card
+    private func refreshCards() {
+        // Remove existing cards
+        for view in cardStack.arrangedSubviews {
+            cardStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
 
-enum SessionStatus {
-    case generating, thinking, userInput, needsAttention, idle
+        let sessions = SessionManager.shared.sessions
+        let activeIdx = SessionManager.shared.activeSessionIndex
 
-    var color: NSColor {
-        switch self {
-        case .generating:     return Theme.green
-        case .thinking:       return Theme.yellow
-        case .userInput:      return Theme.accent
-        case .needsAttention: return Theme.red
-        case .idle:           return Theme.cyan
+        if sessions.isEmpty {
+            let empty = NSTextField(labelWithString: "No sessions.\nCmd+T to create one.")
+            empty.font = Theme.mono(10)
+            empty.textColor = Theme.text3
+            empty.maximumNumberOfLines = 2
+            empty.translatesAutoresizingMaskIntoConstraints = false
+            cardStack.addArrangedSubview(empty)
+            return
+        }
+
+        for (i, session) in sessions.enumerated() {
+            let card = SessionCard(session: session, isActive: i == activeIdx, index: i)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            card.widthAnchor.constraint(equalToConstant: 284).isActive = true
+            cardStack.addArrangedSubview(card)
         }
     }
-
-    var label: String {
-        switch self {
-        case .generating:     return "Generating"
-        case .thinking:       return "Thinking"
-        case .userInput:      return "Input"
-        case .needsAttention: return "Attention"
-        case .idle:           return "Idle"
-        }
-    }
 }
+
+// MARK: - Session Card (Live Data)
 
 final class SessionCard: NSView {
 
-    init(name: String, status: SessionStatus, model: String, cost: Double) {
+    private let session: Session
+    private let index: Int
+
+    init(session: Session, isActive: Bool, index: Int) {
+        self.session = session
+        self.index = index
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.backgroundColor = Theme.surface2.cgColor
         layer?.cornerRadius = 8
 
+        if isActive {
+            layer?.borderColor = Theme.selectedBorder.cgColor
+            layer?.borderWidth = 1
+        }
+
+        buildCard()
+
+        // Click to switch
+        let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
+        addGestureRecognizer(click)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func clicked() {
+        SessionManager.shared.switchTo(index: index)
+    }
+
+    private func buildCard() {
         // Avatar
-        let avatar = PixelAvatar(seed: name)
+        let avatar = PixelAvatar(seed: session.name)
         avatar.translatesAutoresizingMaskIntoConstraints = false
 
         // Name
-        let nameLabel = NSTextField(labelWithString: name)
+        let nameLabel = NSTextField(labelWithString: session.name)
         nameLabel.font = Theme.mono(12, weight: .medium)
         nameLabel.textColor = Theme.text1
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -100,28 +142,28 @@ final class SessionCard: NSView {
         // Status dot + label
         let dot = NSView()
         dot.wantsLayer = true
-        dot.layer?.backgroundColor = status.color.cgColor
+        dot.layer?.backgroundColor = session.state.color.cgColor
         dot.layer?.cornerRadius = 3.5
         dot.translatesAutoresizingMaskIntoConstraints = false
 
-        let statusLabel = NSTextField(labelWithString: status.label)
+        let statusLabel = NSTextField(labelWithString: session.state.label)
         statusLabel.font = Theme.mono(9, weight: .medium)
-        statusLabel.textColor = status.color
+        statusLabel.textColor = session.state.color
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // Model
-        let modelLabel = NSTextField(labelWithString: model)
+        let modelLabel = NSTextField(labelWithString: session.model)
         modelLabel.font = Theme.mono(9)
         modelLabel.textColor = Theme.text3
         modelLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // Cost
-        let costLabel = NSTextField(labelWithString: String(format: "$%.2f", cost))
+        let costLabel = NSTextField(labelWithString: String(format: "$%.2f", session.cost))
         costLabel.font = Theme.mono(11)
         costLabel.textColor = Theme.text2
         costLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        for v in [avatar, nameLabel, dot, statusLabel, modelLabel, costLabel] {
+        for v in [avatar, nameLabel, dot, statusLabel, modelLabel, costLabel] as [NSView] {
             addSubview(v)
         }
 
@@ -151,9 +193,6 @@ final class SessionCard: NSView {
             modelLabel.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
         ])
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
 }
 
 // MARK: - Pixel Avatar
