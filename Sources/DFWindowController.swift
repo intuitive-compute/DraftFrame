@@ -105,14 +105,7 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
             dashboard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        // Set initial pane widths after layout is established
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.splitView.setPosition(self.sidebarDefaultWidth, ofDividerAt: 0)
-            // With editor hidden, divider 1 goes directly to session bar boundary
-            let terminalEnd = self.splitView.frame.width - self.sessionBarDefaultWidth
-            self.splitView.setPosition(terminalEnd, ofDividerAt: 1)
-        }
+        // Initial pane widths are set in resetDividerPositions(), called after project opens
 
         // Listen for editor toggle
         NotificationCenter.default.addObserver(
@@ -418,6 +411,17 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
                 SessionPersistence.shared.clearSavedSessions()
                 self?.terminalPane.createNewSession(name: dirName, worktreePath: path)
             }
+            // Fix split view divider positions now that window has a real frame
+            self?.resetDividerPositions()
+        }
+    }
+
+    private func resetDividerPositions() {
+        guard splitView.frame.width > 0 else { return }
+        splitView.setPosition(sidebarDefaultWidth, ofDividerAt: 0)
+        let terminalEnd = splitView.frame.width - sessionBarDefaultWidth
+        if terminalEnd > sidebarDefaultWidth {
+            splitView.setPosition(terminalEnd, ofDividerAt: 1)
         }
     }
 }
