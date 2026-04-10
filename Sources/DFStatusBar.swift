@@ -7,6 +7,7 @@ final class DFStatusBar: NSView {
     private var tokensLabel: NSTextField!
     private var costLabel: NSTextField!
     private var modelLabel: NSTextField!
+    private var micIndicator: NSImageView!
     private var refreshTimer: Timer?
 
     override init(frame: NSRect) {
@@ -22,6 +23,11 @@ final class DFStatusBar: NSView {
         NotificationCenter.default.addObserver(
             self, selector: #selector(refresh),
             name: .activeSessionDidChange, object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshMic),
+            name: .voiceListeningDidChange, object: nil
         )
 
         // Periodic refresh for git branch and token counts
@@ -66,6 +72,16 @@ final class DFStatusBar: NSView {
         sessionCountLabel.identifier = NSUserInterfaceItemIdentifier("sessionCount")
         addSubview(sessionCountLabel)
 
+        // Microphone indicator (hidden by default, lights up green when listening)
+        micIndicator = NSImageView()
+        if let micImg = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Microphone") {
+            micIndicator.image = micImg
+        }
+        micIndicator.contentTintColor = Theme.green
+        micIndicator.translatesAutoresizingMaskIntoConstraints = false
+        micIndicator.isHidden = true
+        addSubview(micIndicator)
+
         NSLayoutConstraint.activate([
             border.topAnchor.constraint(equalTo: topAnchor),
             border.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -90,7 +106,16 @@ final class DFStatusBar: NSView {
 
             modelLabel.trailingAnchor.constraint(equalTo: tokensLabel.leadingAnchor, constant: -16),
             modelLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            micIndicator.trailingAnchor.constraint(equalTo: modelLabel.leadingAnchor, constant: -12),
+            micIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            micIndicator.widthAnchor.constraint(equalToConstant: 14),
+            micIndicator.heightAnchor.constraint(equalToConstant: 14),
         ])
+    }
+
+    @objc private func refreshMic() {
+        micIndicator.isHidden = !VoiceManager.shared.isListening
     }
 
     @objc private func refresh() {

@@ -4,6 +4,7 @@ import AppKit
 final class DFSidebar: NSView {
 
     private let worktreeStack = NSStackView()
+    private let filesStack = NSStackView()
     private let toolkitStack = NSStackView()
     private let watchdogStack = NSStackView()
     private var outputPopover: NSPopover?
@@ -57,6 +58,32 @@ final class DFSidebar: NSView {
                                                 target: self, action: #selector(addWorktreeClicked))
         addSubview(addWorktreeBtn)
 
+        // Files section
+        let filesSep = separator()
+        addSubview(filesSep)
+        let filesHeader = label("FILES", size: 9, color: Theme.text3, weight: .medium)
+        filesHeader.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(filesHeader)
+
+        let filesScroll = NSScrollView()
+        filesScroll.translatesAutoresizingMaskIntoConstraints = false
+        filesScroll.hasVerticalScroller = true
+        filesScroll.hasHorizontalScroller = false
+        filesScroll.autohidesScrollers = true
+        filesScroll.drawsBackground = false
+        filesScroll.borderType = .noBorder
+        addSubview(filesScroll)
+
+        filesStack.orientation = .vertical
+        filesStack.spacing = 2
+        filesStack.alignment = .leading
+        filesStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let filesClipView = NSClipView()
+        filesClipView.documentView = filesStack
+        filesClipView.drawsBackground = false
+        filesScroll.contentView = filesClipView
+
         // Toolkit section
         let toolkitSep = separator()
         addSubview(toolkitSep)
@@ -107,7 +134,23 @@ final class DFSidebar: NSView {
             addWorktreeBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             addWorktreeBtn.heightAnchor.constraint(equalToConstant: 28),
 
-            toolkitSep.topAnchor.constraint(equalTo: addWorktreeBtn.bottomAnchor, constant: 12),
+            filesSep.topAnchor.constraint(equalTo: addWorktreeBtn.bottomAnchor, constant: 12),
+            filesSep.leadingAnchor.constraint(equalTo: leadingAnchor),
+            filesSep.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            filesHeader.topAnchor.constraint(equalTo: filesSep.bottomAnchor, constant: 12),
+            filesHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+
+            filesScroll.topAnchor.constraint(equalTo: filesHeader.bottomAnchor, constant: 6),
+            filesScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            filesScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            filesScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
+
+            filesStack.topAnchor.constraint(equalTo: filesClipView.topAnchor),
+            filesStack.leadingAnchor.constraint(equalTo: filesClipView.leadingAnchor),
+            filesStack.trailingAnchor.constraint(equalTo: filesClipView.trailingAnchor),
+
+            toolkitSep.topAnchor.constraint(equalTo: filesScroll.bottomAnchor, constant: 12),
             toolkitSep.leadingAnchor.constraint(equalTo: leadingAnchor),
             toolkitSep.trailingAnchor.constraint(equalTo: trailingAnchor),
 
@@ -136,8 +179,15 @@ final class DFSidebar: NSView {
         ])
 
         refreshWorktrees()
+        refreshFiles()
         refreshToolkit()
         refreshWatchdogs()
+
+        // Refresh file list when project directory changes
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshFiles),
+            name: .activeSessionDidChange, object: nil
+        )
     }
 
     // MARK: - Worktrees
@@ -302,6 +352,77 @@ final class DFSidebar: NSView {
                 errAlert.runModal()
             }
         }
+    }
+
+    // MARK: - Files
+
+    @objc private func refreshFiles() {
+        for v in filesStack.arrangedSubviews {
+            filesStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+
+        guard let projectDir = SessionManager.shared.projectDir else { return }
+
+        // List files in project directory (top-level only)
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(atPath: projectDir) else { return }
+
+        // Sort: directories first, then alphabetically; skip hidden files
+        let sorted = items
+            .filter { !$0.hasPrefix(".") }
+            .sorted { a, b in
+                let aPath = (projectDir as NSString).appendingPathComponent(a)
+                let bPath = (projectDir as NSString).appendingPathComponent(b)
+                var aIsDir: ObjCBool = false
+                var bIsDir: ObjCBool = false
+                fm.fileExists(atPath: aPath, isDirectory: &aIsDir)
+                fm.fileExists(atPath: bPath, isDirectory: &bIsDir)
+                if aIsDir.boolValue != bIsDir.boolValue {
+                    return aIsDir.boolValue
+                }
+                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+            }
+
+        for item in sorted.prefix(50) { // cap at 50 items
+            let fullPath = (projectDir as NSString).appendingPathComponent(item)
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: fullPath, isDirectory: &isDir)
+
+            let icon: String
+            if isDir.boolValue {
+                icon = "folder"
+            } else {
+                icon = FileIcon.symbolName(for: item)
+            }
+
+            let row = makeClickableRow(icon: icon, text: item, detail: nil,
+                                        target: self, action: #selector(fileRowClicked(_:)))
+            row.filePath = fullPath
+            row.isDirectory = isDir.boolValue
+            row.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            row.widthAnchor.constraint(equalTo: filesStack.widthAnchor).isActive = true
+            filesStack.addArrangedSubview(row)
+        }
+    }
+
+    @objc private func fileRowClicked(_ sender: AnyObject) {
+        guard let row = sender as? ClickableRow, let path = row.filePath else { return }
+
+        if row.isDirectory {
+            // Could expand directory in future; for now, no-op
+            return
+        }
+
+        // Open file in editor (auto-show editor)
+        NotificationCenter.default.post(
+            name: .openFileInEditor,
+            object: nil,
+            userInfo: ["path": path]
+        )
+        // Also tell window controller to show editor
+        NotificationCenter.default.post(name: .toggleEditorPane, object: nil,
+                                         userInfo: ["show": true])
     }
 
     // MARK: - Toolkit
@@ -753,6 +874,8 @@ final class ClickableRow: NSView {
     var worktreeName: String?
     var worktreePath: String?
     var isBaseWorktree: Bool = false
+    var filePath: String?
+    var isDirectory: Bool = false
 
     init(target: AnyObject?, action: Selector?) {
         self.target = target
