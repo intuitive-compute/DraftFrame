@@ -51,6 +51,9 @@ final class Session {
     /// Real-time PTY stream analyzer for Claude Code state detection.
     let ptyAnalyzer = PTYStreamAnalyzer()
 
+    /// Watches the Claude Code JSONL log for cost/token updates.
+    var jsonlWatcher: SessionJSONLWatcher?
+
     init(name: String, worktreePath: String? = nil) {
         self.id = UUID()
         self.name = name
@@ -68,6 +71,18 @@ final class Session {
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
             }
+        }
+    }
+
+    /// Start monitoring the JSONL file for the given working directory.
+    func startJSONLWatcher(directory: String) {
+        jsonlWatcher = SessionJSONLWatcher(workingDirectory: directory) { [weak self] cost, tokensIn, tokensOut, model in
+            guard let self = self else { return }
+            self.cost = cost
+            self.tokensIn = tokensIn
+            self.tokensOut = tokensOut
+            self.model = model
+            NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
         }
     }
 }
@@ -146,6 +161,11 @@ final class SessionManager {
             }
         }
 
+        // Start JSONL watcher for cost/token tracking.
+        // Use the worktree path if available, otherwise the current project directory.
+        let watchDir = worktreePath ?? FileManager.default.currentDirectoryPath
+        session.startJSONLWatcher(directory: watchDir)
+
         sessions.append(session)
         activeSessionIndex = sessions.count - 1
 
@@ -165,6 +185,7 @@ final class SessionManager {
     /// Close session at index.
     func closeSession(at index: Int) {
         guard index >= 0, index < sessions.count else { return }
+        sessions[index].jsonlWatcher?.stop()
         sessions.remove(at: index)
 
         if sessions.isEmpty {
