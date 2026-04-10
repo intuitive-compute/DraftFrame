@@ -24,13 +24,35 @@ final class WorktreeManager {
         detectRepoRoot()
     }
 
-    /// Find the git repo root by running git rev-parse --show-toplevel.
+    /// Find the git repo root. Tries multiple locations.
     func detectRepoRoot(from dir: String? = nil) {
-        let searchDir = dir ?? NSHomeDirectory()
+        if let dir = dir {
+            if tryDetect(dir) { return }
+        }
+
+        // Try CWD (works when launched from terminal)
+        let cwd = FileManager.default.currentDirectoryPath
+        if tryDetect(cwd) { return }
+
+        // Try the executable's own directory (works for dev builds)
+        let execPath = Bundle.main.executablePath ?? ""
+        let execDir = (execPath as NSString).deletingLastPathComponent
+        if tryDetect(execDir) { return }
+
+        // Walk up from exec dir looking for .git
+        var search = execDir
+        for _ in 0..<10 {
+            search = (search as NSString).deletingLastPathComponent
+            if search == "/" { break }
+            if tryDetect(search) { return }
+        }
+    }
+
+    private func tryDetect(_ dir: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: dir) else { return false }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        proc.arguments = ["-C", searchDir, "rev-parse", "--show-toplevel"]
-        proc.currentDirectoryURL = URL(fileURLWithPath: searchDir)
+        proc.arguments = ["-C", dir, "rev-parse", "--show-toplevel"]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = Pipe()
@@ -42,14 +64,15 @@ final class WorktreeManager {
                 let root = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let root = root, !root.isEmpty {
                     repoRoot = root
-                    // Ensure worktree directory exists
                     try? FileManager.default.createDirectory(
                         atPath: root + "/.draftframe/worktrees",
                         withIntermediateDirectories: true
                     )
+                    return true
                 }
             }
         } catch {}
+        return false
     }
 
     /// Create a new worktree.

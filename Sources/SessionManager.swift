@@ -201,15 +201,9 @@ final class SessionManager {
 
         // Start the process
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        // Build environment with PWD set to worktree dir if applicable
-        var env: [String] = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
-        if let wtPath = worktreePath {
-            env = env.filter { !$0.hasPrefix("PWD=") }
-            env.append("PWD=\(wtPath)")
-        }
+        let env: [String] = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
 
         if let cmd = command {
-            // Run a specific command
             tv.startProcess(executable: shell,
                             args: ["-l", "-c", cmd],
                             environment: env,
@@ -219,6 +213,13 @@ final class SessionManager {
                             args: ["--login"],
                             environment: env,
                             execName: nil)
+        }
+
+        // cd into worktree directory after shell starts
+        if let wtPath = worktreePath {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                tv.send(txt: "cd \(wtPath) && clear\r")
+            }
         }
 
         sessions.append(session)

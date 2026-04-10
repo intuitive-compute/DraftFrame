@@ -113,8 +113,37 @@ final class DFSidebar: NSView {
         for wt in worktrees {
             let branchName = wt.branch.isEmpty ? "detached" : wt.branch
             let isBase = wt.isBare
-            let row = makeRow(icon: "arrow.triangle.branch", text: branchName,
-                              detail: isBase ? "base" : nil)
+            let row = makeClickableRow(icon: "arrow.triangle.branch", text: branchName,
+                                       detail: isBase ? "base" : nil,
+                                       target: self, action: #selector(worktreeRowClicked(_:)))
+
+            // Store worktree info for context menu
+            row.worktreeName = branchName
+            row.worktreePath = wt.path
+            row.isBaseWorktree = isBase
+
+            // Add right-click context menu
+            let menu = NSMenu()
+            if !isBase {
+                let removeItem = NSMenuItem(title: "Remove Worktree", action: #selector(removeWorktreeFromMenu(_:)), keyEquivalent: "")
+                removeItem.target = self
+                removeItem.representedObject = wt
+                menu.addItem(removeItem)
+
+                menu.addItem(NSMenuItem.separator())
+            }
+            let openFinderItem = NSMenuItem(title: "Show in Finder", action: #selector(showWorktreeInFinder(_:)), keyEquivalent: "")
+            openFinderItem.target = self
+            openFinderItem.representedObject = wt.path
+            menu.addItem(openFinderItem)
+
+            let copyPathItem = NSMenuItem(title: "Copy Path", action: #selector(copyWorktreePath(_:)), keyEquivalent: "")
+            copyPathItem.target = self
+            copyPathItem.representedObject = wt.path
+            menu.addItem(copyPathItem)
+
+            row.menu = menu
+
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
             worktreeStack.addArrangedSubview(row)
         }
@@ -125,6 +154,60 @@ final class DFSidebar: NSView {
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
             worktreeStack.addArrangedSubview(row)
         }
+    }
+
+    @objc private func worktreeRowClicked(_ sender: AnyObject) {
+        // Click on worktree row — switch to that session if one exists
+        guard let row = sender as? ClickableRow, let path = row.worktreePath else { return }
+        let sessions = SessionManager.shared.sessions
+        if let idx = sessions.firstIndex(where: { $0.worktreePath == path }) {
+            SessionManager.shared.switchTo(index: idx)
+        }
+    }
+
+    @objc private func removeWorktreeFromMenu(_ sender: NSMenuItem) {
+        guard let wt = sender.representedObject as? WorktreeManager.Worktree else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Remove Worktree?"
+        alert.informativeText = "This will remove the worktree at:\n\(wt.path)\n\nAny uncommitted changes will be lost."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+
+        guard let win = window else { return }
+        alert.beginSheetModal(for: win) { response in
+            guard response == .alertFirstButtonReturn else { return }
+
+            // Close any session using this worktree
+            let sessions = SessionManager.shared.sessions
+            if let idx = sessions.firstIndex(where: { $0.worktreePath == wt.path }) {
+                SessionManager.shared.closeSession(at: idx)
+            }
+
+            // Extract the worktree name from the path
+            let name = (wt.path as NSString).lastPathComponent
+            do {
+                try WorktreeManager.shared.removeWorktree(name: name)
+            } catch {
+                let errAlert = NSAlert()
+                errAlert.messageText = "Remove Failed"
+                errAlert.informativeText = error.localizedDescription
+                errAlert.runModal()
+            }
+            self.refreshWorktrees()
+        }
+    }
+
+    @objc private func showWorktreeInFinder(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
+    }
+
+    @objc private func copyWorktreePath(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
     }
 
     @objc private func addWorktreeClicked() {
@@ -330,6 +413,9 @@ final class ClickableRow: NSView {
     weak var target: AnyObject?
     var action: Selector?
     var toolkitIndex: Int = 0
+    var worktreeName: String?
+    var worktreePath: String?
+    var isBaseWorktree: Bool = false
 
     init(target: AnyObject?, action: Selector?) {
         self.target = target
