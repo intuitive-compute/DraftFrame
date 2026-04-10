@@ -200,8 +200,10 @@ final class DFWindowController: NSWindowController {
         guard let win = window else { return }
         panel.beginSheetModal(for: win) { [weak self] response in
             guard response == .OK, let url = panel.url else {
-                // User cancelled — open in home directory as fallback
-                self?.openProject(at: NSHomeDirectory())
+                // User cancelled — if no projects open yet, use home as fallback
+                if ProjectManager.shared.projects.isEmpty {
+                    self?.openProject(at: NSHomeDirectory())
+                }
                 return
             }
             self?.openProject(at: url.path)
@@ -212,6 +214,9 @@ final class DFWindowController: NSWindowController {
         // Set the project directory
         SessionManager.shared.projectDir = path
         FileManager.default.changeCurrentDirectoryPath(path)
+
+        // Add to persistent project list
+        ProjectManager.shared.addProject(path: path)
 
         // Detect git repo for worktree support
         WorktreeManager.shared.detectRepoRoot(from: path)

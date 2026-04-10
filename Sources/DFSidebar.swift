@@ -190,67 +190,99 @@ final class DFSidebar: NSView {
             v.removeFromSuperview()
         }
 
-        // Project name row
-        let projectDir = SessionManager.shared.projectDir ?? FileManager.default.currentDirectoryPath
-        let projectName = (projectDir as NSString).lastPathComponent
-        let projectRow = makeRow(icon: "folder.fill", text: projectName, detail: nil)
-        projectRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        worktreeStack.addArrangedSubview(projectRow)
+        let projects = ProjectManager.shared.projects
+        let activeDir = SessionManager.shared.projectDir
 
-        // Worktrees nested under project
-        let worktrees = WorktreeManager.shared.listWorktrees()
-        for wt in worktrees {
-            let branchName = wt.branch.isEmpty ? "detached" : wt.branch
-            let isBase = wt.isBare
-            // Indent worktrees slightly under the project
-            let row = makeClickableRow(icon: "arrow.triangle.branch", text: "  \(branchName)",
-                                       detail: isBase ? "base" : nil,
-                                       target: self, action: #selector(worktreeRowClicked(_:)))
+        for project in projects {
+            let isActive = project.path == activeDir
+            let chevron = project.isExpanded ? "chevron.down" : "chevron.right"
 
-            // Store worktree info for context menu
-            row.worktreeName = branchName
-            row.worktreePath = wt.path
-            row.isBaseWorktree = isBase
+            // Project header row — clickable to expand/collapse
+            let projectRow = makeClickableRow(
+                icon: chevron, text: project.name,
+                detail: isActive ? "active" : nil,
+                target: self, action: #selector(projectRowClicked(_:)))
+            projectRow.worktreePath = project.path
+            projectRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
-            // Add right-click context menu
+            // Bold the active project name
+            if isActive, let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
+                lbl.font = Theme.mono(12, weight: .medium)
+                lbl.textColor = Theme.text1
+            }
+
+            // Right-click context menu on project
             let menu = NSMenu()
+            let switchItem = NSMenuItem(title: "Switch to Project", action: #selector(switchToProject(_:)), keyEquivalent: "")
+            switchItem.target = self
+            switchItem.representedObject = project.path
+            menu.addItem(switchItem)
 
-            let openItem = NSMenuItem(title: "Open Session Here", action: #selector(openSessionFromMenu(_:)), keyEquivalent: "")
-            openItem.target = self
-            openItem.representedObject = wt
-            menu.addItem(openItem)
+            let showItem = NSMenuItem(title: "Show in Finder", action: #selector(showWorktreeInFinder(_:)), keyEquivalent: "")
+            showItem.target = self
+            showItem.representedObject = project.path
+            menu.addItem(showItem)
 
             menu.addItem(NSMenuItem.separator())
+            let removeItem = NSMenuItem(title: "Remove from List", action: #selector(removeProjectFromList(_:)), keyEquivalent: "")
+            removeItem.target = self
+            removeItem.representedObject = project.path
+            menu.addItem(removeItem)
 
-            if !isBase {
-                let removeItem = NSMenuItem(title: "Remove Worktree", action: #selector(removeWorktreeFromMenu(_:)), keyEquivalent: "")
-                removeItem.target = self
-                removeItem.representedObject = wt
-                menu.addItem(removeItem)
+            projectRow.menu = menu
+            worktreeStack.addArrangedSubview(projectRow)
 
-                menu.addItem(NSMenuItem.separator())
+            // Show worktrees only if expanded
+            guard project.isExpanded else { continue }
+
+            // Get worktrees for this project
+            let worktrees = getWorktrees(for: project.path)
+            if worktrees.isEmpty {
+                let mainRow = makeRow(icon: "arrow.triangle.branch", text: "  main", detail: "base")
+                mainRow.heightAnchor.constraint(equalToConstant: 26).isActive = true
+                worktreeStack.addArrangedSubview(mainRow)
+            } else {
+                for wt in worktrees {
+                    let branchName = wt.branch.isEmpty ? "detached" : wt.branch
+                    let isBase = wt.isBare
+                    let row = makeClickableRow(icon: "arrow.triangle.branch", text: "  \(branchName)",
+                                               detail: isBase ? "base" : nil,
+                                               target: self, action: #selector(worktreeRowClicked(_:)))
+                    row.worktreeName = branchName
+                    row.worktreePath = wt.path
+                    row.isBaseWorktree = isBase
+
+                    // Context menu
+                    let wtMenu = NSMenu()
+                    let openItem = NSMenuItem(title: "Open Session Here", action: #selector(openSessionFromMenu(_:)), keyEquivalent: "")
+                    openItem.target = self
+                    openItem.representedObject = wt
+                    wtMenu.addItem(openItem)
+                    if !isBase {
+                        wtMenu.addItem(NSMenuItem.separator())
+                        let rmItem = NSMenuItem(title: "Remove Worktree", action: #selector(removeWorktreeFromMenu(_:)), keyEquivalent: "")
+                        rmItem.target = self
+                        rmItem.representedObject = wt
+                        wtMenu.addItem(rmItem)
+                    }
+                    wtMenu.addItem(NSMenuItem.separator())
+                    let copyItem = NSMenuItem(title: "Copy Path", action: #selector(copyWorktreePath(_:)), keyEquivalent: "")
+                    copyItem.target = self
+                    copyItem.representedObject = wt.path
+                    wtMenu.addItem(copyItem)
+                    row.menu = wtMenu
+
+                    row.heightAnchor.constraint(equalToConstant: 26).isActive = true
+                    worktreeStack.addArrangedSubview(row)
+                }
             }
-            let openFinderItem = NSMenuItem(title: "Show in Finder", action: #selector(showWorktreeInFinder(_:)), keyEquivalent: "")
-            openFinderItem.target = self
-            openFinderItem.representedObject = wt.path
-            menu.addItem(openFinderItem)
-
-            let copyPathItem = NSMenuItem(title: "Copy Path", action: #selector(copyWorktreePath(_:)), keyEquivalent: "")
-            copyPathItem.target = self
-            copyPathItem.representedObject = wt.path
-            menu.addItem(copyPathItem)
-
-            row.menu = menu
-
-            row.heightAnchor.constraint(equalToConstant: 28).isActive = true
-            worktreeStack.addArrangedSubview(row)
         }
 
-        // If no worktrees found, show at least "main" under project
-        if worktrees.isEmpty {
-            let row = makeRow(icon: "arrow.triangle.branch", text: "  main", detail: "base")
-            row.heightAnchor.constraint(equalToConstant: 28).isActive = true
-            worktreeStack.addArrangedSubview(row)
+        // If no projects at all, show placeholder
+        if projects.isEmpty {
+            let emptyRow = makeRow(icon: "folder.badge.plus", text: "Open Project", detail: nil)
+            emptyRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            worktreeStack.addArrangedSubview(emptyRow)
         }
     }
 
@@ -322,6 +354,66 @@ final class DFSidebar: NSView {
         guard let path = sender.representedObject as? String else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(path, forType: .string)
+    }
+
+    /// Get worktrees for a specific project directory.
+    private func getWorktrees(for projectPath: String) -> [WorktreeManager.Worktree] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = ["-C", projectPath, "worktree", "list", "--porcelain"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch { return [] }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        var worktrees: [WorktreeManager.Worktree] = []
+        var path = "", branch = "", head = "", isBare = false
+
+        for line in output.components(separatedBy: "\n") {
+            if line.hasPrefix("worktree ") {
+                if !path.isEmpty {
+                    worktrees.append(WorktreeManager.Worktree(path: path, branch: branch, head: head, isBare: isBare))
+                }
+                path = String(line.dropFirst("worktree ".count))
+                branch = ""; head = ""; isBare = false
+            } else if line.hasPrefix("HEAD ") {
+                head = String(line.dropFirst("HEAD ".count))
+            } else if line.hasPrefix("branch ") {
+                let full = String(line.dropFirst("branch ".count))
+                branch = full.hasPrefix("refs/heads/") ? String(full.dropFirst("refs/heads/".count)) : full
+            } else if line == "bare" {
+                isBare = true
+            }
+        }
+        if !path.isEmpty {
+            worktrees.append(WorktreeManager.Worktree(path: path, branch: branch, head: head, isBare: isBare))
+        }
+        return worktrees
+    }
+
+    @objc private func projectRowClicked(_ sender: AnyObject) {
+        guard let row = sender as? ClickableRow, let path = row.worktreePath else { return }
+        ProjectManager.shared.toggleExpanded(path: path)
+        refreshWorktrees()
+    }
+
+    @objc private func switchToProject(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        if let wc = window?.windowController as? DFWindowController {
+            wc.openProject(at: path)
+        }
+    }
+
+    @objc private func removeProjectFromList(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        ProjectManager.shared.removeProject(path: path)
+        refreshWorktrees()
     }
 
     @objc private func openProjectClicked() {
