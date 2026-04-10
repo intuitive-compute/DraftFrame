@@ -68,7 +68,6 @@ final class Session {
         guard let tv = terminalView else { return }
         let terminal = tv.getTerminal()
         let rows = terminal.rows
-        let cols = terminal.cols
 
         // Read ALL visible lines
         var lines: [String] = []
@@ -78,14 +77,11 @@ final class Session {
         }
 
         let snapshot = lines.joined(separator: "\n")
-
-        // Don't reprocess if nothing changed
-        guard snapshot != lastBufferSnapshot else { return }
         lastBufferSnapshot = snapshot
         let oldState = state
 
         // Get non-empty lines from bottom up for prompt detection
-        let bottomLines = lines.suffix(10).reversed().filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let bottomLines = lines.reversed().filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         let lastLine = bottomLines.first ?? ""
         let trimmedLast = lastLine.trimmingCharacters(in: .whitespaces)
 
@@ -164,9 +160,7 @@ final class Session {
         else if flat.contains("sonnet") { model = "sonnet" }
 
         if state != oldState {
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
-            }
+            NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
         }
     }
 }
@@ -198,15 +192,12 @@ final class SessionManager {
     private var pollTimer: Timer?
 
     private init() {
-        // Poll all sessions every 500ms to detect state changes
+        // Poll all sessions every 500ms on the main thread (SwiftTerm requires main thread)
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.pollAllSessions()
-        }
-    }
-
-    private func pollAllSessions() {
-        for session in sessions {
-            session.pollTerminalState()
+            guard let self = self else { return }
+            for session in self.sessions {
+                session.pollTerminalState()
+            }
         }
     }
 
