@@ -11,23 +11,36 @@ final class ShortcutManager {
     var onToggleDashboard: (() -> Void)?
     var onNewSessionWithWorktree: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
+    var onToggleEditor: (() -> Void)?
 
-    private var monitor: Any?
+    private var keyDownMonitor: Any?
+    private var keyUpMonitor: Any?
+    private var flagsMonitor: Any?
 
     private init() {}
 
     func install() {
-        guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        guard keyDownMonitor == nil else { return }
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
             return self.handleKeyDown(event) ? nil : event
+        }
+        // Monitor flagsChanged to detect Cmd+Shift+V release (key-up for modifiers)
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self = self else { return event }
+            self.handleFlagsChanged(event)
+            return event
         }
     }
 
     func uninstall() {
-        if let m = monitor {
+        if let m = keyDownMonitor {
             NSEvent.removeMonitor(m)
-            monitor = nil
+            keyDownMonitor = nil
+        }
+        if let m = flagsMonitor {
+            NSEvent.removeMonitor(m)
+            flagsMonitor = nil
         }
     }
 
@@ -64,6 +77,20 @@ final class ShortcutManager {
             return true
         }
 
+        // Cmd+E: toggle editor/inspector
+        if flags == .command, event.keyCode == 14 { // 'e'
+            onToggleEditor?()
+            return true
+        }
+
+        // Cmd+Shift+V: push-to-talk voice transcription (start on key down)
+        if flags == [.command, .shift], event.keyCode == 9 { // 'v'
+            if !event.isARepeat && !VoiceManager.shared.isListening {
+                VoiceManager.shared.startListening()
+            }
+            return true
+        }
+
         // Cmd+1 through Cmd+9: switch to session N
         if flags == .command {
             let digitKeyCodes: [UInt16: Int] = [
@@ -77,5 +104,15 @@ final class ShortcutManager {
         }
 
         return false
+    }
+
+    /// Detect when Cmd or Shift is released while voice is listening — stop transcription.
+    private func handleFlagsChanged(_ event: NSEvent) {
+        guard VoiceManager.shared.isListening else { return }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // If either Cmd or Shift was released, stop listening
+        if !flags.contains(.command) || !flags.contains(.shift) {
+            VoiceManager.shared.stopListening()
+        }
     }
 }

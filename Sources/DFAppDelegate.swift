@@ -10,6 +10,9 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
         // Request notification permissions and start observing session state
         NotificationManager.shared.requestAuthorization()
 
+        // Request voice transcription permissions
+        VoiceManager.shared.requestAuthorization()
+
         buildMenuBar()
 
         let wc = DFWindowController()
@@ -20,6 +23,42 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Save session state before quitting
+        SessionPersistence.shared.saveSessions()
+
+        // Close all sessions cleanly
+        let sessions = SessionManager.shared.sessions
+        for i in (0..<sessions.count).reversed() {
+            sessions[i].jsonlWatcher?.stop()
+        }
+
+        // Check if there are draftframe-managed worktrees to clean up
+        let worktrees = WorktreeManager.shared.listWorktrees()
+        let managedWorktrees = worktrees.filter { wt in
+            !wt.isBare && wt.branch.hasPrefix("draftframe/")
+        }
+
+        if !managedWorktrees.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Clean up worktrees?"
+            alert.informativeText = "There are \(managedWorktrees.count) draftframe-managed worktree(s). Remove them before quitting?"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Remove Worktrees")
+            alert.addButton(withTitle: "Keep Worktrees")
+
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                for wt in managedWorktrees {
+                    let name = (wt.path as NSString).lastPathComponent
+                    try? WorktreeManager.shared.removeWorktree(name: name)
+                }
+            }
+        }
+
+        return .terminateNow
     }
 
     // MARK: - Menu Bar

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// Manages toolkit commands loaded from config.
 final class ToolkitManager {
@@ -12,15 +13,43 @@ final class ToolkitManager {
 
     private(set) var commands: [ToolkitCommand] = []
 
+    /// Path to the user's toolkit config file.
+    static let configPath = NSHomeDirectory() + "/.config/draftframe/toolkit.json"
+
     private init() {
         loadConfig()
     }
 
     /// Load commands from ~/.config/draftframe/toolkit.json
+    /// If the file doesn't exist, write defaults there first.
     func loadConfig() {
-        let configPath = NSHomeDirectory() + "/.config/draftframe/toolkit.json"
+        let fm = FileManager.default
+        let configPath = ToolkitManager.configPath
+        let configDir = (configPath as NSString).deletingLastPathComponent
 
-        if let data = FileManager.default.contents(atPath: configPath),
+        // Ensure the config directory exists
+        if !fm.fileExists(atPath: configDir) {
+            try? fm.createDirectory(atPath: configDir, withIntermediateDirectories: true)
+        }
+
+        // If no config file, write defaults
+        if !fm.fileExists(atPath: configPath) {
+            writeDefaults()
+        }
+
+        // Parse the config
+        if let data = fm.contents(atPath: configPath),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let cmdArray = json["commands"] as? [[String: String]] {
+            commands = cmdArray.compactMap { entry in
+                guard let name = entry["name"], let cmd = entry["command"] else { return nil }
+                return ToolkitCommand(name: name, command: cmd, icon: entry["icon"] ?? "terminal")
+            }
+        }
+
+        // Fallback: try legacy flat-array format for backward compat
+        if commands.isEmpty,
+           let data = FileManager.default.contents(atPath: configPath),
            let json = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] {
             commands = json.compactMap { entry in
                 guard let name = entry["name"], let cmd = entry["command"] else { return nil }
@@ -28,14 +57,39 @@ final class ToolkitManager {
             }
         }
 
-        // If no config or empty, use defaults
+        // If still empty (corrupt file?), use in-memory defaults
         if commands.isEmpty {
-            commands = [
-                ToolkitCommand(name: "Run Tests", command: "npm test", icon: "checkmark.circle"),
-                ToolkitCommand(name: "Build", command: "npm run build", icon: "hammer"),
-                ToolkitCommand(name: "Lint", command: "npm run lint", icon: "wand.and.stars"),
-            ]
+            commands = defaultCommands()
         }
+    }
+
+    /// Write the default toolkit config to disk.
+    private func writeDefaults() {
+        let defaults: [String: Any] = [
+            "commands": [
+                ["name": "Run Tests", "icon": "checkmark.circle", "command": "npm test"],
+                ["name": "Build", "icon": "hammer", "command": "npm run build"],
+                ["name": "Lint", "icon": "wand.and.stars", "command": "npm run lint"],
+            ]
+        ]
+
+        if let data = try? JSONSerialization.data(withJSONObject: defaults, options: [.prettyPrinted, .sortedKeys]) {
+            FileManager.default.createFile(atPath: ToolkitManager.configPath, contents: data)
+        }
+    }
+
+    private func defaultCommands() -> [ToolkitCommand] {
+        [
+            ToolkitCommand(name: "Run Tests", command: "npm test", icon: "checkmark.circle"),
+            ToolkitCommand(name: "Build", command: "npm run build", icon: "hammer"),
+            ToolkitCommand(name: "Lint", command: "npm run lint", icon: "wand.and.stars"),
+        ]
+    }
+
+    /// Open the toolkit config file in the user's default editor.
+    func openConfigInEditor() {
+        let url = URL(fileURLWithPath: ToolkitManager.configPath)
+        NSWorkspace.shared.open(url)
     }
 
     /// Run a toolkit command in the given directory, returning the Process.
