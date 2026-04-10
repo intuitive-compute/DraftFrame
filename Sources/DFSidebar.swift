@@ -42,10 +42,10 @@ final class DFSidebar: NSView {
         let sep = separator()
         addSubview(sep)
 
-        // Worktrees section
-        let worktreesHeader = label("WORKTREES", size: 9, color: Theme.text3, weight: .medium)
-        worktreesHeader.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(worktreesHeader)
+        // Project section — shows repo name with worktrees nested under it
+        let projectHeader = label("PROJECT", size: 9, color: Theme.text3, weight: .medium)
+        projectHeader.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(projectHeader)
 
         worktreeStack.orientation = .vertical
         worktreeStack.spacing = 2
@@ -58,12 +58,17 @@ final class DFSidebar: NSView {
                                                 target: self, action: #selector(addWorktreeClicked))
         addSubview(addWorktreeBtn)
 
-        // Files section
-        let filesSep = separator()
-        addSubview(filesSep)
-        let filesHeader = label("FILES", size: 9, color: Theme.text3, weight: .medium)
-        filesHeader.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(filesHeader)
+        // Open Project button
+        let openProjectBtn = makeClickableRow(icon: "folder.badge.plus", text: "Open Project", detail: nil,
+                                                target: self, action: #selector(openProjectClicked))
+        addSubview(openProjectBtn)
+
+        // Changes section — git diff changed files
+        let changesSep = separator()
+        addSubview(changesSep)
+        let changesHeader = label("CHANGES", size: 9, color: Theme.text3, weight: .medium)
+        changesHeader.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(changesHeader)
 
         filesStack.orientation = .vertical
         filesStack.spacing = 2
@@ -109,10 +114,10 @@ final class DFSidebar: NSView {
             sep.leadingAnchor.constraint(equalTo: leadingAnchor),
             sep.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-            worktreesHeader.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 12),
-            worktreesHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            projectHeader.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 12),
+            projectHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
 
-            worktreeStack.topAnchor.constraint(equalTo: worktreesHeader.bottomAnchor, constant: 6),
+            worktreeStack.topAnchor.constraint(equalTo: projectHeader.bottomAnchor, constant: 6),
             worktreeStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             worktreeStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
 
@@ -121,14 +126,19 @@ final class DFSidebar: NSView {
             addWorktreeBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             addWorktreeBtn.heightAnchor.constraint(equalToConstant: 28),
 
-            filesSep.topAnchor.constraint(equalTo: addWorktreeBtn.bottomAnchor, constant: 12),
-            filesSep.leadingAnchor.constraint(equalTo: leadingAnchor),
-            filesSep.trailingAnchor.constraint(equalTo: trailingAnchor),
+            openProjectBtn.topAnchor.constraint(equalTo: addWorktreeBtn.bottomAnchor, constant: 2),
+            openProjectBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            openProjectBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            openProjectBtn.heightAnchor.constraint(equalToConstant: 28),
 
-            filesHeader.topAnchor.constraint(equalTo: filesSep.bottomAnchor, constant: 12),
-            filesHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            changesSep.topAnchor.constraint(equalTo: openProjectBtn.bottomAnchor, constant: 12),
+            changesSep.leadingAnchor.constraint(equalTo: leadingAnchor),
+            changesSep.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-            filesStack.topAnchor.constraint(equalTo: filesHeader.bottomAnchor, constant: 6),
+            changesHeader.topAnchor.constraint(equalTo: changesSep.bottomAnchor, constant: 12),
+            changesHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+
+            filesStack.topAnchor.constraint(equalTo: changesHeader.bottomAnchor, constant: 6),
             filesStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             filesStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
 
@@ -180,11 +190,20 @@ final class DFSidebar: NSView {
             v.removeFromSuperview()
         }
 
+        // Project name row
+        let projectDir = SessionManager.shared.projectDir ?? FileManager.default.currentDirectoryPath
+        let projectName = (projectDir as NSString).lastPathComponent
+        let projectRow = makeRow(icon: "folder.fill", text: projectName, detail: nil)
+        projectRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        worktreeStack.addArrangedSubview(projectRow)
+
+        // Worktrees nested under project
         let worktrees = WorktreeManager.shared.listWorktrees()
         for wt in worktrees {
             let branchName = wt.branch.isEmpty ? "detached" : wt.branch
             let isBase = wt.isBare
-            let row = makeClickableRow(icon: "arrow.triangle.branch", text: branchName,
+            // Indent worktrees slightly under the project
+            let row = makeClickableRow(icon: "arrow.triangle.branch", text: "  \(branchName)",
                                        detail: isBase ? "base" : nil,
                                        target: self, action: #selector(worktreeRowClicked(_:)))
 
@@ -227,9 +246,9 @@ final class DFSidebar: NSView {
             worktreeStack.addArrangedSubview(row)
         }
 
-        // If no worktrees found, show at least "main"
+        // If no worktrees found, show at least "main" under project
         if worktrees.isEmpty {
-            let row = makeRow(icon: "arrow.triangle.branch", text: "main", detail: "base")
+            let row = makeRow(icon: "arrow.triangle.branch", text: "  main", detail: "base")
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
             worktreeStack.addArrangedSubview(row)
         }
@@ -305,6 +324,13 @@ final class DFSidebar: NSView {
         NSPasteboard.general.setString(path, forType: .string)
     }
 
+    @objc private func openProjectClicked() {
+        // Find the window controller and trigger the open project dialog
+        if let wc = window?.windowController as? DFWindowController {
+            wc.promptOpenProject()
+        }
+    }
+
     @objc private func addWorktreeClicked() {
         let alert = NSAlert()
         alert.messageText = "New Worktree"
@@ -346,45 +372,90 @@ final class DFSidebar: NSView {
 
         guard let projectDir = SessionManager.shared.projectDir else { return }
 
-        // List files in project directory (top-level only)
-        let fm = FileManager.default
-        guard let items = try? fm.contentsOfDirectory(atPath: projectDir) else { return }
+        // Run git status to get changed files
+        let changedFiles = gitChangedFiles(in: projectDir)
 
-        // Sort: directories first, then alphabetically; skip hidden files
-        let sorted = items
-            .filter { !$0.hasPrefix(".") }
-            .sorted { a, b in
-                let aPath = (projectDir as NSString).appendingPathComponent(a)
-                let bPath = (projectDir as NSString).appendingPathComponent(b)
-                var aIsDir: ObjCBool = false
-                var bIsDir: ObjCBool = false
-                fm.fileExists(atPath: aPath, isDirectory: &aIsDir)
-                fm.fileExists(atPath: bPath, isDirectory: &bIsDir)
-                if aIsDir.boolValue != bIsDir.boolValue {
-                    return aIsDir.boolValue
-                }
-                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+        if changedFiles.isEmpty {
+            let emptyLabel = label("No changes", size: 11, color: Theme.text3)
+            emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+            filesStack.addArrangedSubview(emptyLabel)
+            return
+        }
+
+        for file in changedFiles.prefix(50) {
+            let statusIcon: String
+            let statusColor: NSColor
+            switch file.status {
+            case "M":  statusIcon = "pencil.circle"; statusColor = Theme.yellow
+            case "A":  statusIcon = "plus.circle"; statusColor = Theme.green
+            case "D":  statusIcon = "minus.circle"; statusColor = Theme.red
+            case "?":  statusIcon = "questionmark.circle"; statusColor = Theme.text3
+            case "R":  statusIcon = "arrow.right.circle"; statusColor = Theme.cyan
+            default:   statusIcon = "circle"; statusColor = Theme.text3
             }
 
-        for item in sorted.prefix(50) { // cap at 50 items
-            let fullPath = (projectDir as NSString).appendingPathComponent(item)
-            var isDir: ObjCBool = false
-            fm.fileExists(atPath: fullPath, isDirectory: &isDir)
-
-            let icon: String
-            if isDir.boolValue {
-                icon = "folder"
-            } else {
-                icon = FileIcon.symbolName(for: item)
-            }
-
-            let row = makeClickableRow(icon: icon, text: item, detail: nil,
+            let fullPath = (projectDir as NSString).appendingPathComponent(file.path)
+            let row = makeClickableRow(icon: statusIcon, text: file.path, detail: nil,
                                         target: self, action: #selector(fileRowClicked(_:)))
             row.filePath = fullPath
-            row.isDirectory = isDir.boolValue
+            row.isDirectory = false
             row.heightAnchor.constraint(equalToConstant: 24).isActive = true
+
+            // Tint the icon with the status color
+            if let iconView = row.subviews.compactMap({ $0 as? NSImageView }).first {
+                iconView.contentTintColor = statusColor
+            }
+
             filesStack.addArrangedSubview(row)
         }
+    }
+
+    private struct ChangedFile {
+        let status: String  // M, A, D, ?, R, etc.
+        let path: String
+    }
+
+    private func gitChangedFiles(in dir: String) -> [ChangedFile] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = ["-C", dir, "status", "--porcelain"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            return []
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        var files: [ChangedFile] = []
+        for line in output.components(separatedBy: "\n") where !line.isEmpty {
+            // git status --porcelain format: "XY filename"
+            guard line.count >= 4 else { continue }
+            let index = line.index(line.startIndex, offsetBy: 0)
+            let statusChar = line[index]
+            let workTree = line[line.index(after: index)]
+
+            // Use the more significant status
+            let status: String
+            if statusChar == "?" {
+                status = "?"
+            } else if statusChar != " " {
+                status = String(statusChar)
+            } else {
+                status = String(workTree)
+            }
+
+            let pathStart = line.index(line.startIndex, offsetBy: 3)
+            let path = String(line[pathStart...])
+            files.append(ChangedFile(status: status, path: path))
+        }
+
+        return files
     }
 
     @objc private func fileRowClicked(_ sender: AnyObject) {
