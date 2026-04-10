@@ -1,10 +1,11 @@
 import AppKit
 
-/// Left sidebar: worktrees and toolkit (functional).
+/// Left sidebar: worktrees, toolkit, and watchdogs (functional).
 final class DFSidebar: NSView {
 
     private let worktreeStack = NSStackView()
     private let toolkitStack = NSStackView()
+    private let watchdogStack = NSStackView()
     private var outputPopover: NSPopover?
 
     override init(frame: NSRect) {
@@ -16,6 +17,10 @@ final class DFSidebar: NSView {
         NotificationCenter.default.addObserver(
             self, selector: #selector(refreshWorktrees),
             name: .sessionsDidChange, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshWatchdogs),
+            name: .watchdogsDidChange, object: nil
         )
     }
 
@@ -65,6 +70,23 @@ final class DFSidebar: NSView {
         toolkitStack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(toolkitStack)
 
+        // Watchdogs section
+        let watchdogSep = separator()
+        addSubview(watchdogSep)
+        let watchdogHeader = label("WATCHDOGS", size: 9, color: Theme.text3, weight: .medium)
+        watchdogHeader.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(watchdogHeader)
+
+        watchdogStack.orientation = .vertical
+        watchdogStack.spacing = 2
+        watchdogStack.alignment = .leading
+        watchdogStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(watchdogStack)
+
+        let addWatchdogBtn = makeClickableRow(icon: "plus.circle", text: "New Watchdog", detail: nil,
+                                               target: self, action: #selector(addWatchdogClicked))
+        addSubview(addWatchdogBtn)
+
         NSLayoutConstraint.activate([
             title.topAnchor.constraint(equalTo: topAnchor, constant: 38),
             title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -95,10 +117,27 @@ final class DFSidebar: NSView {
             toolkitStack.topAnchor.constraint(equalTo: toolkitHeader.bottomAnchor, constant: 6),
             toolkitStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             toolkitStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+
+            watchdogSep.topAnchor.constraint(equalTo: toolkitStack.bottomAnchor, constant: 12),
+            watchdogSep.leadingAnchor.constraint(equalTo: leadingAnchor),
+            watchdogSep.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            watchdogHeader.topAnchor.constraint(equalTo: watchdogSep.bottomAnchor, constant: 12),
+            watchdogHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+
+            watchdogStack.topAnchor.constraint(equalTo: watchdogHeader.bottomAnchor, constant: 6),
+            watchdogStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            watchdogStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+
+            addWatchdogBtn.topAnchor.constraint(equalTo: watchdogStack.bottomAnchor, constant: 4),
+            addWatchdogBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            addWatchdogBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            addWatchdogBtn.heightAnchor.constraint(equalToConstant: 28),
         ])
 
         refreshWorktrees()
         refreshToolkit()
+        refreshWatchdogs()
     }
 
     // MARK: - Worktrees
@@ -281,6 +320,27 @@ final class DFSidebar: NSView {
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
             toolkitStack.addArrangedSubview(row)
         }
+
+        // Edit Toolkit button
+        let editRow = makeClickableRow(icon: "pencil.circle", text: "Edit Toolkit", detail: nil,
+                                        target: self, action: #selector(editToolkitClicked))
+        editRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        toolkitStack.addArrangedSubview(editRow)
+
+        // Reload Toolkit button
+        let reloadRow = makeClickableRow(icon: "arrow.clockwise", text: "Reload", detail: nil,
+                                          target: self, action: #selector(reloadToolkitClicked))
+        reloadRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        toolkitStack.addArrangedSubview(reloadRow)
+    }
+
+    @objc private func editToolkitClicked() {
+        ToolkitManager.shared.openConfigInEditor()
+    }
+
+    @objc private func reloadToolkitClicked() {
+        ToolkitManager.shared.loadConfig()
+        refreshToolkit()
     }
 
     @objc private func toolkitCommandClicked(_ sender: AnyObject) {
@@ -391,6 +451,205 @@ final class DFSidebar: NSView {
         }
     }
 
+    // MARK: - Watchdogs
+
+    @objc private func refreshWatchdogs() {
+        for v in watchdogStack.arrangedSubviews {
+            watchdogStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+
+        let watchdogs = WatchdogManager.shared.watchdogs
+        for (i, wd) in watchdogs.enumerated() {
+            let statusIcon = wd.isEnabled ? "eye.fill" : "eye.slash"
+            let detail = wd.isEnabled ? "on" : "off"
+            let row = makeClickableRow(icon: statusIcon, text: wd.name, detail: detail,
+                                        target: self, action: #selector(watchdogRowClicked(_:)))
+            row.watchdogIndex = i
+
+            // Right-click context menu
+            let menu = NSMenu()
+
+            let toggleItem = NSMenuItem(
+                title: wd.isEnabled ? "Disable" : "Enable",
+                action: #selector(toggleWatchdogFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            toggleItem.target = self
+            toggleItem.representedObject = wd.id
+            menu.addItem(toggleItem)
+
+            let editItem = NSMenuItem(title: "Edit", action: #selector(editWatchdogFromMenu(_:)), keyEquivalent: "")
+            editItem.target = self
+            editItem.representedObject = wd.id
+            menu.addItem(editItem)
+
+            menu.addItem(NSMenuItem.separator())
+
+            let removeItem = NSMenuItem(title: "Remove", action: #selector(removeWatchdogFromMenu(_:)), keyEquivalent: "")
+            removeItem.target = self
+            removeItem.representedObject = wd.id
+            menu.addItem(removeItem)
+
+            row.menu = menu
+
+            row.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            watchdogStack.addArrangedSubview(row)
+        }
+    }
+
+    @objc private func watchdogRowClicked(_ sender: AnyObject) {
+        guard let row = sender as? ClickableRow else { return }
+        let watchdogs = WatchdogManager.shared.watchdogs
+        let idx = row.watchdogIndex
+        guard idx >= 0, idx < watchdogs.count else { return }
+        WatchdogManager.shared.toggleWatchdog(id: watchdogs[idx].id)
+    }
+
+    @objc private func toggleWatchdogFromMenu(_ sender: NSMenuItem) {
+        guard let wdID = sender.representedObject as? UUID else { return }
+        WatchdogManager.shared.toggleWatchdog(id: wdID)
+    }
+
+    @objc private func editWatchdogFromMenu(_ sender: NSMenuItem) {
+        guard let wdID = sender.representedObject as? UUID else { return }
+        guard let wd = WatchdogManager.shared.watchdogs.first(where: { $0.id == wdID }) else { return }
+        showWatchdogEditor(existing: wd)
+    }
+
+    @objc private func removeWatchdogFromMenu(_ sender: NSMenuItem) {
+        guard let wdID = sender.representedObject as? UUID else { return }
+        WatchdogManager.shared.removeWatchdog(id: wdID)
+    }
+
+    @objc private func addWatchdogClicked() {
+        showWatchdogEditor(existing: nil)
+    }
+
+    /// Show a creation/edit dialog for a watchdog.
+    private func showWatchdogEditor(existing: Watchdog?) {
+        let alert = NSAlert()
+        alert.messageText = existing != nil ? "Edit Watchdog" : "New Watchdog"
+        alert.addButton(withTitle: existing != nil ? "Save" : "Create")
+        alert.addButton(withTitle: "Cancel")
+
+        // Build accessory view
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 150))
+
+        // Name field
+        let nameLabel = NSTextField(labelWithString: "Name:")
+        nameLabel.font = Theme.mono(11, weight: .medium)
+        nameLabel.textColor = Theme.text2
+        nameLabel.frame = NSRect(x: 0, y: 122, width: 60, height: 20)
+        container.addSubview(nameLabel)
+
+        let nameField = NSTextField(frame: NSRect(x: 65, y: 120, width: 230, height: 24))
+        nameField.font = Theme.mono(12)
+        nameField.placeholderString = "My Watchdog"
+        if let wd = existing { nameField.stringValue = wd.name }
+        container.addSubview(nameField)
+
+        // Trigger picker
+        let triggerLabel = NSTextField(labelWithString: "Trigger:")
+        triggerLabel.font = Theme.mono(11, weight: .medium)
+        triggerLabel.textColor = Theme.text2
+        triggerLabel.frame = NSRect(x: 0, y: 88, width: 60, height: 20)
+        container.addSubview(triggerLabel)
+
+        let triggerPopup = NSPopUpButton(frame: NSRect(x: 65, y: 85, width: 230, height: 26))
+        triggerPopup.addItems(withTitles: ["Needs Attention", "Idle After Work", "Periodic"])
+        if let wd = existing {
+            switch wd.trigger {
+            case .needsAttention: triggerPopup.selectItem(at: 0)
+            case .idleAfterWork:  triggerPopup.selectItem(at: 1)
+            case .periodic:       triggerPopup.selectItem(at: 2)
+            }
+        }
+        container.addSubview(triggerPopup)
+
+        // Response picker
+        let responseLabel = NSTextField(labelWithString: "Response:")
+        responseLabel.font = Theme.mono(11, weight: .medium)
+        responseLabel.textColor = Theme.text2
+        responseLabel.frame = NSRect(x: 0, y: 54, width: 62, height: 20)
+        container.addSubview(responseLabel)
+
+        let responsePopup = NSPopUpButton(frame: NSRect(x: 65, y: 51, width: 230, height: 26))
+        responsePopup.addItems(withTitles: ["Notify Only", "Auto-Accept", "Send Text", "Run Command"])
+        if let wd = existing {
+            switch wd.response {
+            case .notify:      responsePopup.selectItem(at: 0)
+            case .autoAccept:  responsePopup.selectItem(at: 1)
+            case .sendText:    responsePopup.selectItem(at: 2)
+            case .runCommand:  responsePopup.selectItem(at: 3)
+            }
+        }
+        container.addSubview(responsePopup)
+
+        // Text/command field (for Send Text / Run Command)
+        let textLabel = NSTextField(labelWithString: "Text/Cmd:")
+        textLabel.font = Theme.mono(11, weight: .medium)
+        textLabel.textColor = Theme.text2
+        textLabel.frame = NSRect(x: 0, y: 22, width: 62, height: 20)
+        container.addSubview(textLabel)
+
+        let textField = NSTextField(frame: NSRect(x: 65, y: 20, width: 230, height: 24))
+        textField.font = Theme.mono(12)
+        textField.placeholderString = "text to send or command to run"
+        if let wd = existing {
+            switch wd.response {
+            case .sendText(let t):  textField.stringValue = t
+            case .runCommand(let c): textField.stringValue = c
+            default: break
+            }
+        }
+        container.addSubview(textField)
+
+        alert.accessoryView = container
+
+        guard let win = window else { return }
+        alert.beginSheetModal(for: win) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+
+            // Build trigger
+            let trigger: WatchdogTrigger
+            switch triggerPopup.indexOfSelectedItem {
+            case 1:  trigger = .idleAfterWork
+            case 2:  trigger = .periodic(seconds: 60)
+            default: trigger = .needsAttention
+            }
+
+            // Build response
+            let wdResponse: WatchdogResponse
+            let txt = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch responsePopup.indexOfSelectedItem {
+            case 1: wdResponse = .autoAccept
+            case 2: wdResponse = .sendText(txt.isEmpty ? "y" : txt)
+            case 3: wdResponse = .runCommand(txt.isEmpty ? "echo hello" : txt)
+            default: wdResponse = .notify
+            }
+
+            if var wd = existing {
+                wd.name = name
+                wd.trigger = trigger
+                wd.response = wdResponse
+                WatchdogManager.shared.updateWatchdog(wd)
+            } else {
+                let wd = Watchdog(
+                    id: UUID(),
+                    name: name,
+                    isEnabled: true,
+                    sessionID: nil,
+                    trigger: trigger,
+                    response: wdResponse
+                )
+                WatchdogManager.shared.addWatchdog(wd)
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func label(_ text: String, size: CGFloat, color: NSColor, weight: NSFont.Weight = .regular) -> NSTextField {
@@ -490,6 +749,7 @@ final class ClickableRow: NSView {
     weak var target: AnyObject?
     var action: Selector?
     var toolkitIndex: Int = 0
+    var watchdogIndex: Int = 0
     var worktreeName: String?
     var worktreePath: String?
     var isBaseWorktree: Bool = false

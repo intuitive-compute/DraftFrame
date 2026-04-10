@@ -91,6 +91,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         updateDockBadge(count: needsAttentionCount)
     }
 
+    // MARK: - Public API for Watchdogs
+
+    /// Send a notification on behalf of a watchdog. Public so WatchdogManager can use it.
+    func sendWatchdogNotification(title: String, body: String) {
+        sendNotification(title: title, body: body, identifier: "watchdog-\(UUID().uuidString)")
+    }
+
     // MARK: - Sending Notifications
 
     private func sendNotification(title: String, body: String, identifier: String) {
