@@ -7,6 +7,12 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        // Set dock icon from bundled image
+        if let iconPath = findAppIcon(),
+           let icon = NSImage(contentsOfFile: iconPath) {
+            NSApp.applicationIconImage = icon
+        }
+
         // Request notification permissions and start observing session state
         NotificationManager.shared.requestAuthorization()
 
@@ -152,6 +158,27 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
     @objc private func menuRestartSession() {
         guard let session = SessionManager.shared.activeSession else { return }
         SessionManager.shared.restartSession(id: session.id)
+    }
+
+    private func findAppIcon() -> String? {
+        // Look for AppIcon.png relative to the executable
+        let execPath = CommandLine.arguments[0]
+        let execDir = (execPath as NSString).deletingLastPathComponent
+
+        // Check next to executable
+        let beside = (execDir as NSString).appendingPathComponent("AppIcon.png")
+        if FileManager.default.fileExists(atPath: beside) { return beside }
+
+        // Check in Sources/ (dev mode)
+        var search = execDir
+        for _ in 0..<10 {
+            let candidate = (search as NSString).appendingPathComponent("Sources/AppIcon.png")
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+            search = (search as NSString).deletingLastPathComponent
+            if search == "/" { break }
+        }
+
+        return nil
     }
 
     @objc private func showAbout() {
