@@ -140,7 +140,13 @@ final class DFTerminalPane: NSView {
             container.translatesAutoresizingMaskIntoConstraints = false
             container.wantsLayer = true
             container.layer?.cornerRadius = 4
-            container.layer?.backgroundColor = isActive ? Theme.surface2.cgColor : NSColor.clear.cgColor
+            if isActive {
+                container.layer?.backgroundColor = Theme.surface2.cgColor
+                container.layer?.borderColor = Theme.accent.withAlphaComponent(0.5).cgColor
+                container.layer?.borderWidth = 1
+            } else {
+                container.layer?.backgroundColor = NSColor.clear.cgColor
+            }
 
             // Pulsing attention dot on the tab (for non-active sessions needing input)
             let needsAttention = !isActive && (session.state == .needsAttention || session.state == .userInput)
