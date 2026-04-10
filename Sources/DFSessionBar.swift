@@ -111,20 +111,22 @@ final class SessionCard: NSView {
         layer?.cornerRadius = 8
 
         if isActive {
-            // Strong visual indicator for active session
-            layer?.backgroundColor = Theme.surface2.withAlphaComponent(1.0).cgColor
+            // Bright background + thick orange left bar
+            layer?.backgroundColor = Theme.surface3.cgColor
             layer?.borderColor = Theme.accent.cgColor
-            layer?.borderWidth = 2
+            layer?.borderWidth = 1.5
 
-            // Subtle left accent bar
             let accentBar = CALayer()
             accentBar.backgroundColor = Theme.accent.cgColor
-            accentBar.frame = CGRect(x: 0, y: 4, width: 3, height: 48)
-            accentBar.cornerRadius = 1.5
+            accentBar.frame = CGRect(x: 0, y: 0, width: 4, height: 56)
+            accentBar.cornerRadius = 0
+            layer?.masksToBounds = true
             layer?.addSublayer(accentBar)
         } else {
-            layer?.backgroundColor = Theme.surface1.withAlphaComponent(0.6).cgColor
+            // Dimmed inactive card
+            layer?.backgroundColor = Theme.surface1.cgColor
             layer?.borderWidth = 0
+            alphaValue = 0.6
         }
 
         // Pulsing border glow for attention/input states
