@@ -86,45 +86,61 @@ final class Session {
         let trimmedLast = lastLine.trimmingCharacters(in: .whitespaces)
 
         // --- Claude Code state detection ---
-        // Claude Code renders a TUI. We look at the entire visible buffer.
+        // Claude Code renders a full TUI. We scan the entire visible buffer.
+        let lower = snapshot.lowercased()
 
-        // 1. Thinking: Claude shows spinner characters or "Thinking..." text
+        // Signals that Claude is ACTIVELY WORKING (not waiting for user)
+        let isWorking = lower.contains("esc to interrupt") ||
+                        lower.contains("thinking") ||
+                        lower.contains("…") ||       // ellipsis in status like "Jitterbugging…"
+                        lower.contains("searching") ||
+                        lower.contains("reading") ||
+                        lower.contains("writing") ||
+                        lower.contains("editing") ||
+                        lower.contains("creating") ||
+                        lower.contains("updating") ||
+                        lower.contains("running")
+
+        // Spinner characters (various braille patterns Claude uses)
         let spinners: Set<Character> = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏","⣾","⣽","⣻","⢿","⡿","⣟","⣯","⣷"]
         let hasSpinner = snapshot.contains(where: { spinners.contains($0) })
-        let hasThinking = snapshot.contains("Thinking") || snapshot.contains("thinking...")
 
-        // 2. Generating: Claude is streaming output — look for the block cursor or active tool use
-        let hasStreamCursor = snapshot.contains("▍") || snapshot.contains("▊") || snapshot.contains("█▎")
+        // Thinking: "thinking" keyword or spinner + working indicator
+        let isThinking = lower.contains("thinking") || (hasSpinner && isWorking)
+
+        // Generating: tool use visible, or streaming content with "esc to interrupt"
         let hasToolUse = snapshot.contains("Read(") || snapshot.contains("Edit(") || snapshot.contains("Write(") ||
-                         snapshot.contains("Bash(") || snapshot.contains("Grep(") || snapshot.contains("Glob(")
+                         snapshot.contains("Bash(") || snapshot.contains("Grep(") || snapshot.contains("Glob(") ||
+                         snapshot.contains("Agent(")
+        let hasStreamCursor = snapshot.contains("▍") || snapshot.contains("▊")
+        let isGenerating = hasToolUse || hasStreamCursor || (isWorking && !isThinking)
 
-        // 3. Needs attention: permission prompts, errors
-        let hasPermissionPrompt = snapshot.contains("Allow") && snapshot.contains("Deny")
-        let hasYesNo = snapshot.contains("[Y/n]") || snapshot.contains("(y/N)")
-        let hasError = snapshot.contains("Error:") || snapshot.contains("error:")
+        // Needs attention: permission prompts
+        let needsAttention = (snapshot.contains("Allow") && snapshot.contains("Deny")) ||
+                             snapshot.contains("[Y/n]") || snapshot.contains("(y/N)") ||
+                             snapshot.contains("Do you want to")
 
-        // 4. Waiting for input: Claude's input prompt ">" at bottom, or shell prompt
-        let hasClaudePrompt = trimmedLast.hasPrefix(">") && trimmedLast.count < 5
+        // Shell prompt = idle (Claude not running)
         let hasShellPrompt = trimmedLast.hasSuffix("$ ") || trimmedLast.hasSuffix("% ") ||
-                             trimmedLast.hasSuffix("❯ ") || trimmedLast.hasSuffix("# ") ||
-                             trimmedLast.contains("❯")
+                             trimmedLast.hasSuffix("# ") ||
+                             (trimmedLast.contains("❯") && !lower.contains("esc to interrupt"))
 
-        // 5. Idle: Claude exited back to shell, or nothing happening
-        let hasClaudeUI = snapshot.contains("Claude") || snapshot.contains("claude") ||
-                          snapshot.contains("tokens") || snapshot.contains("Cost:")
+        // Claude waiting for user input: ">" prompt at bottom with NO working indicators
+        let hasClaudePrompt = trimmedLast.hasPrefix(">") && !isWorking
 
-        // Priority-based state assignment
-        if hasPermissionPrompt || hasYesNo {
+        // Priority-based state assignment (most specific first)
+        if needsAttention {
             state = .needsAttention
-        } else if hasSpinner || hasThinking {
+        } else if isThinking {
             state = .thinking
-        } else if hasStreamCursor || hasToolUse {
+        } else if isGenerating {
             state = .generating
-        } else if hasClaudePrompt || (hasClaudeUI && !hasShellPrompt) {
-            state = .userInput
-        } else if hasShellPrompt {
+        } else if hasShellPrompt && !isWorking {
             state = .idle
+        } else if hasClaudePrompt {
+            state = .userInput
         }
+        // else: keep current state — avoids flickering on transient frames
         // else: keep current state (don't flicker)
 
         // --- Cost detection from Claude's status bar ---
