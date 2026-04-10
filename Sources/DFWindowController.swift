@@ -37,9 +37,9 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
         buildLayout()
         setupShortcuts()
 
-        // Create initial session after a brief delay so the window is visible
+        // Prompt user to open a project directory
         DispatchQueue.main.async { [weak self] in
-            self?.terminalPane.ensureInitialSession()
+            self?.promptOpenProject()
         }
     }
 
@@ -254,6 +254,44 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
                 errAlert.runModal()
             }
         }
+    }
+
+    // MARK: - Open Project
+
+    func promptOpenProject() {
+        let panel = NSOpenPanel()
+        panel.title = "Open Project"
+        panel.message = "Choose a directory to open with Claude Code"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+
+        guard let win = window else { return }
+        panel.beginSheetModal(for: win) { [weak self] response in
+            guard response == .OK, let url = panel.url else {
+                // User cancelled — open in home directory as fallback
+                self?.openProject(at: NSHomeDirectory())
+                return
+            }
+            self?.openProject(at: url.path)
+        }
+    }
+
+    func openProject(at path: String) {
+        // Set the project directory
+        SessionManager.shared.projectDir = path
+        FileManager.default.changeCurrentDirectoryPath(path)
+
+        // Detect git repo for worktree support
+        WorktreeManager.shared.detectRepoRoot(from: path)
+
+        // Update window title
+        let dirName = (path as NSString).lastPathComponent
+        window?.title = "Draftframe — \(dirName)"
+
+        // Create the first Claude session in this directory
+        terminalPane.createNewSession(name: dirName, worktreePath: path)
     }
 }
 

@@ -39,6 +39,8 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
         // File menu
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Open Project…", action: #selector(menuOpenProject), keyEquivalent: "o")
+        fileMenu.addItem(NSMenuItem.separator())
         fileMenu.addItem(withTitle: "New Session", action: #selector(menuNewSession), keyEquivalent: "t")
         fileMenu.addItem(withTitle: "New Session with Worktree", action: #selector(menuNewWorktreeSession), keyEquivalent: "n")
         fileMenu.addItem(NSMenuItem.separator())
@@ -74,6 +76,10 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Menu Actions
+
+    @objc private func menuOpenProject() {
+        windowController?.promptOpenProject()
+    }
 
     @objc private func menuNewSession() {
         let count = SessionManager.shared.sessions.count + 1

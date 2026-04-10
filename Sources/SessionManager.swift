@@ -93,6 +93,7 @@ final class SessionManager {
 
     private(set) var sessions: [Session] = []
     private(set) var activeSessionIndex: Int = -1
+    var projectDir: String?
 
     var activeSession: Session? {
         guard activeSessionIndex >= 0, activeSessionIndex < sessions.count else { return nil }
@@ -162,8 +163,7 @@ final class SessionManager {
         }
 
         // Start JSONL watcher for cost/token tracking.
-        // Use the worktree path if available, otherwise the current project directory.
-        let watchDir = worktreePath ?? FileManager.default.currentDirectoryPath
+        let watchDir = worktreePath ?? projectDir ?? FileManager.default.currentDirectoryPath
         session.startJSONLWatcher(directory: watchDir)
 
         sessions.append(session)

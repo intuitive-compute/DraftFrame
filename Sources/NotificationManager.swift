@@ -12,7 +12,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     private override init() {
         super.init()
 
-        UNUserNotificationCenter.current().delegate = self
+        // UNUserNotificationCenter crashes without an app bundle — guard it
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().delegate = self
+        }
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(sessionsChanged),
@@ -28,6 +31,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     /// Request notification permission. Call from DFAppDelegate on launch.
     func requestAuthorization() {
+        guard Bundle.main.bundleIdentifier != nil else { return }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
