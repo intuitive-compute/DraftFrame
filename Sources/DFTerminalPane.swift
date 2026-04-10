@@ -8,7 +8,8 @@ final class DFTerminalPane: NSView {
     private let tabBar = NSView()
     private let tabStack = NSStackView()
     private let terminalContainer = NSView()
-    private var tabButtons: [NSButton] = []
+    /// Each entry is the container view for a tab (holds name button + close button).
+    private var tabViews: [NSView] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -121,40 +122,67 @@ final class DFTerminalPane: NSView {
     }
 
     private func rebuildTabs() {
-        // Remove old tab buttons
-        for btn in tabButtons {
-            tabStack.removeArrangedSubview(btn)
-            btn.removeFromSuperview()
+        // Remove old tab views
+        for view in tabViews {
+            tabStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
         }
-        tabButtons.removeAll()
+        tabViews.removeAll()
 
         let sessions = SessionManager.shared.sessions
-        for (i, session) in sessions.enumerated() {
-            let btn = NSButton(title: "", target: self, action: #selector(tabClicked(_:)))
-            btn.tag = i
-            btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.isBordered = false
-            btn.wantsLayer = true
-            btn.layer?.cornerRadius = 4
+        let canClose = sessions.count > 1
 
-            // Attributed title with session name
+        for (i, session) in sessions.enumerated() {
             let isActive = i == SessionManager.shared.activeSessionIndex
+
+            // Container for the tab (name button + close button)
+            let container = NSView()
+            container.translatesAutoresizingMaskIntoConstraints = false
+            container.wantsLayer = true
+            container.layer?.cornerRadius = 4
+            container.layer?.backgroundColor = isActive ? Theme.surface2.cgColor : NSColor.clear.cgColor
+
+            // Name button
+            let nameBtn = NSButton(title: "", target: self, action: #selector(tabClicked(_:)))
+            nameBtn.tag = i
+            nameBtn.translatesAutoresizingMaskIntoConstraints = false
+            nameBtn.isBordered = false
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: Theme.mono(11, weight: isActive ? .medium : .regular),
                 .foregroundColor: isActive ? Theme.text1 : Theme.text3,
             ]
-            btn.attributedTitle = NSAttributedString(string: " \(session.name) ", attributes: attrs)
+            nameBtn.attributedTitle = NSAttributedString(string: " \(session.name) ", attributes: attrs)
+            container.addSubview(nameBtn)
 
-            if isActive {
-                btn.layer?.backgroundColor = Theme.surface2.cgColor
-            } else {
-                btn.layer?.backgroundColor = NSColor.clear.cgColor
-            }
+            // Double-click gesture on name button for rename
+            let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(tabDoubleClicked(_:)))
+            doubleClick.numberOfClicksRequired = 2
+            nameBtn.addGestureRecognizer(doubleClick)
 
-            btn.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            // Close button (hidden if last remaining tab)
+            let closeBtn = NSButton(title: "\u{00D7}", target: self, action: #selector(closeTabClicked(_:)))
+            closeBtn.tag = i
+            closeBtn.translatesAutoresizingMaskIntoConstraints = false
+            closeBtn.isBordered = false
+            closeBtn.font = Theme.mono(10)
+            closeBtn.contentTintColor = Theme.text3
+            closeBtn.isHidden = !canClose
+            container.addSubview(closeBtn)
 
-            tabStack.addArrangedSubview(btn)
-            tabButtons.append(btn)
+            NSLayoutConstraint.activate([
+                container.heightAnchor.constraint(equalToConstant: 24),
+
+                nameBtn.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                nameBtn.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+
+                closeBtn.leadingAnchor.constraint(equalTo: nameBtn.trailingAnchor, constant: -2),
+                closeBtn.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -2),
+                closeBtn.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                closeBtn.widthAnchor.constraint(equalToConstant: 16),
+            ])
+
+            tabStack.addArrangedSubview(container)
+            tabViews.append(container)
         }
 
         showActiveTerminal()
@@ -164,17 +192,69 @@ final class DFTerminalPane: NSView {
         SessionManager.shared.switchTo(index: sender.tag)
     }
 
+    @objc private func closeTabClicked(_ sender: NSButton) {
+        let index = sender.tag
+        SessionManager.shared.closeSession(at: index)
+    }
+
+    @objc private func tabDoubleClicked(_ sender: NSClickGestureRecognizer) {
+        // Find the button that owns this gesture
+        guard let nameBtn = sender.view as? NSButton else { return }
+        let index = nameBtn.tag
+        promptRenameSession(at: index)
+    }
+
+    /// Show an alert with a text field to rename the session.
+    func promptRenameSession(at index: Int) {
+        let sessions = SessionManager.shared.sessions
+        guard index >= 0, index < sessions.count else { return }
+        let session = sessions[index]
+
+        let alert = NSAlert()
+        alert.messageText = "Rename Session"
+        alert.informativeText = "Enter a new name for \"\(session.name)\":"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        input.stringValue = session.name
+        alert.accessoryView = input
+
+        guard let win = window else { return }
+        alert.beginSheetModal(for: win) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !newName.isEmpty else { return }
+            session.name = newName
+            NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+        }
+    }
+
     private func updateTabHighlights() {
         let activeIdx = SessionManager.shared.activeSessionIndex
-        for (i, btn) in tabButtons.enumerated() {
+        let sessions = SessionManager.shared.sessions
+        let canClose = sessions.count > 1
+
+        for (i, container) in tabViews.enumerated() {
+            guard i < sessions.count else { break }
             let isActive = i == activeIdx
-            let session = SessionManager.shared.sessions[i]
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: Theme.mono(11, weight: isActive ? .medium : .regular),
-                .foregroundColor: isActive ? Theme.text1 : Theme.text3,
-            ]
-            btn.attributedTitle = NSAttributedString(string: " \(session.name) ", attributes: attrs)
-            btn.layer?.backgroundColor = isActive ? Theme.surface2.cgColor : NSColor.clear.cgColor
+            let session = sessions[i]
+            container.layer?.backgroundColor = isActive ? Theme.surface2.cgColor : NSColor.clear.cgColor
+
+            // Update name button attributes
+            for sub in container.subviews {
+                if let nameBtn = sub as? NSButton, nameBtn.action == #selector(tabClicked(_:)) {
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: Theme.mono(11, weight: isActive ? .medium : .regular),
+                        .foregroundColor: isActive ? Theme.text1 : Theme.text3,
+                    ]
+                    nameBtn.attributedTitle = NSAttributedString(string: " \(session.name) ", attributes: attrs)
+                }
+                // Update close button visibility
+                if let closeBtn = sub as? NSButton, closeBtn.action == #selector(closeTabClicked(_:)) {
+                    closeBtn.isHidden = !canClose
+                }
+            }
         }
     }
 

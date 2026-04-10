@@ -119,6 +119,14 @@ final class SessionCard: NSView {
         // Click to switch
         let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
         addGestureRecognizer(click)
+
+        // Double-click to rename
+        let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(doubleClicked))
+        doubleClick.numberOfClicksRequired = 2
+        addGestureRecognizer(doubleClick)
+
+        // On macOS, single-click fires alongside double-click; the session
+        // switch is idempotent so this is acceptable behavior.
     }
 
     @available(*, unavailable)
@@ -126,6 +134,27 @@ final class SessionCard: NSView {
 
     @objc private func clicked() {
         SessionManager.shared.switchTo(index: index)
+    }
+
+    @objc private func doubleClicked() {
+        let alert = NSAlert()
+        alert.messageText = "Rename Session"
+        alert.informativeText = "Enter a new name for \"\(session.name)\":"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        input.stringValue = session.name
+        alert.accessoryView = input
+
+        guard let win = window else { return }
+        alert.beginSheetModal(for: win) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self = self else { return }
+            let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !newName.isEmpty else { return }
+            self.session.name = newName
+            NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+        }
     }
 
     private func buildCard() {
