@@ -400,24 +400,24 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
         window?.title = "Draftframe — \(dirName)"
 
         // Check for saved sessions to restore
+        var shouldRestore = false
         if SessionPersistence.shared.hasSavedSessions(for: path) {
             let alert = NSAlert()
             alert.messageText = "Restore previous sessions?"
             alert.informativeText = "Saved sessions were found for this project. Would you like to restore them?"
             alert.addButton(withTitle: "Restore")
             alert.addButton(withTitle: "Start Fresh")
+            shouldRestore = alert.runModal() == .alertFirstButtonReturn
+        }
 
-            // Use runModal instead of beginSheetModal — simpler and doesn't get stuck
-            let response = alert.runModal()
-            if response == .alertFirstButtonReturn {
+        // Create sessions AFTER modal returns so the run loop is free
+        DispatchQueue.main.async { [weak self] in
+            if shouldRestore {
                 SessionPersistence.shared.restoreSessions(for: path)
             } else {
                 SessionPersistence.shared.clearSavedSessions()
-                terminalPane.createNewSession(name: dirName, worktreePath: path)
+                self?.terminalPane.createNewSession(name: dirName, worktreePath: path)
             }
-        } else {
-            // No saved sessions — create the first Claude session
-            terminalPane.createNewSession(name: dirName, worktreePath: path)
         }
     }
 }

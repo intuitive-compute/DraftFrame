@@ -117,8 +117,7 @@ final class DFTerminalPane: NSView {
     }
 
     @objc private func activeSessionChanged() {
-        showActiveTerminal()
-        updateTabHighlights()
+        rebuildTabs()
     }
 
     private func rebuildTabs() {
@@ -142,14 +141,47 @@ final class DFTerminalPane: NSView {
             container.layer?.cornerRadius = 4
             container.layer?.backgroundColor = isActive ? Theme.surface2.cgColor : NSColor.clear.cgColor
 
+            // Pulsing attention dot on the tab (for non-active sessions needing input)
+            let needsAttention = !isActive && (session.state == .needsAttention || session.state == .userInput)
+            let tabDot = NSView()
+            tabDot.wantsLayer = true
+            tabDot.translatesAutoresizingMaskIntoConstraints = false
+            tabDot.layer?.cornerRadius = 3
+            tabDot.layer?.backgroundColor = session.state.color.cgColor
+            tabDot.isHidden = !needsAttention
+            container.addSubview(tabDot)
+
+            if needsAttention {
+                let pulse = CABasicAnimation(keyPath: "opacity")
+                pulse.fromValue = 0.3
+                pulse.toValue = 1.0
+                pulse.duration = 1.4
+                pulse.autoreverses = true
+                pulse.repeatCount = .infinity
+                pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                tabDot.layer?.add(pulse, forKey: "tabDotPulse")
+
+                tabDot.layer?.shadowColor = session.state.color.cgColor
+                tabDot.layer?.shadowOffset = .zero
+                tabDot.layer?.shadowRadius = 4
+                tabDot.layer?.shadowOpacity = 0.7
+                tabDot.layer?.masksToBounds = false
+            }
+
             // Name button
             let nameBtn = NSButton(title: "", target: self, action: #selector(tabClicked(_:)))
             nameBtn.tag = i
             nameBtn.translatesAutoresizingMaskIntoConstraints = false
             nameBtn.isBordered = false
+            let nameColor: NSColor
+            if needsAttention {
+                nameColor = session.state.color
+            } else {
+                nameColor = isActive ? Theme.text1 : Theme.text3
+            }
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: Theme.mono(11, weight: isActive ? .medium : .regular),
-                .foregroundColor: isActive ? Theme.text1 : Theme.text3,
+                .foregroundColor: nameColor,
             ]
             nameBtn.attributedTitle = NSAttributedString(string: " \(session.name) ", attributes: attrs)
             container.addSubview(nameBtn)
@@ -172,7 +204,12 @@ final class DFTerminalPane: NSView {
             NSLayoutConstraint.activate([
                 container.heightAnchor.constraint(equalToConstant: 24),
 
-                nameBtn.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                tabDot.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
+                tabDot.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                tabDot.widthAnchor.constraint(equalToConstant: 6),
+                tabDot.heightAnchor.constraint(equalToConstant: 6),
+
+                nameBtn.leadingAnchor.constraint(equalTo: needsAttention ? tabDot.trailingAnchor : container.leadingAnchor, constant: needsAttention ? 2 : 0),
                 nameBtn.centerYAnchor.constraint(equalTo: container.centerYAnchor),
 
                 closeBtn.leadingAnchor.constraint(equalTo: nameBtn.trailingAnchor, constant: -2),
@@ -231,31 +268,9 @@ final class DFTerminalPane: NSView {
     }
 
     private func updateTabHighlights() {
-        let activeIdx = SessionManager.shared.activeSessionIndex
-        let sessions = SessionManager.shared.sessions
-        let canClose = sessions.count > 1
-
-        for (i, container) in tabViews.enumerated() {
-            guard i < sessions.count else { break }
-            let isActive = i == activeIdx
-            let session = sessions[i]
-            container.layer?.backgroundColor = isActive ? Theme.surface2.cgColor : NSColor.clear.cgColor
-
-            // Update name button attributes
-            for sub in container.subviews {
-                if let nameBtn = sub as? NSButton, nameBtn.action == #selector(tabClicked(_:)) {
-                    let attrs: [NSAttributedString.Key: Any] = [
-                        .font: Theme.mono(11, weight: isActive ? .medium : .regular),
-                        .foregroundColor: isActive ? Theme.text1 : Theme.text3,
-                    ]
-                    nameBtn.attributedTitle = NSAttributedString(string: " \(session.name) ", attributes: attrs)
-                }
-                // Update close button visibility
-                if let closeBtn = sub as? NSButton, closeBtn.action == #selector(closeTabClicked(_:)) {
-                    closeBtn.isHidden = !canClose
-                }
-            }
-        }
+        // Session state changes affect tab indicators, so do a full rebuild
+        // to keep attention dots and colors in sync.
+        rebuildTabs()
     }
 
     private func showActiveTerminal() {
