@@ -6,14 +6,16 @@ import UserNotifications
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
+    /// Whether we can use UNUserNotificationCenter (requires app bundle).
+    private let canUseNotifications = Bundle.main.bundleIdentifier != nil
+
     /// Tracks previous state per session ID so we can detect transitions.
     private var previousStates: [UUID: SessionState] = [:]
 
     private override init() {
         super.init()
 
-        // UNUserNotificationCenter crashes without an app bundle — guard it
-        if Bundle.main.bundleIdentifier != nil {
+        if canUseNotifications {
             UNUserNotificationCenter.current().delegate = self
         }
 
@@ -101,6 +103,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - Sending Notifications
 
     private func sendNotification(title: String, body: String, identifier: String) {
+        guard canUseNotifications else {
+            NSLog("[NotificationManager] %@: %@", title, body)
+            return
+        }
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -109,7 +116,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let request = UNNotificationRequest(
             identifier: identifier,
             content: content,
-            trigger: nil // deliver immediately
+            trigger: nil
         )
 
         UNUserNotificationCenter.current().add(request) { error in
