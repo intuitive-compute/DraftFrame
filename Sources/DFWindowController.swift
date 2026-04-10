@@ -72,11 +72,21 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
         // Editor starts hidden
         codeEditor.isHidden = true
 
-        // Set initial widths via holding priorities
-        sidebar.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        // Set initial widths — sidebar and session bar get fixed defaults,
+        // terminal fills the rest
+        sidebar.widthAnchor.constraint(greaterThanOrEqualToConstant: sidebarMinWidth).isActive = true
+        sessionBar.widthAnchor.constraint(greaterThanOrEqualToConstant: sessionBarMinWidth).isActive = true
+
+        let sidebarW = sidebar.widthAnchor.constraint(equalToConstant: sidebarDefaultWidth)
+        sidebarW.priority = .defaultHigh - 1
+        sidebarW.isActive = true
+
+        let sessionBarW = sessionBar.widthAnchor.constraint(equalToConstant: sessionBarDefaultWidth)
+        sessionBarW.priority = .defaultHigh - 1
+        sessionBarW.isActive = true
+
         terminalPane.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        codeEditor.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        sessionBar.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        terminalPane.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         // Vertical: splitView on top, status bar on bottom
         let vStack = NSStackView(views: [splitView, statusBar])
@@ -105,7 +115,7 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
             dashboard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        // Initial pane widths are set in resetDividerPositions(), called after project opens
+        // NSSplitView handles initial layout via content hugging priorities
 
         // Listen for editor toggle
         NotificationCenter.default.addObserver(
@@ -175,44 +185,8 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
         }
     }
 
-    func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
-        let newWidth = splitView.frame.width
-        let dividerThickness = splitView.dividerThickness
-        let height = splitView.frame.height
-
-        var sidebarWidth = sidebar.frame.width
-        sidebarWidth = min(max(sidebarWidth, sidebarMinWidth), sidebarMaxWidth)
-
-        var sessionBarWidth = sessionBar.frame.width
-        sessionBarWidth = min(max(sessionBarWidth, sessionBarMinWidth), sessionBarMaxWidth)
-
-        if editorVisible {
-            var editorWidth = codeEditor.frame.width
-            editorWidth = min(max(editorWidth, editorMinWidth), editorMaxWidth)
-
-            let terminalWidth = newWidth - sidebarWidth - editorWidth - sessionBarWidth - (dividerThickness * 3)
-            var x: CGFloat = 0
-
-            sidebar.frame = NSRect(x: x, y: 0, width: sidebarWidth, height: height)
-            x += sidebarWidth + dividerThickness
-
-            terminalPane.frame = NSRect(x: x, y: 0, width: max(terminalWidth, 200), height: height)
-            x += max(terminalWidth, 200) + dividerThickness
-
-            codeEditor.frame = NSRect(x: x, y: 0, width: editorWidth, height: height)
-            x += editorWidth + dividerThickness
-
-            sessionBar.frame = NSRect(x: x, y: 0, width: sessionBarWidth, height: height)
-        } else {
-            let terminalWidth = newWidth - sidebarWidth - sessionBarWidth - (dividerThickness * 2)
-
-            sidebar.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: height)
-            terminalPane.frame = NSRect(x: sidebarWidth + dividerThickness, y: 0,
-                                         width: max(terminalWidth, 200), height: height)
-            sessionBar.frame = NSRect(x: newWidth - sessionBarWidth, y: 0,
-                                       width: sessionBarWidth, height: height)
-        }
-    }
+    // Let NSSplitView handle resize with its default behavior.
+    // We only constrain via min/max coordinate methods above.
 
     /// Custom divider color matching Theme.surface3.
     func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
@@ -411,17 +385,6 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
                 SessionPersistence.shared.clearSavedSessions()
                 self?.terminalPane.createNewSession(name: dirName, worktreePath: path)
             }
-            // Fix split view divider positions now that window has a real frame
-            self?.resetDividerPositions()
-        }
-    }
-
-    private func resetDividerPositions() {
-        guard splitView.frame.width > 0 else { return }
-        splitView.setPosition(sidebarDefaultWidth, ofDividerAt: 0)
-        let terminalEnd = splitView.frame.width - sessionBarDefaultWidth
-        if terminalEnd > sidebarDefaultWidth {
-            splitView.setPosition(terminalEnd, ofDividerAt: 1)
         }
     }
 }

@@ -113,6 +113,7 @@ final class DFTerminalPane: NSView {
     }
 
     @objc private func sessionsChanged() {
+        NSLog("[TerminalPane] sessionsChanged notification received, sessions=%d", SessionManager.shared.sessions.count)
         rebuildTabs()
     }
 
@@ -280,7 +281,10 @@ final class DFTerminalPane: NSView {
         }
 
         guard let session = SessionManager.shared.activeSession,
-              let tv = session.terminalView else { return }
+              let tv = session.terminalView else {
+            NSLog("[TerminalPane] showActiveTerminal: no active session or no terminalView")
+            return
+        }
 
         tv.translatesAutoresizingMaskIntoConstraints = false
         terminalContainer.addSubview(tv)
@@ -293,6 +297,11 @@ final class DFTerminalPane: NSView {
         ])
 
         window?.makeFirstResponder(tv)
+
+        NSLog("[TerminalPane] showActiveTerminal: self.frame=%@, container.frame=%@, tv.frame=%@",
+              NSStringFromRect(self.frame),
+              NSStringFromRect(terminalContainer.frame),
+              NSStringFromRect(tv.frame))
     }
 
     override var acceptsFirstResponder: Bool { true }
