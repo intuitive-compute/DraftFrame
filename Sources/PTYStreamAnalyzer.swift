@@ -157,34 +157,43 @@ final class PTYStreamAnalyzer {
     // MARK: - Frame Analysis
 
     private func analyzeFrame() {
-        let lower = frameText.lowercased()
+        let lower = recentText.lowercased()
 
-        // Bottom of frame — last non-empty lines
-        let lines = frameText.components(separatedBy: "\n")
-        let bottomLines = lines.suffix(8).reversed()
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let bottomText = bottomLines.prefix(5).joined(separator: " ").lowercased()
+        // Look at the most recent content (last ~500 chars) for bottom-of-screen indicators
+        let recentLower = String(recentText.suffix(500)).lowercased()
 
         let newState: SessionState
 
-        if !alternateBufferActive {
-            // Claude is not running (or hasn't started yet) — shell prompt
-            newState = .idle
-        } else if bottomText.contains("allow") && bottomText.contains("deny") {
+        // Permission prompts — highest priority
+        if recentLower.contains("allow") && recentLower.contains("deny") {
             newState = .needsAttention
-        } else if bottomText.contains("[y/n]") || bottomText.contains("(y/n)") ||
-                  bottomText.contains("do you want") {
+        } else if recentLower.contains("[y/n]") || recentLower.contains("(y/n)") {
             newState = .needsAttention
-        } else if bottomText.contains("esc to interrupt") || bottomText.contains("esc to cancel") {
-            // Claude is actively working — determine thinking vs generating
-            if lower.contains("thinking") {
+        }
+        // "esc to interrupt" = Claude is actively working RIGHT NOW
+        else if recentLower.contains("esc to interrupt") || recentLower.contains("esc to cancel") {
+            if recentLower.contains("thinking") {
                 newState = .thinking
             } else {
                 newState = .generating
             }
-        } else {
-            // Alternate buffer active but no working indicator — Claude is at its prompt
+        }
+        // Claude's prompt marker — waiting for user
+        // Use the very recent text (last ~100 chars) to detect the active prompt
+        else if String(recentText.suffix(100)).contains("/effort") ||
+                String(recentText.suffix(50)).contains("> ") {
+            // Claude is showing its UI but not working — at the input prompt
+            // "/effort" appears in Claude's bottom bar, ">" is the prompt
             newState = .userInput
+        }
+        // Shell prompt — Claude not running
+        else if recentLower.hasSuffix("$ ") || recentLower.hasSuffix("% ") ||
+                recentLower.contains("❯") {
+            newState = .idle
+        }
+        else {
+            // Can't determine — keep current state
+            return
         }
 
         updateState(newState)
