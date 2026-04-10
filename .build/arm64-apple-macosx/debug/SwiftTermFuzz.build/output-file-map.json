@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/primary.swiftdeps"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTermFuzz/main.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main.dia"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "": {
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/primary.swiftdeps"
+  },
+  "/Users/joseph/projects/draftframe/Sources/DFAppDelegate.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFAppDelegate.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFAppDelegate.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFAppDelegate~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFAppDelegate.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFAppDelegate.dia"
+  },
+  "/Users/joseph/projects/draftframe/Sources/DFSessionBar.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSessionBar.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSessionBar.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSessionBar~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSessionBar.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSessionBar.dia"
+  },
+  "/Users/joseph/projects/draftframe/Sources/DFSidebar.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSidebar.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSidebar.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSidebar~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSidebar.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFSidebar.dia"
+  },
+  "/Users/joseph/projects/draftframe/Sources/DFStatusBar.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFStatusBar.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFStatusBar.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFStatusBar~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFStatusBar.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFStatusBar.dia"
+  },
+  "/Users/joseph/projects/draftframe/Sources/DFTerminalPane.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFTerminalPane.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFTerminalPane.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFTerminalPane~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFTerminalPane.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFTerminalPane.dia"
+  },
+  "/Users/joseph/projects/draftframe/Sources/DFWindowController.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFWindowController.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFWindowController.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFWindowController~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFWindowController.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/DFWindowController.dia"
+  },
+  "/Users/joseph/projects/draftframe/Sources/Theme.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/Theme.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/Theme.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/Theme~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/Theme.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/Theme.dia"
+  },
+  "/Users/joseph/projects/draftframe/Sources/main.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/main.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/main.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/main.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/Draftframe.build/main.dia"
+  }
+}

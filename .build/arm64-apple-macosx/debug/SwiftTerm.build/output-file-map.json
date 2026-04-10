@@ -1,0 +1,432 @@
+{
+  "": {
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/primary.swiftdeps"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/AppleTerminalView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/AppleTerminalView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/AppleTerminalView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/AppleTerminalView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/AppleTerminalView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/BlockElementRenderer.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BlockElementRenderer.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BlockElementRenderer.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BlockElementRenderer~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BlockElementRenderer.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BlockElementRenderer.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/BoxDrawingRenderer.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BoxDrawingRenderer.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BoxDrawingRenderer.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BoxDrawingRenderer~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BoxDrawingRenderer.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BoxDrawingRenderer.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/CaretView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CaretView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CaretView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CaretView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CaretView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CaretView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/Extensions.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Extensions.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Extensions.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Extensions~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Extensions.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Extensions.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/Metal/CoreTextGlyphRasterizer.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CoreTextGlyphRasterizer.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CoreTextGlyphRasterizer.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CoreTextGlyphRasterizer~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CoreTextGlyphRasterizer.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CoreTextGlyphRasterizer.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/Metal/GlyphAtlas.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/GlyphAtlas.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/GlyphAtlas.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/GlyphAtlas~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/GlyphAtlas.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/GlyphAtlas.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/Metal/MetalBufferingMode.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalBufferingMode.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalBufferingMode.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalBufferingMode~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalBufferingMode.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalBufferingMode.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/Metal/MetalError.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalError.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalError.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalError~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalError.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalError.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/Metal/MetalTerminalRenderer.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalTerminalRenderer.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalTerminalRenderer.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalTerminalRenderer~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalTerminalRenderer.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MetalTerminalRenderer.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/TerminalProgressBarView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalProgressBarView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalProgressBarView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalProgressBarView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalProgressBarView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalProgressBarView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Apple/TerminalViewDelegate.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewDelegate.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewDelegate.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewDelegate~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewDelegate.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewDelegate.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Buffer.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Buffer.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Buffer.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Buffer~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Buffer.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Buffer.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/BufferLine.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferLine.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferLine.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferLine~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferLine.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferLine.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/BufferSet.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferSet.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferSet.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferSet~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferSet.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/BufferSet.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/CharData.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharData.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharData.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharData~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharData.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharData.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/CharSets.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharSets.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharSets.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharSets~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharSets.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CharSets.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/CircularList.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CircularList.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CircularList.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CircularList~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CircularList.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/CircularList.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Colors.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Colors.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Colors.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Colors~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Colors.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Colors.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/EscapeSequenceParser.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequenceParser.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequenceParser.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequenceParser~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequenceParser.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequenceParser.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/EscapeSequences.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequences.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequences.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequences~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequences.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/EscapeSequences.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/ExtensionsTerminal.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/ExtensionsTerminal.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/ExtensionsTerminal.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/ExtensionsTerminal~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/ExtensionsTerminal.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/ExtensionsTerminal.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/File.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/File.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/File.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/File~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/File.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/File.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/HeadlessTerminal.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/HeadlessTerminal.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/HeadlessTerminal.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/HeadlessTerminal~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/HeadlessTerminal.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/HeadlessTerminal.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/KittyGraphics.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyGraphics.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyGraphics.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyGraphics~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyGraphics.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyGraphics.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/KittyKeyboardEncoder.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardEncoder.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardEncoder.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardEncoder~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardEncoder.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardEncoder.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/KittyKeyboardProtocol.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardProtocol.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardProtocol.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardProtocol~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardProtocol.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyKeyboardProtocol.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/KittyPlaceholder.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyPlaceholder.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyPlaceholder.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyPlaceholder~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyPlaceholder.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/KittyPlaceholder.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Line.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Line.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Line.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Line~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Line.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Line.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/LocalProcess.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/LocalProcess.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/LocalProcess.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/LocalProcess~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/LocalProcess.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/LocalProcess.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Mac/MacAccessibilityService.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacAccessibilityService.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacAccessibilityService.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacAccessibilityService~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacAccessibilityService.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacAccessibilityService.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Mac/MacCaretView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacCaretView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacCaretView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacCaretView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacCaretView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacCaretView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacDebugView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacDebugView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacDebugView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacDebugView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacDebugView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Mac/MacExtensions.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacExtensions.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacExtensions.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacExtensions~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacExtensions.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacExtensions.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Mac/MacFindBarView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacFindBarView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacFindBarView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacFindBarView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacFindBarView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacFindBarView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacLocalTerminalView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacLocalTerminalView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacLocalTerminalView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacLocalTerminalView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacLocalTerminalView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacTerminalView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacTerminalView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacTerminalView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacTerminalView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/MacTerminalView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Position.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Position.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Position.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Position~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Position.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Position.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Pty.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Pty.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Pty.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Pty~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Pty.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Pty.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/SearchEngine.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchEngine.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchEngine.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchEngine~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchEngine.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchEngine.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/SearchLineCache.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchLineCache.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchLineCache.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchLineCache~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchLineCache.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchLineCache.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/SearchOptions.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchOptions.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchOptions.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchOptions~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchOptions.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchOptions.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/SearchService.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchService.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchService.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchService~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchService.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchService.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/SearchState.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchState.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchState.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchState~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchState.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SearchState.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/SelectionService.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SelectionService.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SelectionService.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SelectionService~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SelectionService.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SelectionService.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/SixelDcsHandler.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SixelDcsHandler.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SixelDcsHandler.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SixelDcsHandler~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SixelDcsHandler.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SixelDcsHandler.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Terminal.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Terminal.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Terminal.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Terminal~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Terminal.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Terminal.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalOptions.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalOptions.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalOptions~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalOptions.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalOptions.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/TerminalViewSearch.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewSearch.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewSearch.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewSearch~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewSearch.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/TerminalViewSearch.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/UnicodeWidthData.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/UnicodeWidthData.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/UnicodeWidthData.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/UnicodeWidthData~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/UnicodeWidthData.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/UnicodeWidthData.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/Utilities.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Utilities.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Utilities.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Utilities~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Utilities.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/Utilities.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/SwiftUITerminalView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SwiftUITerminalView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SwiftUITerminalView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SwiftUITerminalView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SwiftUITerminalView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/SwiftUITerminalView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/iOSAccessoryView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSAccessoryView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSAccessoryView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSAccessoryView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSAccessoryView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSAccessoryView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/iOSCaretView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSCaretView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSCaretView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSCaretView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSCaretView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSCaretView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/iOSDoubleButton.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSDoubleButton.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSDoubleButton.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSDoubleButton~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSDoubleButton.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSDoubleButton.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/iOSExtensions.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSExtensions.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSExtensions.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSExtensions~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSExtensions.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSExtensions.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/iOSKeyboardView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSKeyboardView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSKeyboardView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSKeyboardView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSKeyboardView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSKeyboardView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/iOSTerminalView.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTerminalView.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTerminalView.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTerminalView~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTerminalView.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTerminalView.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/iOSTextInput.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextInput.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextInput.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextInput~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextInput.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextInput.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/checkouts/SwiftTerm/Sources/SwiftTerm/iOS/iOSTextStorage.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextStorage.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextStorage.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextStorage~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextStorage.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/iOSTextStorage.dia"
+  },
+  "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/DerivedSources/resource_bundle_accessor.swift": {
+    "dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/resource_bundle_accessor.d",
+    "object": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/resource_bundle_accessor.swift.o",
+    "swiftmodule": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/resource_bundle_accessor~partial.swiftmodule",
+    "swift-dependencies": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/resource_bundle_accessor.swiftdeps",
+    "diagnostics": "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/resource_bundle_accessor.dia"
+  }
+}

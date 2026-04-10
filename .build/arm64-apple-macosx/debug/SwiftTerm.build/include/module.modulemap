@@ -1,0 +1,3 @@
+module SwiftTerm {
+    header "/Users/joseph/projects/draftframe/.build/arm64-apple-macosx/debug/SwiftTerm.build/include/SwiftTerm-Swift.h"
+}
