@@ -10,6 +10,7 @@ final class ShortcutManager {
     var onSwitchSession: ((Int) -> Void)?
     var onToggleDashboard: (() -> Void)?
     var onNewSessionWithWorktree: (() -> Void)?
+    var onToggleSidebar: (() -> Void)?
 
     private var monitor: Any?
 
@@ -54,6 +55,12 @@ final class ShortcutManager {
         // Cmd+N: new session with worktree
         if flags == .command, event.keyCode == 45 { // 'n'
             onNewSessionWithWorktree?()
+            return true
+        }
+
+        // Cmd+\: toggle sidebar
+        if flags == .command, event.keyCode == 42 { // '\'
+            onToggleSidebar?()
             return true
         }
 
