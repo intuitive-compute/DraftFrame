@@ -2,3 +2,4 @@
 .swiftpm/
 DerivedData/
 *.xcodeproj/xcuserdata/
+.draftframe/
