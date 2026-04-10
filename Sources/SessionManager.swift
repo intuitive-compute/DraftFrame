@@ -215,10 +215,15 @@ final class SessionManager {
                             execName: nil)
         }
 
-        // cd into worktree directory after shell starts
+        // cd into worktree directory then launch claude
         if let wtPath = worktreePath {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                tv.send(txt: "cd \(wtPath) && clear\r")
+                tv.send(txt: "cd \(wtPath) && clear && claude\r")
+            }
+        } else {
+            // No worktree — just launch claude
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                tv.send(txt: "claude\r")
             }
         }
 
