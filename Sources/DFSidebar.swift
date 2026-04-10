@@ -124,6 +124,14 @@ final class DFSidebar: NSView {
 
             // Add right-click context menu
             let menu = NSMenu()
+
+            let openItem = NSMenuItem(title: "Open Session Here", action: #selector(openSessionFromMenu(_:)), keyEquivalent: "")
+            openItem.target = self
+            openItem.representedObject = wt
+            menu.addItem(openItem)
+
+            menu.addItem(NSMenuItem.separator())
+
             if !isBase {
                 let removeItem = NSMenuItem(title: "Remove Worktree", action: #selector(removeWorktreeFromMenu(_:)), keyEquivalent: "")
                 removeItem.target = self
@@ -157,11 +165,27 @@ final class DFSidebar: NSView {
     }
 
     @objc private func worktreeRowClicked(_ sender: AnyObject) {
-        // Click on worktree row — switch to that session if one exists
         guard let row = sender as? ClickableRow, let path = row.worktreePath else { return }
         let sessions = SessionManager.shared.sessions
         if let idx = sessions.firstIndex(where: { $0.worktreePath == path }) {
+            // Session exists — switch to it
             SessionManager.shared.switchTo(index: idx)
+        } else {
+            // No session for this worktree — create one
+            let name = row.worktreeName ?? (path as NSString).lastPathComponent
+            SessionManager.shared.createSession(name: name, worktreePath: path)
+        }
+    }
+
+    @objc private func openSessionFromMenu(_ sender: NSMenuItem) {
+        guard let wt = sender.representedObject as? WorktreeManager.Worktree else { return }
+        let name = wt.branch.isEmpty ? (wt.path as NSString).lastPathComponent : wt.branch
+        // Check if a session already exists for this path
+        let sessions = SessionManager.shared.sessions
+        if let idx = sessions.firstIndex(where: { $0.worktreePath == wt.path }) {
+            SessionManager.shared.switchTo(index: idx)
+        } else {
+            SessionManager.shared.createSession(name: name, worktreePath: wt.path)
         }
     }
 

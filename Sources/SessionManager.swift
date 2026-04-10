@@ -67,75 +67,101 @@ final class Session {
     func pollTerminalState() {
         guard let tv = terminalView else { return }
         let terminal = tv.getTerminal()
-
-        // Read last 5 visible lines from the terminal buffer
         let rows = terminal.rows
+        let cols = terminal.cols
+
+        // Read ALL visible lines
         var lines: [String] = []
-        for row in max(0, rows - 5)..<rows {
+        for row in 0..<rows {
             guard let line = terminal.getLine(row: row) else { continue }
-            let text = line.translateToString()
-            lines.append(text.trimmingCharacters(in: CharacterSet.whitespaces))
+            lines.append(line.translateToString())
         }
 
         let snapshot = lines.joined(separator: "\n")
-        let lastLine = lines.last(where: { !$0.isEmpty }) ?? ""
 
         // Don't reprocess if nothing changed
         guard snapshot != lastBufferSnapshot else { return }
         lastBufferSnapshot = snapshot
         let oldState = state
 
+        // Get non-empty lines from bottom up for prompt detection
+        let bottomLines = lines.suffix(10).reversed().filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let lastLine = bottomLines.first ?? ""
+        let trimmedLast = lastLine.trimmingCharacters(in: .whitespaces)
+
         // --- Claude Code state detection ---
+        // Claude Code renders a TUI. We look at the entire visible buffer.
 
-        let spinners: Set<Character> = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
-        let hasSpinner = lastLine.contains(where: { spinners.contains($0) })
+        // 1. Thinking: Claude shows spinner characters or "Thinking..." text
+        let spinners: Set<Character> = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏","⣾","⣽","⣻","⢿","⡿","⣟","⣯","⣷"]
+        let hasSpinner = snapshot.contains(where: { spinners.contains($0) })
+        let hasThinking = snapshot.contains("Thinking") || snapshot.contains("thinking...")
 
-        if hasSpinner || lastLine.contains("Thinking") || lastLine.contains("thinking") {
-            state = .thinking
-        } else if lastLine.contains("▍") || lastLine.contains("█") ||
-                  snapshot.contains("Writing") || snapshot.contains("Editing") ||
-                  snapshot.contains("Creating") || snapshot.contains("Updating") {
-            // Streaming cursor or active editing keywords
-            state = .generating
-        } else if lastLine.contains("Allow") || lastLine.contains("Deny") ||
-                  snapshot.contains("permission") || snapshot.contains("Error:") ||
-                  snapshot.contains("SIGTERM") {
+        // 2. Generating: Claude is streaming output — look for the block cursor or active tool use
+        let hasStreamCursor = snapshot.contains("▍") || snapshot.contains("▊") || snapshot.contains("█▎")
+        let hasToolUse = snapshot.contains("Read(") || snapshot.contains("Edit(") || snapshot.contains("Write(") ||
+                         snapshot.contains("Bash(") || snapshot.contains("Grep(") || snapshot.contains("Glob(")
+
+        // 3. Needs attention: permission prompts, errors
+        let hasPermissionPrompt = snapshot.contains("Allow") && snapshot.contains("Deny")
+        let hasYesNo = snapshot.contains("[Y/n]") || snapshot.contains("(y/N)")
+        let hasError = snapshot.contains("Error:") || snapshot.contains("error:")
+
+        // 4. Waiting for input: Claude's input prompt ">" at bottom, or shell prompt
+        let hasClaudePrompt = trimmedLast.hasPrefix(">") && trimmedLast.count < 5
+        let hasShellPrompt = trimmedLast.hasSuffix("$ ") || trimmedLast.hasSuffix("% ") ||
+                             trimmedLast.hasSuffix("❯ ") || trimmedLast.hasSuffix("# ") ||
+                             trimmedLast.contains("❯")
+
+        // 5. Idle: Claude exited back to shell, or nothing happening
+        let hasClaudeUI = snapshot.contains("Claude") || snapshot.contains("claude") ||
+                          snapshot.contains("tokens") || snapshot.contains("Cost:")
+
+        // Priority-based state assignment
+        if hasPermissionPrompt || hasYesNo {
             state = .needsAttention
-        } else if lastLine.contains("❯") || lastLine.contains("$ ") ||
-                  lastLine.hasSuffix("% ") || lastLine.hasSuffix("> ") ||
-                  lastLine.hasSuffix("# ") {
-            // Shell prompt visible = waiting for user input
+        } else if hasSpinner || hasThinking {
+            state = .thinking
+        } else if hasStreamCursor || hasToolUse {
+            state = .generating
+        } else if hasClaudePrompt || (hasClaudeUI && !hasShellPrompt) {
             state = .userInput
+        } else if hasShellPrompt {
+            state = .idle
         }
+        // else: keep current state (don't flicker)
 
-        // --- Cost detection ---
+        // --- Cost detection from Claude's status bar ---
+        // Claude shows cost in its bottom bar like "$0.42" or "Cost: $1.23"
         for line in lines {
-            // Match patterns like "$0.42" or "Cost: $1.23"
             if let range = line.range(of: #"\$(\d+\.?\d{0,2})"#, options: .regularExpression) {
-                let match = String(line[range]).dropFirst() // remove $
+                let match = String(line[range]).dropFirst()
                 if let parsed = Double(match), parsed > 0 && parsed < 1000 {
-                    cost = parsed
+                    cost = max(cost, parsed) // cost only goes up
                 }
             }
         }
 
         // --- Token detection ---
         for line in lines {
-            if let range = line.range(of: #"(\d+\.?\d*)\s*[Kk]\s*tokens?"#, options: .regularExpression) {
+            // Match "12.5K tokens" or "1,234 tokens" patterns
+            if let range = line.range(of: #"(\d[\d,.]*)\s*[Kk]?\s*tokens?"#, options: .regularExpression) {
                 let match = String(line[range])
-                if let numRange = match.range(of: #"\d+\.?\d*"#, options: .regularExpression) {
-                    if let num = Double(String(match[numRange])) {
-                        tokensIn = Int(num * 1000)
+                if let numRange = match.range(of: #"[\d,.]+"#, options: .regularExpression) {
+                    let numStr = String(match[numRange]).replacingOccurrences(of: ",", with: "")
+                    if let num = Double(numStr) {
+                        let tokens = match.lowercased().contains("k") ? Int(num * 1000) : Int(num)
+                        tokensIn = max(tokensIn, tokens)
                     }
                 }
             }
         }
 
-        // --- Model detection ---
+        // --- Model detection from Claude's status bar ---
         let flat = snapshot.lowercased()
-        if flat.contains("claude-opus") || flat.contains("model: opus") { model = "opus" }
-        else if flat.contains("claude-sonnet") || flat.contains("model: sonnet") { model = "sonnet" }
-        else if flat.contains("claude-haiku") || flat.contains("model: haiku") { model = "haiku" }
+        if flat.contains("opus") { model = "opus" }
+        else if flat.contains("haiku") { model = "haiku" }
+        else if flat.contains("sonnet") { model = "sonnet" }
 
         if state != oldState {
             DispatchQueue.main.async {
