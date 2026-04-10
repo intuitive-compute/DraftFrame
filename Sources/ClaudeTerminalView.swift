@@ -1,9 +1,8 @@
 import AppKit
 import SwiftTerm
 
-/// Subclass of LocalProcessTerminalView that intercepts raw PTY data
-/// before it reaches the terminal emulator. This gives us real-time
-/// access to every byte Claude Code writes.
+/// Subclass of LocalProcessTerminalView that intercepts raw PTY data.
+/// dataReceived(slice:) is the only `open` method in the data path.
 class ClaudeTerminalView: LocalProcessTerminalView {
     var onPtyData: ((ArraySlice<UInt8>) -> Void)?
 
