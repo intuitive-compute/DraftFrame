@@ -211,12 +211,12 @@ final class DashboardCard: NSView {
         // Action buttons
         let terminateBtn = makeButton(title: "Terminate", color: Theme.red)
         terminateBtn.target = self
-        terminateBtn.action = #selector(terminateSession)
+        terminateBtn.action = #selector(terminateSession(_:))
         addSubview(terminateBtn)
 
         let restartBtn = makeButton(title: "Restart", color: Theme.accent)
         restartBtn.target = self
-        restartBtn.action = #selector(restartSession)
+        restartBtn.action = #selector(restartSession(_:))
         addSubview(restartBtn)
 
         NSLayoutConstraint.activate([
@@ -272,12 +272,27 @@ final class DashboardCard: NSView {
         return btn
     }
 
-    @objc private func terminateSession() {
-        SessionManager.shared.closeSession(id: session.id)
+    @objc private func terminateSession(_ sender: NSButton) {
+        flashButton(sender, color: Theme.red)
+        // Slight delay so the user sees the flash before the card disappears
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            SessionManager.shared.closeSession(id: self.session.id)
+        }
     }
 
-    @objc private func restartSession() {
-        SessionManager.shared.restartSession(id: session.id)
+    @objc private func restartSession(_ sender: NSButton) {
+        flashButton(sender, color: Theme.accent)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            SessionManager.shared.restartSession(id: self.session.id)
+        }
+    }
+
+    private func flashButton(_ button: NSButton, color: NSColor) {
+        let original = button.layer?.backgroundColor
+        button.layer?.backgroundColor = color.withAlphaComponent(0.5).cgColor
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            button.layer?.backgroundColor = original
+        }
     }
 
     private func formatTokens(_ count: Int) -> String {

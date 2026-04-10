@@ -292,49 +292,102 @@ final class DFSidebar: NSView {
         // Run in active session's worktree directory
         let dir = SessionManager.shared.activeSession?.worktreePath
 
-        // Show popover with "Running..."
+        // Close any existing popover
+        outputPopover?.close()
+
+        // Build the popover content
         let popover = NSPopover()
         popover.behavior = .transient
         let vc = NSViewController()
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         container.wantsLayer = true
+        container.layer?.backgroundColor = Theme.surface2.cgColor
 
-        let statusLabel = NSTextField(labelWithString: "Running \(cmd.name)...")
-        statusLabel.font = Theme.mono(11)
-        statusLabel.textColor = Theme.text2
+        // Status line at top
+        let statusLabel = NSTextField(labelWithString: "Running...")
+        statusLabel.font = Theme.mono(11, weight: .medium)
+        statusLabel.textColor = Theme.yellow
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(statusLabel)
 
-        let outputLabel = NSTextField(wrappingLabelWithString: "")
-        outputLabel.font = Theme.mono(10)
-        outputLabel.textColor = Theme.text1
-        outputLabel.translatesAutoresizingMaskIntoConstraints = false
-        outputLabel.maximumNumberOfLines = 20
-        container.addSubview(outputLabel)
+        let cmdLabel = NSTextField(labelWithString: cmd.command)
+        cmdLabel.font = Theme.mono(10)
+        cmdLabel.textColor = Theme.text3
+        cmdLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(cmdLabel)
+
+        // Separator
+        let sep = NSView()
+        sep.wantsLayer = true
+        sep.layer?.backgroundColor = Theme.surface3.cgColor
+        sep.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(sep)
+
+        // Scrollable text view for output
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.autohidesScrollers = true
+        container.addSubview(scrollView)
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = true
+        textView.backgroundColor = Theme.surface2
+        textView.textColor = Theme.text1
+        textView.font = Theme.mono(11)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        textView.autoresizingMask = [.width]
+        scrollView.documentView = textView
 
         NSLayoutConstraint.activate([
             statusLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            statusLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            outputLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
-            outputLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            outputLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            outputLabel.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -10),
+            statusLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+
+            cmdLabel.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
+            cmdLabel.leadingAnchor.constraint(equalTo: statusLabel.trailingAnchor, constant: 8),
+            cmdLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
+
+            sep.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
+            sep.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            sep.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            sep.heightAnchor.constraint(equalToConstant: 1),
+
+            scrollView.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 4),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
         ])
 
         vc.view = container
         popover.contentViewController = vc
-        popover.contentSize = NSSize(width: 300, height: 200)
+        popover.contentSize = NSSize(width: 400, height: 300)
         let senderView = sender as? NSView ?? self
         popover.show(relativeTo: senderView.bounds, of: senderView, preferredEdge: .maxX)
         self.outputPopover = popover
 
         ToolkitManager.shared.runCommand(cmd, inDirectory: dir) { output, exitCode in
-            let status = exitCode == 0 ? "Completed successfully" : "Failed (exit \(exitCode))"
-            statusLabel.stringValue = status
-            statusLabel.textColor = exitCode == 0 ? Theme.green : Theme.red
-            // Show last ~500 chars of output
-            let trimmed = output.count > 500 ? String(output.suffix(500)) : output
-            outputLabel.stringValue = trimmed
+            // Update status line
+            if exitCode == 0 {
+                statusLabel.stringValue = "Done (exit 0)"
+                statusLabel.textColor = Theme.green
+            } else {
+                statusLabel.stringValue = "Failed (exit \(exitCode))"
+                statusLabel.textColor = Theme.red
+            }
+
+            // Set output text
+            textView.string = output
+
+            // Auto-scroll to bottom
+            textView.scrollRangeToVisible(NSRange(location: textView.string.count, length: 0))
         }
     }
 
