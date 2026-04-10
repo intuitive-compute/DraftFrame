@@ -65,24 +65,11 @@ final class DFSidebar: NSView {
         filesHeader.translatesAutoresizingMaskIntoConstraints = false
         addSubview(filesHeader)
 
-        let filesScroll = NSScrollView()
-        filesScroll.translatesAutoresizingMaskIntoConstraints = false
-        filesScroll.hasVerticalScroller = true
-        filesScroll.hasHorizontalScroller = false
-        filesScroll.autohidesScrollers = true
-        filesScroll.drawsBackground = false
-        filesScroll.borderType = .noBorder
-        addSubview(filesScroll)
-
         filesStack.orientation = .vertical
         filesStack.spacing = 2
         filesStack.alignment = .leading
         filesStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let filesClipView = NSClipView()
-        filesClipView.documentView = filesStack
-        filesClipView.drawsBackground = false
-        filesScroll.contentView = filesClipView
+        addSubview(filesStack)
 
         // Toolkit section
         let toolkitSep = separator()
@@ -141,16 +128,11 @@ final class DFSidebar: NSView {
             filesHeader.topAnchor.constraint(equalTo: filesSep.bottomAnchor, constant: 12),
             filesHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
 
-            filesScroll.topAnchor.constraint(equalTo: filesHeader.bottomAnchor, constant: 6),
-            filesScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            filesScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            filesScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
+            filesStack.topAnchor.constraint(equalTo: filesHeader.bottomAnchor, constant: 6),
+            filesStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            filesStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
 
-            filesStack.topAnchor.constraint(equalTo: filesClipView.topAnchor),
-            filesStack.leadingAnchor.constraint(equalTo: filesClipView.leadingAnchor),
-            filesStack.trailingAnchor.constraint(equalTo: filesClipView.trailingAnchor),
-
-            toolkitSep.topAnchor.constraint(equalTo: filesScroll.bottomAnchor, constant: 12),
+            toolkitSep.topAnchor.constraint(equalTo: filesStack.bottomAnchor, constant: 12),
             toolkitSep.leadingAnchor.constraint(equalTo: leadingAnchor),
             toolkitSep.trailingAnchor.constraint(equalTo: trailingAnchor),
 
