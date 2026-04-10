@@ -407,16 +407,12 @@ final class DFWindowController: NSWindowController, NSSplitViewDelegate {
             alert.addButton(withTitle: "Restore")
             alert.addButton(withTitle: "Start Fresh")
 
-            if let win = window {
-                alert.beginSheetModal(for: win) { [weak self] response in
-                    if response == .alertFirstButtonReturn {
-                        SessionPersistence.shared.restoreSessions(for: path)
-                    } else {
-                        SessionPersistence.shared.clearSavedSessions()
-                        self?.terminalPane.createNewSession(name: dirName, worktreePath: path)
-                    }
-                }
+            // Use runModal instead of beginSheetModal — simpler and doesn't get stuck
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                SessionPersistence.shared.restoreSessions(for: path)
             } else {
+                SessionPersistence.shared.clearSavedSessions()
                 terminalPane.createNewSession(name: dirName, worktreePath: path)
             }
         } else {
