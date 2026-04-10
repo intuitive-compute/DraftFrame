@@ -11,28 +11,64 @@ final class WorktreeManager {
         let isBare: Bool
     }
 
+    /// Detect the git repo root from the current directory or home.
+    private(set) var repoRoot: String?
+
     /// Base directory for draftframe worktrees.
-    private var worktreeBase: String {
-        let cwd = FileManager.default.currentDirectoryPath
-        return cwd + "/.draftframe/worktrees"
+    private var worktreeBase: String? {
+        guard let root = repoRoot else { return nil }
+        return root + "/.draftframe/worktrees"
     }
 
     private init() {
-        // Ensure worktree directory exists
-        try? FileManager.default.createDirectory(
-            atPath: worktreeBase,
-            withIntermediateDirectories: true
-        )
+        detectRepoRoot()
+    }
+
+    /// Find the git repo root by running git rev-parse --show-toplevel.
+    func detectRepoRoot(from dir: String? = nil) {
+        let searchDir = dir ?? NSHomeDirectory()
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = ["-C", searchDir, "rev-parse", "--show-toplevel"]
+        proc.currentDirectoryURL = URL(fileURLWithPath: searchDir)
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            if proc.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let root = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let root = root, !root.isEmpty {
+                    repoRoot = root
+                    // Ensure worktree directory exists
+                    try? FileManager.default.createDirectory(
+                        atPath: root + "/.draftframe/worktrees",
+                        withIntermediateDirectories: true
+                    )
+                }
+            }
+        } catch {}
     }
 
     /// Create a new worktree.
-    func createWorktree(name: String, baseBranch: String = "main") throws -> String {
-        let worktreePath = "\(worktreeBase)/\(name)"
+    func createWorktree(name: String, baseBranch: String? = nil) throws -> String {
+        guard let base = worktreeBase, let root = repoRoot else {
+            throw WorktreeError.creationFailed("Not in a git repository. Open a terminal in a git repo first.")
+        }
+
+        let worktreePath = "\(base)/\(name)"
+        let branchName = "draftframe/\(name)"
+
+        // Detect default branch if not specified
+        let resolvedBase = baseBranch ?? detectDefaultBranch(in: root) ?? "main"
 
         // Create the branch and worktree
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        proc.arguments = ["worktree", "add", "-b", name, worktreePath, baseBranch]
+        proc.arguments = ["worktree", "add", "-b", branchName, worktreePath, resolvedBase]
+        proc.currentDirectoryURL = URL(fileURLWithPath: root)
         let errPipe = Pipe()
         proc.standardError = errPipe
         proc.standardOutput = Pipe()
@@ -47,7 +83,7 @@ final class WorktreeManager {
             if errMsg.contains("already exists") {
                 let proc2 = Process()
                 proc2.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-                proc2.arguments = ["worktree", "add", worktreePath, name]
+                proc2.arguments = ["-C", root, "worktree", "add", worktreePath, branchName]
                 proc2.standardError = Pipe()
                 proc2.standardOutput = Pipe()
                 try proc2.run()
@@ -63,11 +99,28 @@ final class WorktreeManager {
         return worktreePath
     }
 
-    /// List all worktrees by parsing `git worktree list --porcelain`.
-    func listWorktrees() -> [Worktree] {
+    private func detectDefaultBranch(in dir: String) -> String? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        proc.arguments = ["worktree", "list", "--porcelain"]
+        proc.arguments = ["-C", dir, "branch", "--show-current"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let branch = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (branch?.isEmpty == false) ? branch : nil
+        } catch { return nil }
+    }
+
+    /// List all worktrees by parsing `git worktree list --porcelain`.
+    func listWorktrees() -> [Worktree] {
+        guard let root = repoRoot else { return [] }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = ["-C", root, "worktree", "list", "--porcelain"]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = Pipe()
@@ -122,10 +175,13 @@ final class WorktreeManager {
 
     /// Remove a worktree by name.
     func removeWorktree(name: String) throws {
-        let worktreePath = "\(worktreeBase)/\(name)"
+        guard let base = worktreeBase, let root = repoRoot else {
+            throw WorktreeError.removeFailed("Not in a git repository")
+        }
+        let worktreePath = "\(base)/\(name)"
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        proc.arguments = ["worktree", "remove", worktreePath, "--force"]
+        proc.arguments = ["-C", root, "worktree", "remove", worktreePath, "--force"]
         proc.standardOutput = Pipe()
         let errPipe = Pipe()
         proc.standardError = errPipe

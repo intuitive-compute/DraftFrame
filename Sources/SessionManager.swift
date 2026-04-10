@@ -60,57 +60,87 @@ final class Session {
         self.worktreePath = worktreePath
     }
 
-    /// Analyze recent terminal output to detect Claude Code state changes.
-    func analyzeOutput(_ text: String) {
-        outputBuffer += text
-        // Keep buffer manageable
-        if outputBuffer.count > 4000 {
-            outputBuffer = String(outputBuffer.suffix(2000))
+    private var lastBufferSnapshot: String = ""
+
+    /// Poll the terminal buffer and detect session state from visible content.
+    /// Called periodically by SessionManager's timer.
+    func pollTerminalState() {
+        guard let tv = terminalView else { return }
+        let terminal = tv.getTerminal()
+
+        // Read last 5 visible lines from the terminal buffer
+        let rows = terminal.rows
+        var lines: [String] = []
+        for row in max(0, rows - 5)..<rows {
+            guard let line = terminal.getLine(row: row) else { continue }
+            let text = line.translateToString()
+            lines.append(text.trimmingCharacters(in: CharacterSet.whitespaces))
         }
 
-        let oldState = state
-        let lower = text.lowercased()
+        let snapshot = lines.joined(separator: "\n")
+        let lastLine = lines.last(where: { !$0.isEmpty }) ?? ""
 
-        // Detect Claude Code states from terminal output patterns
-        if lower.contains("thinking") || lower.contains("⠋") || lower.contains("⠙") || lower.contains("⠹") {
+        // Don't reprocess if nothing changed
+        guard snapshot != lastBufferSnapshot else { return }
+        lastBufferSnapshot = snapshot
+        let oldState = state
+
+        // --- Claude Code state detection ---
+
+        let spinners: Set<Character> = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
+        let hasSpinner = lastLine.contains(where: { spinners.contains($0) })
+
+        if hasSpinner || lastLine.contains("Thinking") || lastLine.contains("thinking") {
             state = .thinking
-        } else if lower.contains("writing") || lower.contains("generating") || lower.contains("editing") {
+        } else if lastLine.contains("▍") || lastLine.contains("█") ||
+                  snapshot.contains("Writing") || snapshot.contains("Editing") ||
+                  snapshot.contains("Creating") || snapshot.contains("Updating") {
+            // Streaming cursor or active editing keywords
             state = .generating
-        } else if lower.contains("error") || lower.contains("failed") || lower.contains("permission") {
+        } else if lastLine.contains("Allow") || lastLine.contains("Deny") ||
+                  snapshot.contains("permission") || snapshot.contains("Error:") ||
+                  snapshot.contains("SIGTERM") {
             state = .needsAttention
-        } else if lower.contains("❯") || lower.contains("> ") || lower.contains("$ ") {
+        } else if lastLine.contains("❯") || lastLine.contains("$ ") ||
+                  lastLine.hasSuffix("% ") || lastLine.hasSuffix("> ") ||
+                  lastLine.hasSuffix("# ") {
+            // Shell prompt visible = waiting for user input
             state = .userInput
         }
 
-        // Parse cost/token info if present
-        if let costRange = text.range(of: #"\$[\d.]+"#, options: .regularExpression) {
-            let costStr = String(text[costRange]).dropFirst()
-            if let parsedCost = Double(costStr), parsedCost > 0 {
-                cost = parsedCost
-            }
-        }
-
-        // Parse token counts
-        if let tokenRange = text.range(of: #"(\d+\.?\d*)[Kk]\s*tokens?"#, options: .regularExpression) {
-            let tokenStr = String(text[tokenRange])
-            if let numRange = tokenStr.range(of: #"\d+\.?\d*"#, options: .regularExpression) {
-                if let num = Double(String(tokenStr[numRange])) {
-                    tokensIn = Int(num * 1000)
+        // --- Cost detection ---
+        for line in lines {
+            // Match patterns like "$0.42" or "Cost: $1.23"
+            if let range = line.range(of: #"\$(\d+\.?\d{0,2})"#, options: .regularExpression) {
+                let match = String(line[range]).dropFirst() // remove $
+                if let parsed = Double(match), parsed > 0 && parsed < 1000 {
+                    cost = parsed
                 }
             }
         }
 
-        // Detect model from output
-        if lower.contains("opus") {
-            model = "opus"
-        } else if lower.contains("sonnet") {
-            model = "sonnet"
-        } else if lower.contains("haiku") {
-            model = "haiku"
+        // --- Token detection ---
+        for line in lines {
+            if let range = line.range(of: #"(\d+\.?\d*)\s*[Kk]\s*tokens?"#, options: .regularExpression) {
+                let match = String(line[range])
+                if let numRange = match.range(of: #"\d+\.?\d*"#, options: .regularExpression) {
+                    if let num = Double(String(match[numRange])) {
+                        tokensIn = Int(num * 1000)
+                    }
+                }
+            }
         }
 
+        // --- Model detection ---
+        let flat = snapshot.lowercased()
+        if flat.contains("claude-opus") || flat.contains("model: opus") { model = "opus" }
+        else if flat.contains("claude-sonnet") || flat.contains("model: sonnet") { model = "sonnet" }
+        else if flat.contains("claude-haiku") || flat.contains("model: haiku") { model = "haiku" }
+
         if state != oldState {
-            NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+            }
         }
     }
 }
@@ -139,7 +169,20 @@ final class SessionManager {
         sessions.reduce(0) { $0 + $1.tokensOut }
     }
 
-    private init() {}
+    private var pollTimer: Timer?
+
+    private init() {
+        // Poll all sessions every 500ms to detect state changes
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.pollAllSessions()
+        }
+    }
+
+    private func pollAllSessions() {
+        for session in sessions {
+            session.pollTerminalState()
+        }
+    }
 
     /// Create a new session and return it.
     @discardableResult
