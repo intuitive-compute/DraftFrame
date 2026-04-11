@@ -114,6 +114,78 @@ final class SessionManager {
 
     private init() {}
 
+    /// Resolve an absolute path to the user's preferred shell. Prefers an
+    /// absolute $SHELL, otherwise searches standard locations for zsh/bash.
+    static func resolveShellPath(parentEnv: [String: String]) -> String {
+        let fm = FileManager.default
+        if let s = parentEnv["SHELL"], s.hasPrefix("/"), fm.isExecutableFile(atPath: s) {
+            return s
+        }
+        // $SHELL is missing or a bare name — search common locations.
+        let name = parentEnv["SHELL"].map { ($0 as NSString).lastPathComponent } ?? "zsh"
+        let searchDirs = ["/bin", "/usr/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+        for dir in searchDirs {
+            let candidate = (dir as NSString).appendingPathComponent(name)
+            if fm.isExecutableFile(atPath: candidate) { return candidate }
+        }
+        return "/bin/zsh"
+    }
+
+    /// Find an absolute path to the `claude` binary. Falls back to the bare
+    /// name "claude" so the shell's own PATH lookup is used as a last resort.
+    static func resolveClaudePath(augmentedPath: String) -> String {
+        let fm = FileManager.default
+
+        // 1) Search the caller-provided PATH first.
+        for dir in augmentedPath.split(separator: ":").map(String.init) {
+            let candidate = (dir as NSString).appendingPathComponent("claude")
+            if fm.isExecutableFile(atPath: candidate) { return candidate }
+        }
+
+        // 2) Check common install locations the GUI-launched app PATH misses.
+        let common = [
+            "/opt/homebrew/bin/claude",
+            "/usr/local/bin/claude",
+            (NSHomeDirectory() as NSString).appendingPathComponent(".claude/local/claude"),
+            (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/claude"),
+        ]
+        for candidate in common where fm.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+
+        // 3) Ask an interactive login shell to resolve it. This picks up any
+        // PATH the user configures in .zprofile/.zshrc even if we don't know
+        // about the install location.
+        if let resolved = runLoginShellCommand("command -v claude"),
+           !resolved.isEmpty,
+           fm.isExecutableFile(atPath: resolved) {
+            return resolved
+        }
+
+        // 4) Give up and let the shell try its own PATH.
+        return "claude"
+    }
+
+    /// Synchronously runs `command` inside a login zsh and returns its trimmed
+    /// stdout, or nil on failure. Used only for discovery at session creation.
+    private static func runLoginShellCommand(_ command: String) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-l", "-c", command]
+        let out = Pipe()
+        proc.standardOutput = out
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return nil
+        }
+    }
+
     /// Create a new session and return it.
     @discardableResult
     func createSession(name: String? = nil, command: String? = nil, worktreePath: String? = nil) -> Session {
@@ -135,8 +207,45 @@ final class SessionManager {
         }
 
         // Start the process
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let env: [String] = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+        let parentEnv = ProcessInfo.processInfo.environment
+        // Resolve the shell to an absolute path. $SHELL may be unset or set to
+        // a bare name like "zsh" (some setups do this), and execve requires an
+        // absolute path — passing a bare name causes the child to exit 127.
+        let shell = SessionManager.resolveShellPath(parentEnv: parentEnv)
+
+        // Build a minimal, sanitized env for the child. Passing the full
+        // ProcessInfo environment can make `execve` fail (exit code 127)
+        // because it contains macOS-internal variables like DYLD_* and
+        // __CF_USER_TEXT_ENCODING that can trip up exec on Apple Silicon.
+        // Instead, we include only the handful of vars a shell actually
+        // needs and compose PATH ourselves so Homebrew-installed tools
+        // (like `claude` at /opt/homebrew/bin) are findable.
+        let homebrewPaths = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+        let inheritedPath = parentEnv["PATH"] ?? ""
+        let inheritedParts = inheritedPath.split(separator: ":").map(String.init)
+        let composedPath = (homebrewPaths.filter { !inheritedParts.contains($0) } + inheritedParts)
+            .joined(separator: ":")
+
+        var envDict: [String: String] = [
+            "TERM": "xterm-256color",
+            "COLORTERM": "truecolor",
+            "LANG": parentEnv["LANG"] ?? "en_US.UTF-8",
+            "PATH": composedPath,
+            "SHELL": shell,
+            "HOME": parentEnv["HOME"] ?? NSHomeDirectory(),
+            "USER": parentEnv["USER"] ?? NSUserName(),
+            "LOGNAME": parentEnv["LOGNAME"] ?? NSUserName(),
+        ]
+        // Pass through a few more useful vars if the parent has them, but
+        // skip anything DYLD_*, __CF*, XPC_*, or similarly system-internal.
+        for key in ["LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "DISPLAY"] {
+            if let v = parentEnv[key] { envDict[key] = v }
+        }
+        let env: [String] = envDict.map { "\($0.key)=\($0.value)" }
+
+        // Resolve the `claude` command to an absolute path so we don't depend
+        // on the spawned login shell re-sourcing PATH correctly.
+        let claudeCmd = SessionManager.resolveClaudePath(augmentedPath: composedPath)
 
         if let cmd = command {
             tv.startProcess(executable: shell,
@@ -152,13 +261,13 @@ final class SessionManager {
 
         // cd into worktree directory then launch claude
         if let wtPath = worktreePath {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                tv.send(txt: "cd \(wtPath) && clear && claude\r")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                tv.send(txt: "cd \(wtPath) && clear && \(claudeCmd)\r")
             }
         } else {
             // No worktree — just launch claude
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                tv.send(txt: "claude\r")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                tv.send(txt: "clear && \(claudeCmd)\r")
             }
         }
 

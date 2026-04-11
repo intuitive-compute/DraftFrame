@@ -10,4 +10,10 @@ class ClaudeTerminalView: LocalProcessTerminalView {
         onPtyData?(slice)
         super.dataReceived(slice: slice)
     }
+
+    override func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        NSLog("[ClaudeTerminalView] processTerminated exitCode=%@",
+              exitCode.map(String.init) ?? "nil")
+        super.processTerminated(source, exitCode: exitCode)
+    }
 }

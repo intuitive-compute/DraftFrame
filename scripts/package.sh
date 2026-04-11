@@ -47,13 +47,15 @@ echo "==> Cleaning $DIST"
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
-# ---------- 1. build universal release binary ----------
-echo "==> Building universal release binary (arm64 + x86_64)"
+# ---------- 1. build arm64 release binary ----------
+# Apple Silicon only. Xcode 26 requires the Metal Toolchain to build
+# universal binaries, which we'd rather not depend on.
+echo "==> Building arm64 release binary"
 swift build -c release \
-    --arch arm64 --arch x86_64 \
+    --arch arm64 \
     --disable-sandbox
 
-BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/$APP_NAME"
+BIN="$(swift build -c release --arch arm64 --show-bin-path)/$APP_NAME"
 if [[ ! -f "$BIN" ]]; then
     echo "error: built binary not found at $BIN" >&2
     exit 1
@@ -97,25 +99,103 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 spctl --assess --type execute --verbose=4 "$APP" || \
     echo "(spctl assessment will fail until notarization is stapled — that's expected)"
 
-# ---------- 5. build DMG via create-dmg ----------
-if ! command -v create-dmg >/dev/null 2>&1; then
-    echo "error: create-dmg not found. Install with: brew install create-dmg" >&2
-    exit 1
-fi
-
+# ---------- 5. build DMG via hdiutil ----------
+# We build the DMG manually (instead of using create-dmg) because on recent
+# macOS versions create-dmg's --app-drop-link leaves Finder unable to render
+# the Applications folder icon on the symlink. We:
+#   1. detach any stale mounts from prior runs,
+#   2. create an empty read/write DMG,
+#   3. mount it, copy the .app and make the /Applications symlink,
+#   4. ask Finder (via AppleScript) to lay out the window and persist the
+#      .DS_Store,
+#   5. scrub macOS-generated junk (.fseventsd, .Trashes),
+#   6. detach and convert to a compressed read-only DMG.
 echo "==> Building $DMG"
 rm -f "$DMG"
-create-dmg \
-    --volname "$APP_NAME $VERSION" \
-    --window-pos 200 120 \
-    --window-size 660 400 \
-    --icon-size 110 \
-    --icon "$APP_NAME.app" 165 200 \
-    --hide-extension "$APP_NAME.app" \
-    --app-drop-link 495 200 \
-    --no-internet-enable \
-    "$DMG" \
-    "$APP"
+
+VOLNAME="$APP_NAME $VERSION"
+
+# Detach any stale mounts from previous runs so AppleScript targets the
+# right volume. Without this, a stuck "DraftFrame 1.0.1" mount causes the
+# new mount to be named "DraftFrame 1.0.1 1" and the script silently lays
+# out icons on the wrong volume.
+for m in $(mount | awk -v v="$VOLNAME" '$0 ~ v {print $1}'); do
+    hdiutil detach "$m" -force -quiet 2>/dev/null || true
+done
+
+RW_DMG="$DIST/rw-$APP_NAME-$VERSION.dmg"
+rm -f "$RW_DMG"
+
+# Size the DMG from the .app size + slack.
+APP_SIZE_KB=$(du -sk "$APP" | awk '{print $1}')
+DMG_SIZE_KB=$((APP_SIZE_KB + 20000))  # ~20MB slack for metadata/.DS_Store
+
+hdiutil create \
+    -size "${DMG_SIZE_KB}k" \
+    -volname "$VOLNAME" \
+    -fs HFS+ \
+    -fsargs "-c c=64,a=16,e=16" \
+    -layout SPUD \
+    "$RW_DMG" >/dev/null
+
+# Mount; capture both the device node and the actual mount point.
+MOUNT_INFO="$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG")"
+MOUNT_DEV="$(echo "$MOUNT_INFO" | grep -E '^/dev/' | head -n1 | awk '{print $1}')"
+MOUNT_DIR="$(echo "$MOUNT_INFO" | grep -E '^/dev/' | head -n1 | sed -E 's|^[^/]*/Volumes|/Volumes|')"
+if [[ -z "$MOUNT_DIR" || ! -d "$MOUNT_DIR" ]]; then
+    # Fallback: assume the standard location.
+    MOUNT_DIR="/Volumes/$VOLNAME"
+fi
+
+# Copy the signed .app.
+cp -R "$APP" "$MOUNT_DIR/"
+
+# Settle before AppleScript pokes at Finder.
+sync
+sleep 2
+
+# Create the Applications alias via Finder (not a plain symlink) so Finder
+# renders it with the Applications folder icon. Raw symlinks made with
+# `ln -s /Applications` show a blank icon inside DMGs on recent macOS. A
+# Finder alias file is a real macOS object that carries the target icon.
+osascript <<APPLESCRIPT
+tell application "Finder"
+    tell disk "$VOLNAME"
+        open
+        -- Make the alias if it doesn't already exist.
+        if not (exists item "Applications") then
+            make new alias file at container window to POSIX file "/Applications"
+            set name of result to "Applications"
+        end if
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {200, 120, 860, 520}
+        set theViewOptions to the icon view options of container window
+        set arrangement of theViewOptions to not arranged
+        set icon size of theViewOptions to 110
+        set position of item "$APP_NAME.app" of container window to {165, 200}
+        set position of item "Applications" of container window to {495, 200}
+        update without registering applications
+        delay 2
+        close
+    end tell
+end tell
+APPLESCRIPT
+
+# Scrub macOS-generated hidden junk so it doesn't show up in Finder when the
+# user opens the final DMG.
+rm -rf "$MOUNT_DIR/.fseventsd" "$MOUNT_DIR/.Trashes" 2>/dev/null || true
+
+sync
+sleep 1
+
+# Detach cleanly (force as fallback).
+hdiutil detach "$MOUNT_DEV" -quiet || hdiutil detach "$MOUNT_DEV" -force -quiet
+
+# Convert to compressed, read-only distribution DMG.
+hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
+rm -f "$RW_DMG"
 
 echo "==> Signing DMG"
 codesign --force --sign "$SIGN_IDENTITY" --timestamp "$DMG"
