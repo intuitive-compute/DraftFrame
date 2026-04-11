@@ -3,3 +3,5 @@
 DerivedData/
 *.xcodeproj/xcuserdata/
 .draftframe/
+dist/
+*.dmg

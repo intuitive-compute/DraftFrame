@@ -33,6 +33,28 @@ swift build
 .build/debug/DraftFrame
 ```
 
+## Package as a signed DMG
+
+```bash
+# Build + sign + DMG (no notarization)
+scripts/package.sh
+
+# Full release: build + sign + DMG + notarize + staple
+scripts/package.sh --notarize
+
+# Custom version
+VERSION=0.2.0 scripts/package.sh --notarize
+```
+
+Outputs land in `dist/`. Requires `create-dmg` (`brew install create-dmg`) and a
+`Developer ID Application` certificate in your keychain. For notarization,
+store credentials once with:
+
+```bash
+xcrun notarytool store-credentials DRAFTFRAME_NOTARY \
+  --apple-id you@example.com --team-id 49V6GRJ827 --password <app-specific-pwd>
+```
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
