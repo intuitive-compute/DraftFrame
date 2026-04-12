@@ -184,6 +184,12 @@ final class DFSidebar: NSView {
       self, selector: #selector(refreshFiles),
       name: .activeSessionDidChange, object: nil
     )
+
+    // Auto-refresh toolkit when config file changes
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(toolkitConfigDidChange),
+      name: .toolkitDidChange, object: nil
+    )
   }
 
   // MARK: - Worktrees
@@ -635,6 +641,10 @@ final class DFSidebar: NSView {
       target: self, action: #selector(reloadToolkitClicked))
     reloadRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
     toolkitStack.addArrangedSubview(reloadRow)
+  }
+
+  @objc private func toolkitConfigDidChange() {
+    refreshToolkit()
   }
 
   @objc private func editToolkitClicked() {

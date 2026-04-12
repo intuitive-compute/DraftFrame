@@ -16,8 +16,53 @@ final class ToolkitManager {
   /// Path to the user's toolkit config file.
   static let configPath = NSHomeDirectory() + "/.config/draftframe/toolkit.json"
 
+  private var fileWatcherSource: DispatchSourceFileSystemObject?
+
   private init() {
     loadConfig()
+    startWatching()
+  }
+
+  deinit {
+    fileWatcherSource?.cancel()
+  }
+
+  /// Watch toolkit.json for changes and auto-reload.
+  private func startWatching() {
+    let path = ToolkitManager.configPath
+    let fd = open(path, O_EVTONLY)
+    guard fd >= 0 else { return }
+
+    let source = DispatchSource.makeFileSystemObjectSource(
+      fileDescriptor: fd,
+      eventMask: [.write, .delete, .rename],
+      queue: .main
+    )
+
+    source.setEventHandler { [weak self] in
+      guard let self = self else { return }
+      let flags = source.data
+      if flags.contains(.delete) || flags.contains(.rename) {
+        // File was replaced (common with editors that save atomically).
+        source.cancel()
+        close(fd)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+          self.loadConfig()
+          NotificationCenter.default.post(name: .toolkitDidChange, object: nil)
+          self.startWatching()
+        }
+      } else {
+        self.loadConfig()
+        NotificationCenter.default.post(name: .toolkitDidChange, object: nil)
+      }
+    }
+
+    source.setCancelHandler {
+      close(fd)
+    }
+
+    fileWatcherSource = source
+    source.resume()
   }
 
   /// Load commands from ~/.config/draftframe/toolkit.json
@@ -96,6 +141,13 @@ final class ToolkitManager {
     NSWorkspace.shared.open(url)
   }
 
+}
+
+extension Notification.Name {
+  static let toolkitDidChange = Notification.Name("DFToolkitDidChange")
+}
+
+extension ToolkitManager {
   /// Run a toolkit command in the given directory, returning the Process.
   @discardableResult
   func runCommand(
