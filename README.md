@@ -1,6 +1,13 @@
 # DraftFrame
 
+[![CI](https://github.com/intuitive-compute/draftframe/actions/workflows/ci.yml/badge.svg)](https://github.com/intuitive-compute/draftframe/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A multi-session terminal for [Claude Code](https://claude.ai/claude-code). Run parallel Claude sessions with git worktree isolation, live status tracking, and a built-in toolkit.
+
+## Download
+
+Grab the latest DMG from [GitHub Releases](https://github.com/intuitive-compute/draftframe/releases/latest).
 
 ## Features
 
@@ -33,27 +40,9 @@ swift build
 .build/debug/DraftFrame
 ```
 
-## Package as a signed DMG
+## Packaging
 
-```bash
-# Build + sign + DMG (no notarization)
-scripts/package.sh
-
-# Full release: build + sign + DMG + notarize + staple
-scripts/package.sh --notarize
-
-# Custom version
-VERSION=0.2.0 scripts/package.sh --notarize
-```
-
-Outputs land in `dist/`. Requires `create-dmg` (`brew install create-dmg`) and a
-`Developer ID Application` certificate in your keychain. For notarization,
-store credentials once with:
-
-```bash
-xcrun notarytool store-credentials DRAFTFRAME_NOTARY \
-  --apple-id you@example.com --team-id 49V6GRJ827 --password <app-specific-pwd>
-```
+See [DEVELOPMENT.md](DEVELOPMENT.md) for DMG packaging, signing, and notarization instructions.
 
 ## Keyboard Shortcuts
 
@@ -70,8 +59,12 @@ xcrun notarytool store-credentials DRAFTFRAME_NOTARY \
 
 ## Architecture
 
-Clean Swift Package Manager project using [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) for terminal emulation. No Xcode project needed — just `swift build`.
+Clean Swift Package Manager project using [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) for terminal emulation. No Xcode project needed — just `swift build`. See [DEVELOPMENT.md](DEVELOPMENT.md) for project structure and developer docs.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT
+[MIT](LICENSE)

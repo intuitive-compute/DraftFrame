@@ -55,7 +55,7 @@ swift build -c release \
     --arch arm64 \
     --disable-sandbox
 
-BIN="$(swift build -c release --arch arm64 --show-bin-path)/$APP_NAME"
+BIN=".build/arm64-apple-macosx/release/$APP_NAME"
 if [[ ! -f "$BIN" ]]; then
     echo "error: built binary not found at $BIN" >&2
     exit 1

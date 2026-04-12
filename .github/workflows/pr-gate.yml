@@ -1,0 +1,54 @@
+name: PR Author Gate
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  check-author:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check PR author account age
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+
+            const { data: user } = await github.rest.users.getByUsername({
+              username: context.payload.pull_request.user.login,
+            });
+
+            const createdAt = new Date(user.created_at);
+            const now = new Date();
+            const tenYearsAgo = new Date(now.getFullYear() - 10, now.getMonth(), now.getDate());
+
+            if (createdAt > tenYearsAgo) {
+              const ageYears = ((now - createdAt) / (365.25 * 24 * 60 * 60 * 1000)).toFixed(1);
+
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: prNumber,
+                body: [
+                  `Hi @${user.login}, thanks for your interest in DraftFrame!`,
+                  '',
+                  `Our contribution policy requires that PR authors have a GitHub account that is at least **10 years old**. Your account was created on ${createdAt.toISOString().slice(0, 10)}, which is approximately ${ageYears} years ago.`,
+                  '',
+                  'Please see [CONTRIBUTING.md](https://github.com/intuitive-compute/draftframe/blob/main/CONTRIBUTING.md) for details.',
+                  '',
+                  'Closing this PR automatically. If you believe this is an error, please open an issue.',
+                ].join('\n'),
+              });
+
+              await github.rest.pulls.update({
+                owner, repo,
+                pull_number: prNumber,
+                state: 'closed',
+              });
+
+              core.setFailed(`PR author account is ${ageYears} years old (minimum 10 years required).`);
+            } else {
+              console.log(`PR author @${user.login} account created ${createdAt.toISOString().slice(0, 10)} — meets the 10-year requirement.`);
+            }
