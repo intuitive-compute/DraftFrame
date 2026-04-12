@@ -6,6 +6,16 @@ import SwiftTerm
 class ClaudeTerminalView: LocalProcessTerminalView {
   var onPtyData: ((ArraySlice<UInt8>) -> Void)?
 
+  /// Enable Metal GPU rendering if available, falling back to CoreGraphics.
+  func enableMetalIfAvailable() {
+    do {
+      try setUseMetal(true)
+      NSLog("[ClaudeTerminalView] Metal rendering enabled")
+    } catch {
+      NSLog("[ClaudeTerminalView] Metal unavailable, using CoreGraphics: %@", "\(error)")
+    }
+  }
+
   override func dataReceived(slice: ArraySlice<UInt8>) {
     onPtyData?(slice)
     super.dataReceived(slice: slice)

@@ -203,6 +203,7 @@ final class SessionManager {
     tv.selectedTextBackgroundColor = Theme.selected
     tv.caretColor = Theme.accent
     tv.font = Theme.mono(13)
+    tv.enableMetalIfAvailable()
     session.terminalView = tv
 
     // Wire PTY data stream to the analyzer for real-time state detection

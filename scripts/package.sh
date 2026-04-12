@@ -47,19 +47,27 @@ echo "==> Cleaning $DIST"
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
-# ---------- 1. build arm64 release binary ----------
-# Apple Silicon only. Xcode 26 requires the Metal Toolchain to build
-# universal binaries, which we'd rather not depend on.
+# ---------- 1. build universal binary (arm64 + x86_64) ----------
+# SPM's multi-arch flag uses xcodebuild internally, which requires the
+# Metal Toolchain component for SwiftTerm's Shaders.metal. Work around
+# this by building each arch separately and combining with lipo.
 echo "==> Building arm64 release binary"
-swift build -c release \
-    --arch arm64 \
-    --disable-sandbox
+swift build -c release --arch arm64 --disable-sandbox
 
-BIN=".build/arm64-apple-macosx/release/$APP_NAME"
-if [[ ! -f "$BIN" ]]; then
-    echo "error: built binary not found at $BIN" >&2
+echo "==> Building x86_64 release binary"
+swift build -c release --arch x86_64 --disable-sandbox
+
+ARM_BIN=".build/arm64-apple-macosx/release/$APP_NAME"
+X86_BIN=".build/x86_64-apple-macosx/release/$APP_NAME"
+
+if [[ ! -f "$ARM_BIN" || ! -f "$X86_BIN" ]]; then
+    echo "error: built binary not found" >&2
     exit 1
 fi
+
+echo "==> Creating universal binary"
+BIN=".build/universal-$APP_NAME"
+lipo -create "$ARM_BIN" "$X86_BIN" -output "$BIN"
 
 # ---------- 2. assemble .app bundle ----------
 echo "==> Assembling $APP"
