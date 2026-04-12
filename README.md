@@ -1,9 +1,15 @@
-# DraftFrame
+<p align="center">
+  <img src="Sources/DraftFrame/AppIcon.png" width="128" alt="DraftFrame icon">
+</p>
 
-[![CI](https://github.com/intuitive-compute/draftframe/actions/workflows/ci.yml/badge.svg)](https://github.com/intuitive-compute/draftframe/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<h1 align="center">DraftFrame</h1>
 
-A multi-session terminal for [Claude Code](https://claude.ai/claude-code). Run parallel Claude sessions with git worktree isolation, live status tracking, and a built-in toolkit.
+<p align="center">
+  <a href="https://github.com/intuitive-compute/draftframe/actions/workflows/ci.yml"><img src="https://github.com/intuitive-compute/draftframe/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+</p>
+
+<p align="center">A multi-session terminal for <a href="https://claude.ai/claude-code">Claude Code</a>. Run parallel Claude sessions with git worktree isolation, live status tracking, and a built-in toolkit.</p>
 
 ## Download
 
