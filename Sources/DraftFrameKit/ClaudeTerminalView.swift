@@ -6,6 +6,14 @@ import SwiftTerm
 class ClaudeTerminalView: LocalProcessTerminalView {
   var onPtyData: ((ArraySlice<UInt8>) -> Void)?
 
+  override init(frame: NSRect) {
+    super.init(frame: frame)
+    registerForDraggedTypes([.fileURL])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
   override func dataReceived(slice: ArraySlice<UInt8>) {
     onPtyData?(slice)
     super.dataReceived(slice: slice)
@@ -16,5 +24,36 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       "[ClaudeTerminalView] processTerminated exitCode=%@",
       exitCode.map(String.init) ?? "nil")
     super.processTerminated(source, exitCode: exitCode)
+  }
+
+  // MARK: - Drag and Drop
+
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    guard sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [
+      .urlReadingFileURLsOnly: true
+    ]) else {
+      return []
+    }
+    return .copy
+  }
+
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    guard
+      let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [
+        .urlReadingFileURLsOnly: true
+      ]) as? [URL]
+    else {
+      return false
+    }
+
+    let paths = urls.map { $0.path }
+    guard !paths.isEmpty else { return false }
+
+    // Send each path to the terminal, space-separated and shell-escaped.
+    let escaped = paths.map { path in
+      path.contains(" ") ? "'\(path)'" : path
+    }
+    send(txt: escaped.joined(separator: " "))
+    return true
   }
 }

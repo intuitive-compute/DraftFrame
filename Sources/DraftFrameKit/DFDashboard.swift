@@ -11,7 +11,7 @@ final class DFDashboard: NSView {
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
-    layer?.backgroundColor = Theme.bg.withAlphaComponent(0.95).cgColor
+    layer?.backgroundColor = Theme.bg.cgColor
     isHidden = true
     setupUI()
 
@@ -31,6 +31,8 @@ final class DFDashboard: NSView {
   func toggle() {
     isHidden = !isHidden
     if !isHidden {
+      needsLayout = true
+      layoutSubtreeIfNeeded()
       refresh()
     }
   }
@@ -77,8 +79,8 @@ final class DFDashboard: NSView {
   }
 
   private func refresh() {
-    // Remove old cards
-    for card in cardViews { card.removeFromSuperview() }
+    // Remove all subviews from grid (cards + any empty-state labels)
+    for sub in gridContainer.subviews { sub.removeFromSuperview() }
     cardViews.removeAll()
 
     let sessions = SessionManager.shared.sessions
@@ -98,7 +100,8 @@ final class DFDashboard: NSView {
     let cardWidth: CGFloat = 300
     let cardHeight: CGFloat = 160
     let spacing: CGFloat = 16
-    let containerWidth = scrollView.contentSize.width
+    // Use the scroll view's visible width; fall back to our own bounds minus padding.
+    let containerWidth = max(scrollView.bounds.width, bounds.width - 60)
     let cols = max(1, Int((containerWidth + spacing) / (cardWidth + spacing)))
 
     for (i, session) in sessions.enumerated() {
@@ -122,13 +125,14 @@ final class DFDashboard: NSView {
       ])
     }
 
-    // Set grid container size
+    // Set grid container size for scrolling
     let rows = (sessions.count + cols - 1) / cols
     let totalHeight = CGFloat(rows) * (cardHeight + spacing) + 20
+    let visibleHeight = max(scrollView.bounds.height, bounds.height - 100)
     gridContainer.frame = NSRect(
       x: 0, y: 0,
-      width: scrollView.contentSize.width,
-      height: max(totalHeight, scrollView.contentSize.height))
+      width: containerWidth,
+      height: max(totalHeight, visibleHeight))
   }
 
   override func layout() {
