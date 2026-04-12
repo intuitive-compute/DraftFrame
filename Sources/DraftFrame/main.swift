@@ -1,4 +1,5 @@
 import AppKit
+import DraftFrameKit
 
 let app = NSApplication.shared
 let delegate = DFAppDelegate()

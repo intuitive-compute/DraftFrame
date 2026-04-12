@@ -39,7 +39,7 @@ APP="$DIST/$APP_NAME.app"
 DMG="$DIST/$APP_NAME-$VERSION.dmg"
 PLIST_SRC="$ROOT/scripts/Info.plist"
 ENTITLEMENTS="$ROOT/scripts/DraftFrame.entitlements"
-ICON_SRC="$ROOT/Sources/AppIcon.png"
+ICON_SRC="$ROOT/Sources/DraftFrame/AppIcon.png"
 
 cd "$ROOT"
 
