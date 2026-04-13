@@ -63,9 +63,10 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
       let response = alert.runModal()
       if response == .alertFirstButtonReturn {
-        for wt in managedWorktrees {
-          let name = (wt.path as NSString).lastPathComponent
-          try? WorktreeManager.shared.removeWorktree(name: name)
+        if let root = WorktreeManager.shared.repoRoot {
+          for wt in managedWorktrees {
+            try? WorktreeManager.shared.removeWorktree(repoRoot: root, path: wt.path)
+          }
         }
       }
     }

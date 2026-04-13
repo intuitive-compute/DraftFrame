@@ -202,18 +202,34 @@ final class WorktreeManager {
     return worktrees
   }
 
-  /// Remove a worktree by name.
-  func removeWorktree(name: String) throws {
-    guard let base = worktreeBase, let root = repoRoot else {
-      throw WorktreeError.removeFailed("Not in a git repository")
-    }
-    let worktreePath = "\(base)/\(name)"
+  /// Remove the worktree at the given path from the repo rooted at `repoRoot`.
+  /// Git accepts either a path or the worktree's name (the last path component,
+  /// as stored in `.git/worktrees/<name>/`) — we pass the name, which sidesteps
+  /// path mismatches from symlinks or stale admin entries.
+  ///
+  /// `repoRoot` must be the main repo for this worktree (not DraftFrame's own
+  /// repo or some other project's repo). Callers in multi-project contexts
+  /// must pass the right value; this does not consult `self.repoRoot`.
+  func removeWorktree(repoRoot root: String, path: String) throws {
+    let name = (path as NSString).lastPathComponent
+
+    // Scrub GIT_* env vars so a stray GIT_DIR/GIT_WORK_TREE inherited from
+    // launchd doesn't redirect git to the wrong repo.
+    let env = ProcessInfo.processInfo.environment
+      .filter { !$0.key.hasPrefix("GIT_") }
+
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    proc.arguments = ["-C", root, "worktree", "remove", worktreePath, "--force"]
+    proc.arguments = ["-C", root, "worktree", "remove", "--force", name]
+    proc.environment = env
+    proc.currentDirectoryURL = URL(fileURLWithPath: root)
     proc.standardOutput = Pipe()
     let errPipe = Pipe()
     proc.standardError = errPipe
+
+    NSLog(
+      "[WorktreeManager] removeWorktree: repoRoot=%@ path=%@ name=%@",
+      root, path, name)
 
     try proc.run()
     proc.waitUntilExit()
@@ -221,7 +237,33 @@ final class WorktreeManager {
     if proc.terminationStatus != 0 {
       let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
       let errMsg = String(data: errData, encoding: .utf8) ?? "Unknown error"
-      throw WorktreeError.removeFailed(errMsg)
+      // Include what git actually sees so we can diagnose path/admin mismatches.
+      let listing = debugWorktreeListing(root: root, env: env)
+      NSLog("[WorktreeManager] removeWorktree failed: %@\nListing:\n%@", errMsg, listing)
+      throw WorktreeError.removeFailed(
+        "\(errMsg)\n\nDraftFrame repoRoot: \(root)\nTarget name: \(name)\n\nGit's view of worktrees:\n\(listing)"
+      )
+    }
+  }
+
+  /// Run `git worktree list --porcelain` and return its combined output, for
+  /// diagnostic error messages.
+  private func debugWorktreeListing(root: String, env: [String: String]) -> String {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = ["-C", root, "worktree", "list", "--porcelain"]
+    proc.environment = env
+    proc.currentDirectoryURL = URL(fileURLWithPath: root)
+    let pipe = Pipe()
+    proc.standardOutput = pipe
+    proc.standardError = pipe
+    do {
+      try proc.run()
+      proc.waitUntilExit()
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      return String(data: data, encoding: .utf8) ?? "(no output)"
+    } catch {
+      return "(failed to run: \(error.localizedDescription))"
     }
   }
 

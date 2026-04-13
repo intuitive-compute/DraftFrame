@@ -9,6 +9,12 @@ final class DFSidebar: NSView {
   private let watchdogStack = NSStackView()
   private var outputPopover: NSPopover?
 
+  /// Worktree paths currently being removed. The row is hidden from the
+  /// sidebar while the background `git worktree remove` is running so the UI
+  /// feels responsive even when the delete takes many seconds. Main-thread
+  /// only.
+  private var pendingRemovals: Set<String> = []
+
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
@@ -248,8 +254,11 @@ final class DFSidebar: NSView {
       // Show worktrees only if expanded
       guard project.isExpanded else { continue }
 
-      // Get worktrees for this project
+      // Get worktrees for this project; hide any currently being removed so
+      // the row stays gone even if another notification refreshes the sidebar
+      // mid-removal.
       let worktrees = getWorktrees(for: project.path)
+        .filter { !pendingRemovals.contains($0.path) }
       if worktrees.isEmpty {
         let mainRow = makeRow(icon: "arrow.triangle.branch", text: "  main", detail: "base")
         mainRow.heightAnchor.constraint(equalToConstant: 26).isActive = true
@@ -280,7 +289,10 @@ final class DFSidebar: NSView {
               title: "Remove Worktree", action: #selector(removeWorktreeFromMenu(_:)),
               keyEquivalent: "")
             rmItem.target = self
-            rmItem.representedObject = wt
+            // Carry the project's repo root alongside the worktree so the
+            // remove action can invoke git against the right repo (not
+            // DraftFrame's own repo via the singleton).
+            rmItem.representedObject = WorktreeRemovalRequest(worktree: wt, repoRoot: project.path)
             wtMenu.addItem(rmItem)
           }
           wtMenu.addItem(NSMenuItem.separator())
@@ -331,7 +343,9 @@ final class DFSidebar: NSView {
   }
 
   @objc private func removeWorktreeFromMenu(_ sender: NSMenuItem) {
-    guard let wt = sender.representedObject as? WorktreeManager.Worktree else { return }
+    guard let req = sender.representedObject as? WorktreeRemovalRequest else { return }
+    let wt = req.worktree
+    let projectRoot = req.repoRoot
 
     let alert = NSAlert()
     alert.messageText = "Remove Worktree?"
@@ -351,17 +365,27 @@ final class DFSidebar: NSView {
         SessionManager.shared.closeSession(at: idx)
       }
 
-      // Extract the worktree name from the path
-      let name = (wt.path as NSString).lastPathComponent
-      do {
-        try WorktreeManager.shared.removeWorktree(name: name)
-      } catch {
-        let errAlert = NSAlert()
-        errAlert.messageText = "Remove Failed"
-        errAlert.informativeText = error.localizedDescription
-        errAlert.runModal()
-      }
+      // Optimistically hide the row now so the UI feels instant — the actual
+      // `git worktree remove` can take many seconds for large worktrees
+      // (node_modules, etc.).
+      self.pendingRemovals.insert(wt.path)
       self.refreshWorktrees()
+
+      DispatchQueue.global(qos: .userInitiated).async {
+        let result = Result {
+          try WorktreeManager.shared.removeWorktree(repoRoot: projectRoot, path: wt.path)
+        }
+        DispatchQueue.main.async {
+          self.pendingRemovals.remove(wt.path)
+          if case .failure(let error) = result {
+            let errAlert = NSAlert()
+            errAlert.messageText = "Remove Failed"
+            errAlert.informativeText = error.localizedDescription
+            errAlert.runModal()
+          }
+          self.refreshWorktrees()
+        }
+      }
     }
   }
 
@@ -1118,4 +1142,11 @@ final class ClickableRow: NSView {
         owner: self
       ))
   }
+}
+
+/// Payload stored on a "Remove Worktree" menu item so the action handler knows
+/// both the worktree to remove and which project's repo it belongs to.
+private struct WorktreeRemovalRequest {
+  let worktree: WorktreeManager.Worktree
+  let repoRoot: String
 }
