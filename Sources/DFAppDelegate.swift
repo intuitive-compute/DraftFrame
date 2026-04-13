@@ -93,12 +93,31 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
         fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
 
+        // Edit menu — ensures Cmd+C / Cmd+V / Cmd+X / Cmd+A route via the
+        // responder chain to the first responder (e.g. the SwiftTerm view,
+        // which implements paste:/copy:/selectAll:).
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redoItem = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
         // View menu
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Toggle Dashboard", action: #selector(menuToggleDashboard), keyEquivalent: "d")
         let sidebarItem = NSMenuItem(title: "Toggle Sidebar", action: #selector(menuToggleSidebar), keyEquivalent: "\\")
         viewMenu.addItem(sidebarItem)
+        let quickTermItem = NSMenuItem(title: "Toggle Quick Terminal", action: #selector(menuToggleQuickTerminal), keyEquivalent: "`")
+        viewMenu.addItem(quickTermItem)
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
@@ -148,6 +167,10 @@ final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func menuToggleSidebar() {
         windowController?.toggleSidebar()
+    }
+
+    @objc private func menuToggleQuickTerminal() {
+        DFQuickTerminal.shared.toggle()
     }
 
     @objc private func menuRenameSession() {
