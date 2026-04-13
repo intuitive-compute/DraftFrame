@@ -42,8 +42,9 @@ final class DFWindowController: NSWindowController {
     guard let contentView = window?.contentView else { return }
     contentView.wantsLayer = true
 
-    // Main horizontal stack: sidebar | terminal | session bar
-    let hStack = NSStackView(views: [sidebar, terminalPane, sessionBar])
+    // Main horizontal stack: sidebar | terminal | editor | session bar
+    codeEditor.isHidden = true
+    let hStack = NSStackView(views: [sidebar, terminalPane, codeEditor, sessionBar])
     hStack.orientation = .horizontal
     hStack.spacing = 1
     hStack.distribution = .fill
@@ -76,9 +77,10 @@ final class DFWindowController: NSWindowController {
       dashboard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
     ])
 
-    // Sidebar and session bar get fixed widths, terminal fills the rest
+    // Sidebar, editor, and session bar get fixed widths; terminal fills the rest
     NSLayoutConstraint.activate([
       sidebar.widthAnchor.constraint(equalToConstant: 220),
+      codeEditor.widthAnchor.constraint(equalToConstant: 400),
       sessionBar.widthAnchor.constraint(equalToConstant: 300),
     ])
 

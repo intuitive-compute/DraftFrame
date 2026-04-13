@@ -106,6 +106,7 @@ final class DFCodeEditor: NSView {
     // Search bar (initially hidden via height constraint)
     searchBar.wantsLayer = true
     searchBar.layer?.backgroundColor = Theme.surface2.cgColor
+    searchBar.layer?.masksToBounds = true
     searchBar.translatesAutoresizingMaskIntoConstraints = false
     addSubview(searchBar)
 
@@ -777,6 +778,7 @@ final class LineNumberGutter: NSView {
     super.init(frame: frame)
     wantsLayer = true
     layer?.backgroundColor = Theme.surface1.cgColor
+    layer?.masksToBounds = true
   }
 
   @available(*, unavailable)

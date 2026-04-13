@@ -61,7 +61,6 @@ final class DFDashboard: NSView {
     scrollView.borderType = .noBorder
     addSubview(scrollView)
 
-    gridContainer.translatesAutoresizingMaskIntoConstraints = false
     scrollView.documentView = gridContainer
 
     NSLayoutConstraint.activate([
@@ -227,15 +226,17 @@ final class DashboardCard: NSView {
     addSubview(restartBtn)
 
     NSLayoutConstraint.activate([
-      avatar.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+      // Avatar
+      avatar.topAnchor.constraint(equalTo: topAnchor, constant: 24),
       avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
       avatar.widthAnchor.constraint(equalToConstant: 36),
       avatar.heightAnchor.constraint(equalToConstant: 36),
 
-      nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+      // Name + status centered vertically against avatar
+      nameLabel.topAnchor.constraint(equalTo: avatar.topAnchor, constant: 2),
       nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
 
-      dot.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 5),
+      dot.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
       dot.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
       dot.widthAnchor.constraint(equalToConstant: 8),
       dot.heightAnchor.constraint(equalToConstant: 8),
@@ -243,18 +244,22 @@ final class DashboardCard: NSView {
       statusLabel.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
       statusLabel.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 5),
 
-      branchLabel.topAnchor.constraint(equalTo: avatar.bottomAnchor, constant: 10),
-      branchLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-
-      modelLabel.topAnchor.constraint(equalTo: branchLabel.bottomAnchor, constant: 3),
-      modelLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-
-      costLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+      // Cost + tokens aligned to top-right
+      costLabel.topAnchor.constraint(equalTo: avatar.topAnchor, constant: 2),
       costLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
 
       tokensLabel.topAnchor.constraint(equalTo: costLabel.bottomAnchor, constant: 3),
       tokensLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
 
+      // Branch + model in middle section
+      branchLabel.topAnchor.constraint(equalTo: avatar.bottomAnchor, constant: 12),
+      branchLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+      branchLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+
+      modelLabel.topAnchor.constraint(equalTo: branchLabel.bottomAnchor, constant: 4),
+      modelLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+
+      // Action buttons pinned to bottom-right
       terminateBtn.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
       terminateBtn.trailingAnchor.constraint(equalTo: restartBtn.leadingAnchor, constant: -8),
       terminateBtn.heightAnchor.constraint(equalToConstant: 24),
