@@ -303,11 +303,12 @@ final class DFTerminalPane: NSView {
     tv.translatesAutoresizingMaskIntoConstraints = false
     terminalContainer.addSubview(tv)
 
+    let pad: CGFloat = 10
     NSLayoutConstraint.activate([
-      tv.topAnchor.constraint(equalTo: terminalContainer.topAnchor),
-      tv.leadingAnchor.constraint(equalTo: terminalContainer.leadingAnchor),
-      tv.trailingAnchor.constraint(equalTo: terminalContainer.trailingAnchor),
-      tv.bottomAnchor.constraint(equalTo: terminalContainer.bottomAnchor),
+      tv.topAnchor.constraint(equalTo: terminalContainer.topAnchor, constant: pad),
+      tv.leadingAnchor.constraint(equalTo: terminalContainer.leadingAnchor, constant: pad),
+      tv.trailingAnchor.constraint(equalTo: terminalContainer.trailingAnchor, constant: -pad),
+      tv.bottomAnchor.constraint(equalTo: terminalContainer.bottomAnchor, constant: -pad),
     ])
 
     window?.makeFirstResponder(tv)
