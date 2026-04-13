@@ -11,6 +11,16 @@ final class DFWindowController: NSWindowController {
 
   private var editorVisible = false
 
+  /// Width constraint for the sidebar — mutated by the resize handle.
+  private var sidebarWidthConstraint: NSLayoutConstraint?
+
+  /// Bounds for the sidebar's resizable width.
+  private let sidebarMinWidth: CGFloat = 160
+  private let sidebarMaxWidth: CGFloat = 500
+
+  /// UserDefaults key for persisting the sidebar width across launches.
+  private let sidebarWidthKey = "DFSidebarWidth"
+
   init() {
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1400, height: 860),
@@ -77,11 +87,31 @@ final class DFWindowController: NSWindowController {
       dashboard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
     ])
 
-    // Sidebar, editor, and session bar get fixed widths; terminal fills the rest
+    // Sidebar width is user-resizable (persisted). Editor and session bar stay
+    // fixed. Terminal fills the rest.
+    let savedWidth = UserDefaults.standard.object(forKey: sidebarWidthKey) as? Double
+    let initialWidth = savedWidth.map { CGFloat($0) }
+      .map { min(max($0, sidebarMinWidth), sidebarMaxWidth) } ?? 220
+    let widthConstraint = sidebar.widthAnchor.constraint(equalToConstant: initialWidth)
+    sidebarWidthConstraint = widthConstraint
     NSLayoutConstraint.activate([
-      sidebar.widthAnchor.constraint(equalToConstant: 220),
+      widthConstraint,
       codeEditor.widthAnchor.constraint(equalToConstant: 400),
       sessionBar.widthAnchor.constraint(equalToConstant: 300),
+    ])
+
+    // Drag handle on the sidebar's right edge — overlays the border so the
+    // user can grab a few pixels either side of the divider to resize.
+    let handle = DFSidebarResizeHandle { [weak self] delta in
+      self?.adjustSidebarWidth(by: delta)
+    }
+    handle.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(handle)
+    NSLayoutConstraint.activate([
+      handle.topAnchor.constraint(equalTo: hStack.topAnchor),
+      handle.bottomAnchor.constraint(equalTo: hStack.bottomAnchor),
+      handle.centerXAnchor.constraint(equalTo: sidebar.trailingAnchor),
+      handle.widthAnchor.constraint(equalToConstant: 6),
     ])
 
     // Listen for editor toggle
@@ -253,6 +283,49 @@ final class DFWindowController: NSWindowController {
       }
     }
   }
+
+  // MARK: - Sidebar Resizing
+
+  /// Called by the resize handle on every drag delta. Clamps to the allowed
+  /// range and persists the final width.
+  fileprivate func adjustSidebarWidth(by delta: CGFloat) {
+    guard let c = sidebarWidthConstraint else { return }
+    let newWidth = min(max(c.constant + delta, sidebarMinWidth), sidebarMaxWidth)
+    c.constant = newWidth
+    UserDefaults.standard.set(Double(newWidth), forKey: sidebarWidthKey)
+  }
 }
 
-// MARK: - Themed Split View
+// MARK: - Sidebar Resize Handle
+
+/// Thin draggable strip sitting over the sidebar's right edge. Reports drag
+/// deltas (positive = widen sidebar) to a callback and shows a
+/// horizontal-resize cursor on hover.
+private final class DFSidebarResizeHandle: NSView {
+  private let onDrag: (CGFloat) -> Void
+  private var lastX: CGFloat = 0
+
+  init(onDrag: @escaping (CGFloat) -> Void) {
+    self.onDrag = onDrag
+    super.init(frame: .zero)
+    // Transparent — we only want hit-testing and cursor behavior.
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .resizeLeftRight)
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    lastX = event.locationInWindow.x
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    let x = event.locationInWindow.x
+    let delta = x - lastX
+    lastX = x
+    if delta != 0 { onDrag(delta) }
+  }
+}
