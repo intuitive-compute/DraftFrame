@@ -11,6 +11,8 @@
 
 <p align="center">A multi-session terminal for <a href="https://claude.ai/claude-code">Claude Code</a>. Run parallel Claude sessions with git worktree isolation, live status tracking, and a built-in toolkit.</p>
 
+<p align="center">Built by <a href="https://intuitivecompute.com">Intuitive Compute</a></p>
+
 ## Download
 
 Grab the latest DMG from [GitHub Releases](https://github.com/intuitive-compute/draftframe/releases/latest).
