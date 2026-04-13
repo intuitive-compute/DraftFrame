@@ -29,19 +29,29 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   // MARK: - Drag and Drop
 
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-    guard sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [
+    let options: [NSPasteboard.ReadingOptionKey: Any] = [
       .urlReadingFileURLsOnly: true
-    ]) else {
+    ]
+    guard
+      sender.draggingPasteboard.canReadObject(
+        forClasses: [NSURL.self],
+        options: options
+      )
+    else {
       return []
     }
     return .copy
   }
 
   override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    let options: [NSPasteboard.ReadingOptionKey: Any] = [
+      .urlReadingFileURLsOnly: true
+    ]
     guard
-      let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [
-        .urlReadingFileURLsOnly: true
-      ]) as? [URL]
+      let urls = sender.draggingPasteboard.readObjects(
+        forClasses: [NSURL.self],
+        options: options
+      ) as? [URL]
     else {
       return false
     }

@@ -48,7 +48,8 @@ final class ToolkitManager {
 
   /// Re-evaluate which toolkit.json to use when the active session changes.
   @objc private func activeSessionChanged() {
-    let projectDir = SessionManager.shared.activeSession?.worktreePath
+    let projectDir =
+      SessionManager.shared.activeSession?.worktreePath
       ?? SessionManager.shared.projectDir
     setProjectDirectory(projectDir)
   }
