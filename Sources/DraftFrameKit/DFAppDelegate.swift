@@ -128,6 +128,9 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     let sidebarItem = NSMenuItem(
       title: "Toggle Sidebar", action: #selector(menuToggleSidebar), keyEquivalent: "\\")
     viewMenu.addItem(sidebarItem)
+    let quickTermItem = NSMenuItem(
+      title: "Toggle Quick Terminal", action: #selector(menuToggleQuickTerminal), keyEquivalent: "`")
+    viewMenu.addItem(quickTermItem)
     viewMenuItem.submenu = viewMenu
     mainMenu.addItem(viewMenuItem)
 
@@ -179,6 +182,10 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
   @objc private func menuToggleSidebar() {
     windowController?.toggleSidebar()
+  }
+
+  @objc private func menuToggleQuickTerminal() {
+    DFQuickTerminal.shared.toggle()
   }
 
   @objc private func menuRenameSession() {

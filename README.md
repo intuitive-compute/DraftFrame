@@ -33,7 +33,7 @@ Grab the latest DMG from [GitHub Releases](https://github.com/intuitive-compute/
 - **Voice transcription** — On-device speech-to-text via Apple Speech (Cmd+Shift+V)
 - **Dashboard** — Full-screen session overview (Cmd+D)
 - **Session persistence** — Restore sessions across app restarts
-- **Keyboard shortcuts** — Cmd+T/W/1-9/D/N/O/E and more
+- **Keyboard shortcuts** — Cmd+T/W/1-9/D/N/O/E/` and more
 
 ## Requirements
 
@@ -64,6 +64,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for DMG packaging, signing, and notarizatio
 | Cmd+N | New session with worktree |
 | Cmd+O | Open project |
 | Cmd+Shift+V | Voice input |
+| Cmd+` | Toggle quick terminal (floating shell in the project directory) |
 
 ## Architecture
 

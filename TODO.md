@@ -9,7 +9,7 @@
 - [x] Git worktree creation/removal with context menus
 - [x] Open session from worktree click
 - [x] Real-time Claude status detection via PTY stream interception
-- [x] Keyboard shortcuts (Cmd+T/W/1-9/D/N/O/E)
+- [x] Keyboard shortcuts (Cmd+T/W/1-9/D/N/O/E/`)
 - [x] Toolkit buttons with output popovers
 - [x] Status bar with branch/tokens/cost
 - [x] Dashboard overlay (Cmd+D) with terminate/restart buttons
@@ -27,6 +27,7 @@
 - [x] Configurable toolkit — editable ~/.config/draftframe/toolkit.json
 - [x] Worktree auto-cleanup on quit
 - [x] Session persistence across restarts
+- [x] Quick terminal (Cmd+`) — floating shell rooted at the project directory
 
 ## Remaining — Key Features
 - [ ] **Projects with worktrees** — Organize worktrees under projects. Projects are the directory/repo that worktrees belong to. Allow opening new projects via file navigator (like app launch). Add an "Open Project" button in the sidebar. Each project gets its own set of worktrees and sessions. Support switching between projects.

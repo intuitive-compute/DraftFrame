@@ -12,6 +12,7 @@ final class ShortcutManager {
   var onNewSessionWithWorktree: (() -> Void)?
   var onToggleSidebar: (() -> Void)?
   var onToggleEditor: (() -> Void)?
+  var onToggleQuickTerminal: (() -> Void)?
 
   private var keyDownMonitor: Any?
   private var keyUpMonitor: Any?
@@ -80,6 +81,12 @@ final class ShortcutManager {
     // Cmd+E: toggle editor/inspector
     if flags == .command, event.keyCode == 14 {  // 'e'
       onToggleEditor?()
+      return true
+    }
+
+    // Cmd+` : toggle floating quick terminal
+    if flags == .command, event.keyCode == 50 {  // '`'
+      onToggleQuickTerminal?()
       return true
     }
 

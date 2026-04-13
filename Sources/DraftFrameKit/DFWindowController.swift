@@ -156,6 +156,10 @@ final class DFWindowController: NSWindowController {
       self?.toggleEditor()
     }
 
+    shortcuts.onToggleQuickTerminal = {
+      DFQuickTerminal.shared.toggle()
+    }
+
     shortcuts.install()
   }
 
