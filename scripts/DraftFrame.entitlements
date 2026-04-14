@@ -17,5 +17,9 @@
     <!-- Read user-selected project directories and worktrees anywhere on disk -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+
+    <!-- Outbound network for update checks (GitHub Releases API) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
 </dict>
 </plist>

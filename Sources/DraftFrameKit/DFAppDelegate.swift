@@ -24,6 +24,9 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     // Request voice transcription permissions
     VoiceManager.shared.requestAuthorization()
 
+    // Check for updates in the background (throttled to once per day)
+    UpdateManager.shared.checkOnLaunchIfNeeded()
+
     buildMenuBar()
 
     let wc = DFWindowController()
@@ -83,6 +86,9 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     let appMenuItem = NSMenuItem()
     let appMenu = NSMenu()
     appMenu.addItem(withTitle: "About DraftFrame", action: #selector(showAbout), keyEquivalent: "")
+    appMenu.addItem(
+      withTitle: "Check for Updates\u{2026}", action: #selector(checkForUpdates),
+      keyEquivalent: "")
     appMenu.addItem(NSMenuItem.separator())
     appMenu.addItem(
       withTitle: "Quit DraftFrame", action: #selector(NSApplication.terminate(_:)),
@@ -130,7 +136,8 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
       title: "Toggle Sidebar", action: #selector(menuToggleSidebar), keyEquivalent: "\\")
     viewMenu.addItem(sidebarItem)
     let quickTermItem = NSMenuItem(
-      title: "Toggle Quick Terminal", action: #selector(menuToggleQuickTerminal), keyEquivalent: "`")
+      title: "Toggle Quick Terminal", action: #selector(menuToggleQuickTerminal), keyEquivalent: "`"
+    )
     viewMenu.addItem(quickTermItem)
     viewMenuItem.submenu = viewMenu
     mainMenu.addItem(viewMenuItem)
@@ -220,11 +227,17 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     return nil
   }
 
+  @objc private func checkForUpdates() {
+    UpdateManager.shared.checkNow()
+  }
+
   @objc private func showAbout() {
     let alert = NSAlert()
     alert.messageText = "DraftFrame"
     alert.informativeText =
-      "A multi-session terminal for Claude Code.\n\nManage parallel Claude sessions with worktree isolation, live status tracking, and a built-in toolkit."
+      "Version \(UpdateManager.currentVersion)\n\n"
+      + "A multi-session terminal for Claude Code.\n\n"
+      + "Manage parallel Claude sessions with worktree isolation, live status tracking, and a built-in toolkit."
     alert.alertStyle = .informational
     alert.addButton(withTitle: "OK")
     alert.runModal()
