@@ -90,7 +90,8 @@ final class DFWindowController: NSWindowController {
     // Sidebar width is user-resizable (persisted). Editor and session bar stay
     // fixed. Terminal fills the rest.
     let savedWidth = UserDefaults.standard.object(forKey: sidebarWidthKey) as? Double
-    let initialWidth = savedWidth.map { CGFloat($0) }
+    let initialWidth =
+      savedWidth.map { CGFloat($0) }
       .map { min(max($0, sidebarMinWidth), sidebarMaxWidth) } ?? 220
     let widthConstraint = sidebar.widthAnchor.constraint(equalToConstant: initialWidth)
     sidebarWidthConstraint = widthConstraint
