@@ -26,6 +26,29 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     super.processTerminated(source, exitCode: exitCode)
   }
 
+  // MARK: - Keyboard
+
+  private var keyMonitor: Any?
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if window != nil && keyMonitor == nil {
+      keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        guard let self = self, self.window?.firstResponder === self else { return event }
+        // Shift+Enter: send newline (LF) instead of carriage return (CR)
+        // so Claude Code inserts a line break rather than submitting.
+        if event.keyCode == 36 && event.modifierFlags.contains(.shift) {
+          self.send(txt: "\n")
+          return nil
+        }
+        return event
+      }
+    } else if window == nil, let monitor = keyMonitor {
+      NSEvent.removeMonitor(monitor)
+      keyMonitor = nil
+    }
+  }
+
   // MARK: - Drag and Drop
 
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

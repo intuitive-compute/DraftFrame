@@ -159,8 +159,6 @@ final class PTYStreamAnalyzer {
   // MARK: - Frame Analysis
 
   private func analyzeFrame() {
-    let lower = recentText.lowercased()
-
     // Look at the most recent content (last ~500 chars) for bottom-of-screen indicators
     let recentLower = String(recentText.suffix(500)).lowercased()
 
@@ -170,6 +168,8 @@ final class PTYStreamAnalyzer {
     if recentLower.contains("allow") && recentLower.contains("deny") {
       newState = .needsAttention
     } else if recentLower.contains("[y/n]") || recentLower.contains("(y/n)") {
+      newState = .needsAttention
+    } else if recentLower.contains("do you want to proceed") {
       newState = .needsAttention
     }
     // "esc to interrupt" = Claude is actively working RIGHT NOW
