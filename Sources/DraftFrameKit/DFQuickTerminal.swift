@@ -53,8 +53,8 @@ final class DFQuickTerminal {
     win.titleVisibility = .hidden
     win.backgroundColor = Theme.bg
     win.isMovableByWindowBackground = true
-    win.hidesOnDeactivate = false
-    win.level = .floating
+    win.hidesOnDeactivate = true
+    win.level = .normal
     win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     win.isReleasedWhenClosed = false
     win.minSize = NSSize(width: 500, height: 200)
