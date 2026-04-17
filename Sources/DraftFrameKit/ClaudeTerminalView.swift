@@ -16,7 +16,33 @@ class ClaudeTerminalView: LocalProcessTerminalView {
 
   override func dataReceived(slice: ArraySlice<UInt8>) {
     onPtyData?(slice)
-    super.dataReceived(slice: slice)
+    // While the user is parked above the bottom (reading back through
+    // output), new PTY data would normally snap the viewport back down.
+    // Capture their row before super runs and restore it directly on the
+    // buffer — **not** via scrollTo(), which forces a second full redraw
+    // and makes the selection highlight flicker.
+    if stickyScrollGuardActive {
+      let savedYDisp = terminal.buffer.yDisp
+      super.dataReceived(slice: slice)
+      terminal.buffer.yDisp = savedYDisp
+    } else {
+      super.dataReceived(slice: slice)
+    }
+  }
+
+  // MARK: - Sticky scroll guard
+
+  /// Tracks whether the user has scrolled above the bottom of the buffer.
+  /// Flipped by `scrolled(source:position:)`; consulted by `dataReceived`.
+  private var stickyScrollGuardActive = false
+
+  /// How close to the bottom we treat as "at bottom" — leaves headroom for
+  /// floating-point rounding since `scrollPosition` is a computed Double.
+  private static let atBottomThreshold: Double = 0.999
+
+  open override func scrolled(source: TerminalView, position: Double) {
+    super.scrolled(source: source, position: position)
+    stickyScrollGuardActive = position < Self.atBottomThreshold
   }
 
   override func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
@@ -82,11 +108,28 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     let paths = urls.map { $0.path }
     guard !paths.isEmpty else { return false }
 
-    // Send each path to the terminal, space-separated and shell-escaped.
-    let escaped = paths.map { path in
-      path.contains(" ") ? "'\(path)'" : path
+    // Claude Code supports @-mentions in the prompt to attach files. Emit
+    // `@path` per file, space-separated, and resolve paths under the active
+    // session's working directory to relative form for readability. We don't
+    // shell-quote — this is Claude's prompt, not a shell command line.
+    let baseDir =
+      SessionManager.shared.activeSession?.worktreePath
+      ?? SessionManager.shared.projectDir
+    let mentions = paths.map { path in
+      "@" + Self.displayPath(path, relativeTo: baseDir)
     }
-    send(txt: escaped.joined(separator: " "))
+    send(txt: mentions.joined(separator: " ") + " ")
     return true
+  }
+
+  /// If `path` is under `base`, return the path relative to base (without a
+  /// leading `./`). Otherwise return the absolute path unchanged.
+  private static func displayPath(_ path: String, relativeTo base: String?) -> String {
+    guard let base = base else { return path }
+    let baseWithSlash = base.hasSuffix("/") ? base : base + "/"
+    if path.hasPrefix(baseWithSlash) {
+      return String(path.dropFirst(baseWithSlash.count))
+    }
+    return path
   }
 }
