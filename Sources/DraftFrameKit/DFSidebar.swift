@@ -278,10 +278,18 @@ final class DFSidebar: NSView {
         for wt in worktrees {
           let branchName = wt.branch.isEmpty ? "detached" : wt.branch
           let isBase = wt.isBare
+          // The primary worktree is the project root itself (not a child
+          // under .draftframe/worktrees/).
+          let isPrimary = !isBase && wt.path == project.path
+          let icon = isPrimary ? "checkmark.circle.fill" : "arrow.triangle.branch"
+          let detail = isBase ? "base" : (isPrimary ? "\u{25CF}" : nil)
           let row = makeClickableRow(
-            icon: "arrow.triangle.branch", text: "  \(branchName)",
-            detail: isBase ? "base" : nil,
+            icon: icon, text: "  \(branchName)",
+            detail: detail,
             target: self, action: #selector(worktreeRowClicked(_:)))
+          if isPrimary {
+            row.toolTip = "Currently checked-out branch in \(project.name)"
+          }
           row.worktreeName = branchName
           row.worktreePath = wt.path
           row.isBaseWorktree = isBase
