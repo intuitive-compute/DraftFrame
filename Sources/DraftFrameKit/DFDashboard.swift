@@ -10,7 +10,10 @@ final class DFDashboard: NSView {
   private let modeSelector = NSSegmentedControl(
     labels: ["Grid", "Summary"], trackingMode: .selectOne, target: nil, action: nil)
 
-  enum Mode: Int { case grid = 0, summary = 1 }
+  enum Mode: Int {
+    case grid = 0
+    case summary = 1
+  }
   private(set) var mode: Mode = .grid
 
   override init(frame: NSRect) {
@@ -40,14 +43,20 @@ final class DFDashboard: NSView {
   func toggle() {
     isHidden = !isHidden
     if !isHidden {
+      needsRefresh = true
       needsLayout = true
       layoutSubtreeIfNeeded()
       refresh()
+      needsRefresh = false
     }
   }
 
   @objc private func sessionsChanged() {
-    if !isHidden { refresh() }
+    needsRefresh = true
+    if !isHidden {
+      refresh()
+      needsRefresh = false
+    }
   }
 
   private func setupUI() {
@@ -127,8 +136,8 @@ final class DFDashboard: NSView {
   }
 
   private func layoutGrid(sessions: [Session]) {
-    let cardWidth: CGFloat = 300
-    let cardHeight: CGFloat = 210
+    let cardWidth: CGFloat = 360
+    let cardHeight: CGFloat = 230
     let spacing: CGFloat = 16
     // Use the scroll view's visible width; fall back to our own bounds minus padding.
     let containerWidth = max(scrollView.bounds.width, bounds.width - 60)
@@ -194,9 +203,16 @@ final class DFDashboard: NSView {
       height: max(totalHeight, visibleHeight))
   }
 
+  /// Tracks whether a refresh is actually needed — prevents redundant full
+  /// rebuilds on every layout pass (which fires during window drag/resize).
+  private var needsRefresh = false
+
   override func layout() {
     super.layout()
-    if !isHidden { refresh() }
+    if !isHidden && needsRefresh {
+      needsRefresh = false
+      refresh()
+    }
   }
 }
 
@@ -225,10 +241,11 @@ final class DashboardCard: NSView {
     avatar.translatesAutoresizingMaskIntoConstraints = false
     addSubview(avatar)
 
-    // Name
+    // Name — truncate so it doesn't collide with cost/tokens
     let nameLabel = NSTextField(labelWithString: session.name)
     nameLabel.font = Theme.mono(14, weight: .bold)
     nameLabel.textColor = Theme.text1
+    nameLabel.lineBreakMode = .byTruncatingTail
     nameLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(nameLabel)
 
@@ -246,10 +263,17 @@ final class DashboardCard: NSView {
     statusLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(statusLabel)
 
-    // Branch
-    let branchLabel = NSTextField(labelWithString: session.worktreePath ?? "main")
+    // Branch — show branch name, not the full filesystem path
+    let branchDisplay: String = {
+      if let path = session.worktreePath {
+        return (path as NSString).lastPathComponent
+      }
+      return "main"
+    }()
+    let branchLabel = NSTextField(labelWithString: branchDisplay)
     branchLabel.font = Theme.mono(10)
     branchLabel.textColor = Theme.text3
+    branchLabel.lineBreakMode = .byTruncatingTail
     branchLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(branchLabel)
 
@@ -296,7 +320,7 @@ final class DashboardCard: NSView {
     let autoMergeBox = makeToggle(title: "Auto-merge", action: #selector(toggleAutoMerge(_:)))
     let autoArchiveBox = makeToggle(title: "Auto-archive", action: #selector(toggleAutoArchive(_:)))
 
-    let effectivePath = sessionEffectivePath()
+    let effectivePath = PRMonitor.effectivePath(for: session)
     let config = PRMonitor.shared.config(for: effectivePath)
     autoFixBox.state = config.autoFix ? .on : .off
     autoMergeBox.state = config.autoMerge ? .on : .off
@@ -322,6 +346,7 @@ final class DashboardCard: NSView {
       // Name + status centered vertically against avatar
       nameLabel.topAnchor.constraint(equalTo: avatar.topAnchor, constant: 2),
       nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
+      nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: costLabel.leadingAnchor, constant: -8),
 
       dot.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
       dot.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
@@ -376,39 +401,22 @@ final class DashboardCard: NSView {
   // MARK: - PR section helpers
 
   private func prSectionHeader() -> String {
-    guard sessionEffectivePath() != nil else {
+    guard PRMonitor.effectivePath(for: session) != nil else {
       return "No project dir — PR tracking unavailable"
     }
     guard let status = PRMonitor.shared.status(for: session.id) else {
       return "No PR for this branch · auto actions save to config"
     }
-    switch status.state {
-    case "MERGED": return "PR #\(status.number) merged"
-    case "CLOSED": return "PR #\(status.number) closed"
-    default:
-      let total = status.checks.count
-      if total == 0 {
-        return "PR #\(status.number) · no checks"
-      }
-      return "PR #\(status.number) · \(status.passingCount)/\(total) \(status.rollup.label)"
+    if status.checks.isEmpty {
+      return "\(status.displayText) · no checks"
     }
+    return "\(status.displayText) · \(status.passingCount)/\(status.checks.count)"
   }
 
   private func prHeaderColor() -> NSColor {
-    guard sessionEffectivePath() != nil else { return Theme.text3 }
+    guard PRMonitor.effectivePath(for: session) != nil else { return Theme.text3 }
     guard let status = PRMonitor.shared.status(for: session.id) else { return Theme.text3 }
-    switch status.state {
-    case "MERGED": return Theme.accent
-    case "CLOSED": return Theme.text3
-    default: return status.rollup.color
-    }
-  }
-
-  /// The directory PR monitoring should key on for this session: its
-  /// explicit worktree or, failing that, the active project directory.
-  private func sessionEffectivePath() -> String? {
-    if let path = session.worktreePath { return path }
-    return SessionManager.shared.projectDir
+    return status.displayColor
   }
 
   private func makeToggle(title: String, action: Selector) -> NSButton {
@@ -420,7 +428,7 @@ final class DashboardCard: NSView {
   }
 
   private func writeConfig(mutate: (inout PRMonitorConfig) -> Void) {
-    guard let path = sessionEffectivePath() else { return }
+    guard let path = PRMonitor.effectivePath(for: session) else { return }
     var config = PRMonitor.shared.config(for: path)
     mutate(&config)
     PRMonitor.shared.setConfig(config, for: path)

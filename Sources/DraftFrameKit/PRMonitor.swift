@@ -3,13 +3,27 @@ import Foundation
 
 // MARK: - Model
 
+enum PRState: String {
+  case open = "OPEN"
+  case merged = "MERGED"
+  case closed = "CLOSED"
+}
+
+enum PRConclusion: String {
+  case success = "SUCCESS"
+  case failure = "FAILURE"
+  case cancelled = "CANCELLED"
+  case skipped = "SKIPPED"
+  case neutral = "NEUTRAL"
+  case timedOut = "TIMED_OUT"
+
+  static let failing: Set<PRConclusion> = [.failure, .cancelled, .timedOut]
+}
+
 struct PRCheck: Equatable {
   let name: String
-  /// GitHub status: "COMPLETED", "IN_PROGRESS", "QUEUED", "PENDING".
   let status: String
-  /// GitHub conclusion (only set when status == COMPLETED): "SUCCESS",
-  /// "FAILURE", "CANCELLED", "SKIPPED", "NEUTRAL", "TIMED_OUT".
-  let conclusion: String?
+  let conclusion: PRConclusion?
 }
 
 /// Summary of a PR's check suite — a single status we can render as a pill.
@@ -17,7 +31,7 @@ enum PRRollup: String {
   case passing
   case failing
   case pending
-  case none  // no checks configured
+  case none
 
   var color: NSColor {
     switch self {
@@ -38,17 +52,42 @@ enum PRRollup: String {
   }
 }
 
-struct PRStatus: Equatable {
+struct PRStatus {
   let number: Int
-  /// "OPEN", "MERGED", "CLOSED".
-  let state: String
+  let state: PRState
   let url: String
   let checks: [PRCheck]
   let rollup: PRRollup
-  let lastUpdated: Date
 
   var passingCount: Int {
-    checks.filter { $0.conclusion?.uppercased() == "SUCCESS" }.count
+    checks.filter { $0.conclusion == .success }.count
+  }
+
+  /// Display text for the PR pill / header.
+  var displayText: String {
+    switch state {
+    case .merged: return "PR#\(number) merged"
+    case .closed: return "PR#\(number) closed"
+    case .open:
+      if checks.isEmpty { return "PR#\(number) no checks" }
+      return "PR#\(number) \(rollup.label)"
+    }
+  }
+
+  /// Display color for the PR pill / header.
+  var displayColor: NSColor {
+    switch state {
+    case .merged: return Theme.accent
+    case .closed: return Theme.text3
+    case .open: return rollup.color
+    }
+  }
+
+  /// Value-equality ignoring transient fields like timestamps. Used to
+  /// suppress redundant `.prStatusDidChange` notifications.
+  func contentEquals(_ other: PRStatus) -> Bool {
+    number == other.number && state == other.state
+      && checks == other.checks && rollup == other.rollup
   }
 }
 
@@ -95,6 +134,14 @@ final class PRMonitor {
   /// How often to hit `gh pr view` per session.
   private static let pollInterval: TimeInterval = 30
 
+  /// Cached PATH with Homebrew dirs prepended, computed once at init.
+  private let composedPATH: String = {
+    let homebrewPaths = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+    let inherited = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    let parts = inherited.split(separator: ":").map(String.init)
+    return (homebrewPaths.filter { !parts.contains($0) } + parts).joined(separator: ":")
+  }()
+
   private init() {
     loadConfig()
     NotificationCenter.default.addObserver(
@@ -129,7 +176,7 @@ final class PRMonitor {
   /// config option so the UI reflects current state without waiting 30s.
   func refreshNow(sessionID: UUID) {
     guard let session = SessionManager.shared.sessions.first(where: { $0.id == sessionID }),
-      let path = effectivePath(for: session)
+      let path = Self.effectivePath(for: session)
     else { return }
     queue.async { [weak self] in
       self?.poll(sessionID: sessionID, worktreePath: path)
@@ -139,7 +186,7 @@ final class PRMonitor {
   /// Resolve the directory we should run `gh` from for this session:
   /// its explicit worktree path, or the current project directory as a
   /// fallback. Returns nil if neither is set.
-  private func effectivePath(for session: Session) -> String? {
+  static func effectivePath(for session: Session) -> String? {
     if let path = session.worktreePath { return path }
     return SessionManager.shared.projectDir
   }
@@ -156,7 +203,7 @@ final class PRMonitor {
     // with neither (shouldn't happen in practice) are skipped.
     for session in sessions {
       guard timers[session.id] == nil else { continue }
-      guard let path = effectivePath(for: session) else { continue }
+      guard let path = Self.effectivePath(for: session) else { continue }
       startTimer(sessionID: session.id, worktreePath: path)
     }
 
@@ -199,11 +246,10 @@ final class PRMonitor {
     guard let data = output.data(using: .utf8),
       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let number = obj["number"] as? Int,
-      let state = obj["state"] as? String,
+      let stateStr = obj["state"] as? String,
+      let state = PRState(rawValue: stateStr),
       let url = obj["url"] as? String
     else {
-      // No PR for this branch, or gh not installed / not authed. Clear
-      // any stale status so the UI drops the indicator.
       let preview = output.trimmingCharacters(in: .whitespacesAndNewlines)
         .prefix(200)
       NSLog(
@@ -214,22 +260,19 @@ final class PRMonitor {
       }
       return
     }
-    NSLog(
-      "[PRMonitor] %@ → PR #%d %@ (%d checks)",
-      worktreePath, number, state, (obj["statusCheckRollup"] as? [[String: Any]])?.count ?? 0)
 
     let rollupArr = obj["statusCheckRollup"] as? [[String: Any]] ?? []
     let checks = rollupArr.map { entry -> PRCheck in
       PRCheck(
         name: entry["name"] as? String ?? (entry["context"] as? String ?? "check"),
         status: entry["status"] as? String ?? "UNKNOWN",
-        conclusion: entry["conclusion"] as? String
+        conclusion: (entry["conclusion"] as? String).flatMap { PRConclusion(rawValue: $0) }
       )
     }
     let rollup = computeRollup(checks: checks)
     let status = PRStatus(
       number: number, state: state, url: url,
-      checks: checks, rollup: rollup, lastUpdated: Date()
+      checks: checks, rollup: rollup
     )
 
     DispatchQueue.main.async { [weak self] in
@@ -239,8 +282,8 @@ final class PRMonitor {
 
   private func computeRollup(checks: [PRCheck]) -> PRRollup {
     if checks.isEmpty { return .none }
-    let failureConclusions: Set<String> = ["FAILURE", "CANCELLED", "TIMED_OUT"]
-    if checks.contains(where: { failureConclusions.contains($0.conclusion?.uppercased() ?? "") }) {
+    if checks.contains(where: { c in c.conclusion.map { PRConclusion.failing.contains($0) } ?? false
+    }) {
       return .failing
     }
     let pendingStates: Set<String> = ["IN_PROGRESS", "QUEUED", "PENDING"]
@@ -264,26 +307,27 @@ final class PRMonitor {
     let previousState = previous?.state
 
     statusBySession[sessionID] = newStatus
-    NotificationCenter.default.post(name: .prStatusDidChange, object: nil)
+
+    // Only post the notification (which triggers UI rebuilds) when something
+    // the user can see actually changed.
+    if previous.map({ !$0.contentEquals(newStatus) }) ?? true {
+      NotificationCenter.default.post(name: .prStatusDidChange, object: nil)
+    }
 
     let config = configByWorktree[worktreePath] ?? PRMonitorConfig()
 
-    // Reset auto-merge attempt flag if the PR fell out of passing — some
-    // check newly started or failed, and we might attempt again later.
     if newStatus.rollup != .passing {
       mergedAttempted.remove(sessionID)
     }
 
-    // Auto-archive: state transitioned to a terminal state.
     let stateChanged = previousState != newStatus.state
-    let isTerminal = newStatus.state == "MERGED" || newStatus.state == "CLOSED"
+    let isTerminal = newStatus.state == .merged || newStatus.state == .closed
     if config.autoArchive && stateChanged && isTerminal {
       autoArchive(sessionID: sessionID, worktreePath: worktreePath, status: newStatus)
-      return  // session is being closed; no more actions
+      return
     }
 
-    // Only act on OPEN PRs from here on.
-    guard newStatus.state == "OPEN" else { return }
+    guard newStatus.state == .open else { return }
 
     // Auto-fix: rollup transitioned into .failing.
     if config.autoFix && newStatus.rollup == .failing && previousRollup != .failing {
@@ -311,10 +355,7 @@ final class PRMonitor {
     else { return }
     let failed =
       status.checks
-      .filter {
-        let c = $0.conclusion?.uppercased() ?? ""
-        return c == "FAILURE" || c == "CANCELLED" || c == "TIMED_OUT"
-      }
+      .filter { $0.conclusion.map { PRConclusion.failing.contains($0) } ?? false }
       .map { $0.name }
     let list = failed.isEmpty ? "the CI checks" : failed.joined(separator: ", ")
     let prompt =
@@ -362,7 +403,7 @@ final class PRMonitor {
     // PR just merged or was closed.
     do {
       try WorktreeManager.shared.removeWorktree(repoRoot: root, path: worktreePath)
-      let verb = status.state == "MERGED" ? "merged" : "closed"
+      let verb = status.state == .merged ? "merged" : "closed"
       NotificationManager.shared.sendWatchdogNotification(
         title: "Session archived",
         body: "PR #\(status.number) \(verb) — \(session.name) and its worktree were removed"
@@ -384,16 +425,8 @@ final class PRMonitor {
     proc.arguments = ["gh"] + args
     proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
 
-    // Compose an env with homebrew paths so `gh` is findable regardless of
-    // launch context (GUI launches often start with a stripped PATH).
-    let parentEnv = ProcessInfo.processInfo.environment
-    let homebrewPaths = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
-    let inheritedPath = parentEnv["PATH"] ?? ""
-    let parts = inheritedPath.split(separator: ":").map(String.init)
-    let composedPath = (homebrewPaths.filter { !parts.contains($0) } + parts)
-      .joined(separator: ":")
-    var env = parentEnv
-    env["PATH"] = composedPath
+    var env = ProcessInfo.processInfo.environment
+    env["PATH"] = composedPATH
     proc.environment = env
 
     let out = Pipe()

@@ -300,22 +300,9 @@ final class SessionCard: NSView {
   }
 
   private func makePRPill(status: PRStatus) -> NSTextField {
-    let text: String
-    switch status.state {
-    case "MERGED": text = "PR#\(status.number) merged"
-    case "CLOSED": text = "PR#\(status.number) closed"
-    default: text = "PR#\(status.number) \(status.rollup.label)"
-    }
-    let color: NSColor = {
-      switch status.state {
-      case "MERGED": return Theme.accent
-      case "CLOSED": return Theme.text3
-      default: return status.rollup.color
-      }
-    }()
-    let field = NSTextField(labelWithString: text)
+    let field = NSTextField(labelWithString: status.displayText)
     field.font = Theme.mono(9, weight: .medium)
-    field.textColor = color
+    field.textColor = status.displayColor
     field.toolTip = status.url
     return field
   }

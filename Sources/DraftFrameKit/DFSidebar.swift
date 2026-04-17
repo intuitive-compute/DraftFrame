@@ -881,11 +881,9 @@ final class DFSidebar: NSView {
     }
   }
 
-  /// The directory PR monitoring keys on for the currently active session.
-  /// Mirrors `PRMonitor`'s effective-path logic.
   private func activePRConfigPath() -> String? {
-    if let path = SessionManager.shared.activeSession?.worktreePath { return path }
-    return SessionManager.shared.projectDir
+    guard let session = SessionManager.shared.activeSession else { return nil }
+    return PRMonitor.effectivePath(for: session)
   }
 
   @objc private func togglePRActionFromRow(_ sender: AnyObject) {
