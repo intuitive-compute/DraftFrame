@@ -390,30 +390,63 @@ final class PRMonitor {
   private func autoArchive(sessionID: UUID, worktreePath: String, status: PRStatus) {
     guard let session = SessionManager.shared.sessions.first(where: { $0.id == sessionID })
     else { return }
-    guard let root = WorktreeManager.shared.repoRoot else {
-      NSLog("[PRMonitor] auto-archive: no repoRoot; skipping")
-      return
-    }
+
+    let verb = status.state == .merged ? "merged" : "closed"
+
+    // Only attempt worktree removal for actual draftframe-managed worktrees
+    // (those living under .draftframe/worktrees/). Sessions opened directly
+    // on the project dir should just be closed, not removed from git.
+    let isManagedWorktree = worktreePath.contains("/.draftframe/worktrees/")
 
     // Close session first — stops the JSONL watcher and removes the terminal.
     SessionManager.shared.closeSession(id: sessionID)
 
-    // Then remove the worktree. Git refuses if uncommitted changes exist;
-    // we `--force` in removeWorktree, which is appropriate here since the
-    // PR just merged or was closed.
-    do {
-      try WorktreeManager.shared.removeWorktree(repoRoot: root, path: worktreePath)
-      let verb = status.state == .merged ? "merged" : "closed"
+    if isManagedWorktree {
+      // Resolve the repo root from the worktree path itself rather than
+      // using the singleton, which may point at a different project.
+      let repoRoot = resolveRepoRoot(from: worktreePath)
+      guard let root = repoRoot else {
+        NSLog("[PRMonitor] auto-archive: could not resolve repoRoot from %@", worktreePath)
+        return
+      }
+      do {
+        try WorktreeManager.shared.removeWorktree(repoRoot: root, path: worktreePath)
+        NotificationManager.shared.sendWatchdogNotification(
+          title: "Session archived",
+          body: "PR #\(status.number) \(verb) — \(session.name) and its worktree were removed"
+        )
+      } catch {
+        NSLog("[PRMonitor] auto-archive removeWorktree failed: %@", error.localizedDescription)
+        NotificationManager.shared.sendWatchdogNotification(
+          title: "Auto-archive failed",
+          body: "Couldn't remove worktree for \(session.name): \(error.localizedDescription)"
+        )
+      }
+    } else {
       NotificationManager.shared.sendWatchdogNotification(
         title: "Session archived",
-        body: "PR #\(status.number) \(verb) — \(session.name) and its worktree were removed"
+        body: "PR #\(status.number) \(verb) — \(session.name) closed"
       )
+    }
+  }
+
+  /// Resolve the git repo root for a path by running `git rev-parse --show-toplevel`.
+  private func resolveRepoRoot(from path: String) -> String? {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = ["-C", path, "rev-parse", "--show-toplevel"]
+    let pipe = Pipe()
+    proc.standardOutput = pipe
+    proc.standardError = Pipe()
+    do {
+      try proc.run()
+      proc.waitUntilExit()
+      guard proc.terminationStatus == 0 else { return nil }
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      return String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     } catch {
-      NSLog("[PRMonitor] auto-archive removeWorktree failed: %@", error.localizedDescription)
-      NotificationManager.shared.sendWatchdogNotification(
-        title: "Auto-archive failed",
-        body: "Couldn't remove worktree for \(session.name): \(error.localizedDescription)"
-      )
+      return nil
     }
   }
 
