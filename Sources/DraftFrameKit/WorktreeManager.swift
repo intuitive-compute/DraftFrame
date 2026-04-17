@@ -237,12 +237,39 @@ final class WorktreeManager {
     if proc.terminationStatus != 0 {
       let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
       let errMsg = String(data: errData, encoding: .utf8) ?? "Unknown error"
-      // Include what git actually sees so we can diagnose path/admin mismatches.
       let listing = debugWorktreeListing(root: root, env: env)
       NSLog("[WorktreeManager] removeWorktree failed: %@\nListing:\n%@", errMsg, listing)
+
+      // Worktree removal failed — try to at least clean up the branch
+      // so it doesn't linger in the project view.
+      deleteBranch(name: name, repoRoot: root, env: env)
+
       throw WorktreeError.removeFailed(
         "\(errMsg)\n\nDraftFrame repoRoot: \(root)\nTarget name: \(name)\n\nGit's view of worktrees:\n\(listing)"
       )
+    }
+  }
+
+  /// Best-effort `git branch -D <name>`. Silently ignores failures (the
+  /// branch may already be gone, or it may be checked out elsewhere).
+  private func deleteBranch(name: String, repoRoot root: String, env: [String: String]) {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = ["-C", root, "branch", "-D", name]
+    proc.environment = env
+    proc.currentDirectoryURL = URL(fileURLWithPath: root)
+    proc.standardOutput = Pipe()
+    proc.standardError = Pipe()
+    do {
+      try proc.run()
+      proc.waitUntilExit()
+      if proc.terminationStatus == 0 {
+        NSLog("[WorktreeManager] deleted branch %@", name)
+      } else {
+        NSLog("[WorktreeManager] branch delete skipped for %@ (may not exist or is checked out)", name)
+      }
+    } catch {
+      NSLog("[WorktreeManager] branch delete failed for %@: %@", name, error.localizedDescription)
     }
   }
 
