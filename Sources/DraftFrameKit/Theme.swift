@@ -22,8 +22,8 @@ enum Theme {
   static let cyan = NSColor(r: 0x32, g: 0xD4, b: 0xDE)
 
   // Selection
-  static let selected = NSColor(r: 0xFF, g: 0xA5, b: 0x00, a: 0.15)
-  static let selectedBorder = NSColor(r: 0xFF, g: 0xA5, b: 0x00, a: 0.40)
+  static let selected = NSColor(r: 0xFF, g: 0xA5, b: 0x00, a: 0.35)
+  static let selectedBorder = NSColor(r: 0xFF, g: 0xA5, b: 0x00, a: 0.60)
 
   // Mono font
   static func mono(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
