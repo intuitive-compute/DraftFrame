@@ -19,6 +19,10 @@ final class DFSessionBar: NSView {
       self, selector: #selector(sessionsChanged),
       name: .activeSessionDidChange, object: nil
     )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(sessionsChanged),
+      name: .prStatusDidChange, object: nil
+    )
   }
 
   @available(*, unavailable)
@@ -252,7 +256,16 @@ final class SessionCard: NSView {
       addSubview(v)
     }
 
-    NSLayoutConstraint.activate([
+    // PR status pill (only if gh reports a PR for this worktree).
+    let prStatus = PRMonitor.shared.status(for: session.id)
+    let prPill: NSTextField? = prStatus.map { status in
+      let label = makePRPill(status: status)
+      label.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(label)
+      return label
+    }
+
+    var constraints: [NSLayoutConstraint] = [
       heightAnchor.constraint(equalToConstant: 56),
 
       avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -276,7 +289,35 @@ final class SessionCard: NSView {
 
       modelLabel.leadingAnchor.constraint(equalTo: statusLabel.trailingAnchor, constant: 8),
       modelLabel.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
-    ])
+    ]
+    if let pill = prPill {
+      constraints.append(contentsOf: [
+        pill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+        pill.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
+      ])
+    }
+    NSLayoutConstraint.activate(constraints)
+  }
+
+  private func makePRPill(status: PRStatus) -> NSTextField {
+    let text: String
+    switch status.state {
+    case "MERGED": text = "PR#\(status.number) merged"
+    case "CLOSED": text = "PR#\(status.number) closed"
+    default: text = "PR#\(status.number) \(status.rollup.label)"
+    }
+    let color: NSColor = {
+      switch status.state {
+      case "MERGED": return Theme.accent
+      case "CLOSED": return Theme.text3
+      default: return status.rollup.color
+      }
+    }()
+    let field = NSTextField(labelWithString: text)
+    field.font = Theme.mono(9, weight: .medium)
+    field.textColor = color
+    field.toolTip = status.url
+    return field
   }
 }
 

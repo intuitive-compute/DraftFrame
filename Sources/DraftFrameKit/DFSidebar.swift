@@ -29,6 +29,17 @@ final class DFSidebar: NSView {
       self, selector: #selector(refreshWatchdogs),
       name: .watchdogsDidChange, object: nil
     )
+    // Refresh PR action rows in the watchdogs list when the active session
+    // changes (so rows reflect the new session's project config) or when
+    // the user toggles a config via the dashboard card.
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(refreshWatchdogs),
+      name: .activeSessionDidChange, object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(refreshWatchdogs),
+      name: .prStatusDidChange, object: nil
+    )
   }
 
   @available(*, unavailable)
@@ -838,6 +849,60 @@ final class DFSidebar: NSView {
       row.heightAnchor.constraint(equalToConstant: 28).isActive = true
       watchdogStack.addArrangedSubview(row)
     }
+
+    appendPRActionRows()
+  }
+
+  // MARK: - PR action watchdog rows
+
+  /// PR-state-driven automations (auto-fix CI, auto-merge, auto-archive)
+  /// are persisted per-project, not per-session, so they only render when
+  /// there's an active session with a resolvable directory. Toggling writes
+  /// through `PRMonitor`, which already handles persistence and reschedules
+  /// the poller.
+  private func appendPRActionRows() {
+    guard let path = activePRConfigPath() else { return }
+    let config = PRMonitor.shared.config(for: path)
+
+    let specs: [(key: PRActionKey, title: String, icon: String, on: Bool)] = [
+      (.autoFix, "Auto-fix CI", "wand.and.stars", config.autoFix),
+      (.autoMerge, "Auto-merge PR", "arrow.triangle.merge", config.autoMerge),
+      (.autoArchive, "Auto-archive PR", "archivebox", config.autoArchive),
+    ]
+
+    for spec in specs {
+      let row = makeClickableRow(
+        icon: spec.on ? spec.icon : "\(spec.icon)",
+        text: spec.title, detail: spec.on ? "on" : "off",
+        target: self, action: #selector(togglePRActionFromRow(_:)))
+      row.prActionKey = spec.key
+      row.heightAnchor.constraint(equalToConstant: 28).isActive = true
+      watchdogStack.addArrangedSubview(row)
+    }
+  }
+
+  /// The directory PR monitoring keys on for the currently active session.
+  /// Mirrors `PRMonitor`'s effective-path logic.
+  private func activePRConfigPath() -> String? {
+    if let path = SessionManager.shared.activeSession?.worktreePath { return path }
+    return SessionManager.shared.projectDir
+  }
+
+  @objc private func togglePRActionFromRow(_ sender: AnyObject) {
+    guard let row = sender as? ClickableRow,
+      let key = row.prActionKey,
+      let path = activePRConfigPath()
+    else { return }
+    var config = PRMonitor.shared.config(for: path)
+    switch key {
+    case .autoFix: config.autoFix.toggle()
+    case .autoMerge: config.autoMerge.toggle()
+    case .autoArchive: config.autoArchive.toggle()
+    }
+    PRMonitor.shared.setConfig(config, for: path)
+    if let sessionID = SessionManager.shared.activeSession?.id {
+      PRMonitor.shared.refreshNow(sessionID: sessionID)
+    }
   }
 
   @objc private func watchdogRowClicked(_ sender: AnyObject) {
@@ -1090,6 +1155,9 @@ final class DFSidebar: NSView {
   }
 }
 
+/// Identifies a PR-state-driven automation for rows in the watchdogs list.
+enum PRActionKey { case autoFix, autoMerge, autoArchive }
+
 /// A view that acts like a button — sends action on click.
 final class ClickableRow: NSView {
   weak var target: AnyObject?
@@ -1101,6 +1169,7 @@ final class ClickableRow: NSView {
   var isBaseWorktree: Bool = false
   var filePath: String?
   var isDirectory: Bool = false
+  var prActionKey: PRActionKey?
 
   init(target: AnyObject?, action: Selector?) {
     self.target = target

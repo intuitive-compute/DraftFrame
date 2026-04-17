@@ -24,6 +24,10 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     // Request voice transcription permissions
     VoiceManager.shared.requestAuthorization()
 
+    // Touch singletons so they begin observing session changes.
+    _ = WatchdogManager.shared
+    _ = PRMonitor.shared
+
     // Check for updates in the background (throttled to once per day)
     UpdateManager.shared.checkOnLaunchIfNeeded()
 
@@ -49,10 +53,11 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
       sessions[i].jsonlWatcher?.stop()
     }
 
-    // Check if there are draftframe-managed worktrees to clean up
+    // Check if there are draftframe-managed worktrees to clean up.
+    // A worktree is "ours" if its path lives under .draftframe/worktrees/.
     let worktrees = WorktreeManager.shared.listWorktrees()
     let managedWorktrees = worktrees.filter { wt in
-      !wt.isBare && wt.branch.hasPrefix("draftframe/")
+      !wt.isBare && wt.path.contains("/.draftframe/worktrees/")
     }
 
     if !managedWorktrees.isEmpty {

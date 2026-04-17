@@ -37,4 +37,47 @@ final class SessionJSONLWatcherTests: XCTestCase {
     let encoded = SessionJSONLWatcher.encodePath("/Users/jwatters/code/draftframe")
     XCTAssertEqual(encoded, "-Users-jwatters-code-draftframe")
   }
+
+  // MARK: - extractText
+
+  func testExtractTextFromPlainString() {
+    XCTAssertEqual(SessionJSONLWatcher.extractText(from: "hello"), "hello")
+  }
+
+  func testExtractTextFromStringTrimsWhitespace() {
+    XCTAssertEqual(SessionJSONLWatcher.extractText(from: "  hello\n"), "hello")
+  }
+
+  func testExtractTextFromBlockArray() {
+    let content: [[String: Any]] = [
+      ["type": "text", "text": "first"],
+      ["type": "text", "text": "second"],
+    ]
+    XCTAssertEqual(SessionJSONLWatcher.extractText(from: content), "first\nsecond")
+  }
+
+  func testExtractTextSkipsNonTextBlocks() {
+    let content: [[String: Any]] = [
+      ["type": "tool_use", "id": "abc", "name": "Read"],
+      ["type": "text", "text": "only this"],
+      ["type": "tool_result", "tool_use_id": "abc"],
+    ]
+    XCTAssertEqual(SessionJSONLWatcher.extractText(from: content), "only this")
+  }
+
+  func testExtractTextReturnsNilForEmptyArray() {
+    XCTAssertNil(SessionJSONLWatcher.extractText(from: [] as [[String: Any]]))
+  }
+
+  func testExtractTextReturnsNilWhenOnlyToolBlocks() {
+    let content: [[String: Any]] = [
+      ["type": "tool_use", "id": "abc", "name": "Bash"]
+    ]
+    XCTAssertNil(SessionJSONLWatcher.extractText(from: content))
+  }
+
+  func testExtractTextReturnsNilForUnsupportedType() {
+    XCTAssertNil(SessionJSONLWatcher.extractText(from: 42))
+    XCTAssertNil(SessionJSONLWatcher.extractText(from: nil))
+  }
 }

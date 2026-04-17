@@ -35,6 +35,14 @@ final class SessionJSONLWatcher {
   private(set) var totalTokensOut: Int = 0
   private(set) var latestModel: String = "sonnet"
 
+  /// Most recent assistant text response parsed from the JSONL stream.
+  /// Used by the dashboard's cross-session summary view. Nil until the
+  /// session has produced its first text-bearing assistant message.
+  private(set) var latestAssistantText: String?
+
+  /// Timestamp of the most recent assistant text.
+  private(set) var latestAssistantAt: Date?
+
   // MARK: - Private
 
   private let onUpdate: UpdateCallback
@@ -247,6 +255,17 @@ final class SessionJSONLWatcher {
       latestModel = Self.shortModelName(model)
     }
 
+    // Capture assistant text content for the cross-session summary view.
+    // The `content` field may be an array of typed blocks or (rarely) a
+    // plain string. Join all text blocks into a single string so the
+    // dashboard can preview the latest response.
+    if let text = Self.extractText(from: message["content"]),
+      !text.isEmpty
+    {
+      latestAssistantText = text
+      latestAssistantAt = Date()
+    }
+
     // Accumulate tokens (report total input = regular + cache tokens)
     totalTokensIn += inputTokens + cacheCreationTokens + cacheReadTokens
     totalTokensOut += outputTokens
@@ -260,6 +279,24 @@ final class SessionJSONLWatcher {
     totalCost += inputCost + cacheCreateCost + cacheReadCost + outputCost
 
     return true
+  }
+
+  /// Extract concatenated text from a JSONL `content` field. The field can
+  /// be either a plain string (rare) or an array of `{"type": "text", ...}`
+  /// blocks interleaved with tool_use / tool_result blocks — we keep only
+  /// the text blocks so the summary view shows what Claude actually said.
+  static func extractText(from content: Any?) -> String? {
+    if let str = content as? String {
+      return str.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    guard let arr = content as? [[String: Any]] else { return nil }
+    let parts = arr.compactMap { block -> String? in
+      guard block["type"] as? String == "text" else { return nil }
+      return block["text"] as? String
+    }
+    let joined = parts.joined(separator: "\n")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return joined.isEmpty ? nil : joined
   }
 
   /// Convert full model identifier (e.g. "claude-opus-4-6") to short name for pricing lookup.
