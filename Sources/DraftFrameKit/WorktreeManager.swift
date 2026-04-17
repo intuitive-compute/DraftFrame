@@ -84,7 +84,7 @@ final class WorktreeManager {
     }
 
     let worktreePath = "\(base)/\(name)"
-    let branchName = "draftframe/\(name)"
+    let branchName = name
 
     // Detect default branch if not specified
     let resolvedBase = baseBranch ?? detectDefaultBranch(in: root) ?? "main"
