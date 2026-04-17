@@ -111,28 +111,17 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     let paths = urls.map { $0.path }
     guard !paths.isEmpty else { return false }
 
-    // Claude Code supports @-mentions in the prompt to attach files. Emit
-    // `@path` per file, space-separated, and resolve paths under the active
-    // session's working directory to relative form for readability. We don't
-    // shell-quote — this is Claude's prompt, not a shell command line.
-    let baseDir =
-      SessionManager.shared.activeSession?.worktreePath
-      ?? SessionManager.shared.projectDir
-    let mentions = paths.map { path in
-      "@" + Self.displayPath(path, relativeTo: baseDir)
+    // Send paths as a bracketed paste so Claude Code treats the drop the
+    // same way iTerm2 does — it detects image file paths and renders them
+    // as [Image #N], and attaches other files as context.
+    let text = paths.joined(separator: " ")
+    if terminal.bracketedPasteMode {
+      send(data: EscapeSequences.bracketedPasteStart[0...])
+      send(txt: text)
+      send(data: EscapeSequences.bracketedPasteEnd[0...])
+    } else {
+      send(txt: text)
     }
-    send(txt: mentions.joined(separator: " ") + " ")
     return true
-  }
-
-  /// If `path` is under `base`, return the path relative to base (without a
-  /// leading `./`). Otherwise return the absolute path unchanged.
-  private static func displayPath(_ path: String, relativeTo base: String?) -> String {
-    guard let base = base else { return path }
-    let baseWithSlash = base.hasSuffix("/") ? base : base + "/"
-    if path.hasPrefix(baseWithSlash) {
-      return String(path.dropFirst(baseWithSlash.count))
-    }
-    return path
   }
 }
