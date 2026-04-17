@@ -396,7 +396,7 @@ final class PRMonitor {
     // Only attempt worktree removal for actual draftframe-managed worktrees
     // (those living under .draftframe/worktrees/). Sessions opened directly
     // on the project dir should just be closed, not removed from git.
-    let isManagedWorktree = worktreePath.contains("/.draftframe/worktrees/")
+    let isManagedWorktree = WorktreeManager.isManagedWorktree(worktreePath)
 
     // Close session first — stops the JSONL watcher and removes the terminal.
     SessionManager.shared.closeSession(id: sessionID)
@@ -404,7 +404,7 @@ final class PRMonitor {
     if isManagedWorktree {
       // Resolve the repo root from the worktree path itself rather than
       // using the singleton, which may point at a different project.
-      let repoRoot = resolveRepoRoot(from: worktreePath)
+      let repoRoot = WorktreeManager.repoRoot(at: worktreePath)
       guard let root = repoRoot else {
         NSLog("[PRMonitor] auto-archive: could not resolve repoRoot from %@", worktreePath)
         return
@@ -427,26 +427,6 @@ final class PRMonitor {
         title: "Session archived",
         body: "PR #\(status.number) \(verb) — \(session.name) closed"
       )
-    }
-  }
-
-  /// Resolve the git repo root for a path by running `git rev-parse --show-toplevel`.
-  private func resolveRepoRoot(from path: String) -> String? {
-    let proc = Process()
-    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    proc.arguments = ["-C", path, "rev-parse", "--show-toplevel"]
-    let pipe = Pipe()
-    proc.standardOutput = pipe
-    proc.standardError = Pipe()
-    do {
-      try proc.run()
-      proc.waitUntilExit()
-      guard proc.terminationStatus == 0 else { return nil }
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      return String(data: data, encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    } catch {
-      return nil
     }
   }
 

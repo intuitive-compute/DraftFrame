@@ -14,10 +14,40 @@ final class WorktreeManager {
   /// Detect the git repo root from the current directory or home.
   private(set) var repoRoot: String?
 
+  /// The path component that identifies draftframe-managed worktrees.
+  static let worktreeSubpath = "/.draftframe/worktrees"
+
   /// Base directory for draftframe worktrees.
   private var worktreeBase: String? {
     guard let root = repoRoot else { return nil }
-    return root + "/.draftframe/worktrees"
+    return root + Self.worktreeSubpath
+  }
+
+  /// Whether a path is a draftframe-managed worktree (lives under
+  /// `<repo>/.draftframe/worktrees/`). Resolves symlinks before checking.
+  static func isManagedWorktree(_ path: String) -> Bool {
+    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    return resolved.contains(worktreeSubpath + "/")
+  }
+
+  /// Resolve the git repo root for an arbitrary path.
+  static func repoRoot(at path: String) -> String? {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = ["-C", path, "rev-parse", "--show-toplevel"]
+    let pipe = Pipe()
+    proc.standardOutput = pipe
+    proc.standardError = Pipe()
+    do {
+      try proc.run()
+      proc.waitUntilExit()
+      guard proc.terminationStatus == 0 else { return nil }
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      return String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    } catch {
+      return nil
+    }
   }
 
   private init() {
@@ -266,7 +296,8 @@ final class WorktreeManager {
       if proc.terminationStatus == 0 {
         NSLog("[WorktreeManager] deleted branch %@", name)
       } else {
-        NSLog("[WorktreeManager] branch delete skipped for %@ (may not exist or is checked out)", name)
+        NSLog(
+          "[WorktreeManager] branch delete skipped for %@ (may not exist or is checked out)", name)
       }
     } catch {
       NSLog("[WorktreeManager] branch delete failed for %@: %@", name, error.localizedDescription)

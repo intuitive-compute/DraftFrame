@@ -54,10 +54,9 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Check if there are draftframe-managed worktrees to clean up.
-    // A worktree is "ours" if its path lives under .draftframe/worktrees/.
     let worktrees = WorktreeManager.shared.listWorktrees()
     let managedWorktrees = worktrees.filter { wt in
-      !wt.isBare && wt.path.contains("/.draftframe/worktrees/")
+      !wt.isBare && WorktreeManager.isManagedWorktree(wt.path)
     }
 
     if !managedWorktrees.isEmpty {
