@@ -61,6 +61,9 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     if window != nil && keyMonitor == nil {
       keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
         guard let self = self, self.window?.firstResponder === self else { return event }
+        // Any keypress releases the sticky scroll guard so the viewport
+        // follows the cursor when the user starts typing or submits.
+        self.stickyScrollGuardActive = false
         // Shift+Enter: send newline (LF) instead of carriage return (CR)
         // so Claude Code inserts a line break rather than submitting.
         if event.keyCode == 36 && event.modifierFlags.contains(.shift) {
