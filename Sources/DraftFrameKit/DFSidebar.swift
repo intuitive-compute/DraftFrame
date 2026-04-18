@@ -15,6 +15,12 @@ final class DFSidebar: NSView {
   /// only.
   private var pendingRemovals: Set<String> = []
 
+  /// Guard against reentrant calls to `refreshWorktrees()`.
+  /// `Process.waitUntilExit()` pumps the run loop, which can dispatch queued
+  /// notifications and re-enter this method mid-iteration — splicing one
+  /// project's worktree rows under another project's header.
+  private var isRefreshingWorktrees = false
+
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
@@ -212,6 +218,20 @@ final class DFSidebar: NSView {
   // MARK: - Worktrees
 
   @objc private func refreshWorktrees() {
+    // Process.waitUntilExit() inside getWorktrees(for:) pumps the run loop,
+    // which can dispatch a queued .sessionsDidChange notification and re-enter
+    // this method. The reentrant call clears the stack and rebuilds it, but
+    // then the original call resumes appending rows — splicing one project's
+    // worktrees under another project's header. Guard against that here;
+    // schedule a fresh pass after the current one finishes so the final state
+    // is always consistent.
+    guard !isRefreshingWorktrees else {
+      DispatchQueue.main.async { [weak self] in self?.refreshWorktrees() }
+      return
+    }
+    isRefreshingWorktrees = true
+    defer { isRefreshingWorktrees = false }
+
     for v in worktreeStack.arrangedSubviews {
       worktreeStack.removeArrangedSubview(v)
       v.removeFromSuperview()
@@ -421,9 +441,15 @@ final class DFSidebar: NSView {
 
   /// Get worktrees for a specific project directory.
   private func getWorktrees(for projectPath: String) -> [WorktreeManager.Worktree] {
+    // Scrub GIT_* env vars so a stray GIT_DIR/GIT_WORK_TREE inherited from
+    // the launching session doesn't redirect git to the wrong repo.
+    let env = ProcessInfo.processInfo.environment
+      .filter { !$0.key.hasPrefix("GIT_") }
+
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", projectPath, "worktree", "list", "--porcelain"]
+    proc.environment = env
     let pipe = Pipe()
     proc.standardOutput = pipe
     proc.standardError = Pipe()
@@ -591,9 +617,13 @@ final class DFSidebar: NSView {
   }
 
   private func gitChangedFiles(in dir: String) -> [ChangedFile] {
+    let env = ProcessInfo.processInfo.environment
+      .filter { !$0.key.hasPrefix("GIT_") }
+
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", dir, "status", "--porcelain"]
+    proc.environment = env
     let pipe = Pipe()
     proc.standardOutput = pipe
     proc.standardError = Pipe()
