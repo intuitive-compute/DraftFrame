@@ -15,7 +15,7 @@ final class WorktreeManager {
   private(set) var repoRoot: String?
 
   /// The path component that identifies draftframe-managed worktrees.
-  static let worktreeSubpath = "/.draftframe/worktrees"
+  static let worktreeSubpath = "/.claude/worktrees"
 
   /// Base directory for draftframe worktrees.
   private var worktreeBase: String? {
@@ -24,7 +24,7 @@ final class WorktreeManager {
   }
 
   /// Whether a path is a draftframe-managed worktree (lives under
-  /// `<repo>/.draftframe/worktrees/`). Resolves symlinks before checking.
+  /// `<repo>/.claude/worktrees/`). Resolves symlinks before checking.
   static func isManagedWorktree(_ path: String) -> Bool {
     let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
     return resolved.contains(worktreeSubpath + "/")
@@ -96,7 +96,7 @@ final class WorktreeManager {
         if let root = root, !root.isEmpty {
           repoRoot = root
           try? FileManager.default.createDirectory(
-            atPath: root + "/.draftframe/worktrees",
+            atPath: root + Self.worktreeSubpath,
             withIntermediateDirectories: true
           )
           return true

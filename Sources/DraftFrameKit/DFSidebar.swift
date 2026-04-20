@@ -363,7 +363,7 @@ final class DFSidebar: NSView {
           let branchName = wt.branch.isEmpty ? "detached" : wt.branch
           let isBase = wt.isBare
           // The primary worktree is the project root itself (not a child
-          // under .draftframe/worktrees/).
+          // under .claude/worktrees/).
           let isPrimary = !isBase && wt.path == project.path
           let icon = isPrimary ? "checkmark.circle.fill" : "arrow.triangle.branch"
           let detail = isBase ? "base" : (isPrimary ? "\u{25CF}" : nil)
@@ -789,7 +789,7 @@ final class DFSidebar: NSView {
   }
 
   @objc private func editToolkitClicked() {
-    ToolkitManager.shared.openConfigInEditor()
+    DFToolkitEditor.shared.show()
   }
 
   @objc private func reloadToolkitClicked() {

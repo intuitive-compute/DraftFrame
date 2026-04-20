@@ -4,8 +4,8 @@ import Foundation
 /// Manages toolkit commands loaded from config.
 ///
 /// Resolution order:
-///   1. `<projectDir>/.draftframe/toolkit.json`  (project-local)
-///   2. `~/.config/draftframe/toolkit.json`       (global fallback)
+///   1. `<projectDir>/.claude/toolkit.json`   (project-local)
+///   2. `~/.config/draftframe/toolkit.json`  (global fallback)
 ///
 /// The active config path is re-evaluated whenever the project directory
 /// changes. A file watcher auto-reloads on save.
@@ -70,7 +70,7 @@ final class ToolkitManager {
   /// Determine which toolkit.json to use.
   private func resolveConfigPath() -> String {
     if let dir = currentProjectDir {
-      let projectConfig = (dir as NSString).appendingPathComponent(".draftframe/toolkit.json")
+      let projectConfig = (dir as NSString).appendingPathComponent(".claude/toolkit.json")
       if FileManager.default.fileExists(atPath: projectConfig) {
         return projectConfig
       }
@@ -214,24 +214,25 @@ final class ToolkitManager {
     FileManager.default.createFile(atPath: path, contents: data)
   }
 
+  /// Ensure a project-local toolkit.json exists for the current project.
+  /// If the active session has a project directory but no `.claude/toolkit.json`,
+  /// creates one with defaults and switches to it.
+  func ensureProjectConfig() {
+    guard let dir = currentProjectDir else { return }
+    let path = (dir as NSString).appendingPathComponent(".claude/toolkit.json")
+    guard !FileManager.default.fileExists(atPath: path) else { return }
+    writeDefaults(to: path)
+    activeConfigPath = path
+    loadConfig()
+    restartWatching()
+    NotificationCenter.default.post(name: .toolkitDidChange, object: nil)
+  }
+
   /// Open the project-local toolkit config in the user's default editor.
-  /// Creates .draftframe/toolkit.json in the project if it doesn't exist yet.
+  /// Creates .claude/toolkit.json in the project if it doesn't exist yet.
   func openConfigInEditor() {
-    let path: String
-    if let dir = currentProjectDir {
-      path = (dir as NSString).appendingPathComponent(".draftframe/toolkit.json")
-      if !FileManager.default.fileExists(atPath: path) {
-        writeDefaults(to: path)
-        // Switch to the newly created project config
-        activeConfigPath = path
-        loadConfig()
-        restartWatching()
-        NotificationCenter.default.post(name: .toolkitDidChange, object: nil)
-      }
-    } else {
-      path = ToolkitManager.globalConfigPath
-    }
-    NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    ensureProjectConfig()
+    NSWorkspace.shared.open(URL(fileURLWithPath: activeConfigPath))
   }
 }
 

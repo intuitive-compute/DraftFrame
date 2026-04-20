@@ -394,7 +394,7 @@ final class PRMonitor {
     let verb = status.state == .merged ? "merged" : "closed"
 
     // Only attempt worktree removal for actual draftframe-managed worktrees
-    // (those living under .draftframe/worktrees/). Sessions opened directly
+    // (those living under .claude/worktrees/). Sessions opened directly
     // on the project dir should just be closed, not removed from git.
     let isManagedWorktree = WorktreeManager.isManagedWorktree(worktreePath)
 
