@@ -365,7 +365,7 @@ final class DFSidebar: NSView {
           // The primary worktree is the project root itself (not a child
           // under .claude/worktrees/).
           let isPrimary = !isBase && wt.path == project.path
-          let icon = isPrimary ? "checkmark.circle.fill" : "arrow.triangle.branch"
+          let icon = "arrow.triangle.branch"
           let detail = isBase ? "base" : (isPrimary ? "\u{25CF}" : nil)
           let row = makeClickableRow(
             icon: icon, text: "  \(branchName)",
