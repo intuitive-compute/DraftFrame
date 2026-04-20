@@ -13,9 +13,9 @@ final class ToolkitManager {
   static let shared = ToolkitManager()
 
   struct ToolkitCommand {
-    let name: String
-    let command: String
-    let icon: String
+    var name: String
+    var command: String
+    var icon: String
   }
 
   private(set) var commands: [ToolkitCommand] = []
@@ -195,6 +195,23 @@ final class ToolkitManager {
       ToolkitCommand(name: "Build", command: "npm run build", icon: "hammer"),
       ToolkitCommand(name: "Lint", command: "npm run lint", icon: "wand.and.stars"),
     ]
+  }
+
+  /// Write the given commands to the active toolkit config file.
+  func saveConfig(commands: [ToolkitCommand]) {
+    let entries: [[String: String]] = commands.map {
+      ["name": $0.name, "command": $0.command, "icon": $0.icon]
+    }
+    let dict: [String: Any] = ["commands": entries]
+    guard
+      let data = try? JSONSerialization.data(
+        withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+    else { return }
+
+    let path = activeConfigPath
+    let dir = (path as NSString).deletingLastPathComponent
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: path, contents: data)
   }
 
   /// Open the project-local toolkit config in the user's default editor.

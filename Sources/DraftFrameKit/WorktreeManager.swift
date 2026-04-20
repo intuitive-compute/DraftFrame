@@ -106,12 +106,21 @@ final class WorktreeManager {
     return false
   }
 
-  /// Create a new worktree.
+  /// Create a new worktree using the singleton's repo root.
   func createWorktree(name: String, baseBranch: String? = nil) throws -> String {
-    guard let base = worktreeBase, let root = repoRoot else {
+    guard let root = repoRoot else {
       throw WorktreeError.creationFailed(
         "Not in a git repository. Open a terminal in a git repo first.")
     }
+    return try createWorktree(repoRoot: root, name: name, baseBranch: baseBranch)
+  }
+
+  /// Create a new worktree in the specified repo.
+  func createWorktree(repoRoot root: String, name: String, baseBranch: String? = nil) throws
+    -> String
+  {
+    let base = root + Self.worktreeSubpath
+    try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
 
     let worktreePath = "\(base)/\(name)"
     let branchName = name

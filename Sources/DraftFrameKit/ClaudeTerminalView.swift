@@ -72,10 +72,141 @@ class ClaudeTerminalView: LocalProcessTerminalView {
         }
         return event
       }
+      installMouseMonitor()
     } else if window == nil, let monitor = keyMonitor {
       NSEvent.removeMonitor(monitor)
       keyMonitor = nil
+      removeMouseMonitor()
     }
+  }
+
+  // MARK: - Cmd+Click PR/Issue References
+
+  /// Regex matching `#123` or `owner/repo#123` patterns.
+  private static let prPattern = try! NSRegularExpression(
+    pattern: #"(?:[\w.-]+/[\w.-]+)?#\d+"#)
+
+  private var mouseMonitor: Any?
+
+  private func installMouseMonitor() {
+    guard mouseMonitor == nil else { return }
+    mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+      guard let self = self,
+        self.window?.firstResponder === self,
+        event.modifierFlags.contains(.command)
+      else { return event }
+
+      if let url = self.prURLAtClick(event: event) {
+        NSWorkspace.shared.open(url)
+        return nil
+      }
+      return event
+    }
+  }
+
+  private func removeMouseMonitor() {
+    if let monitor = mouseMonitor {
+      NSEvent.removeMonitor(monitor)
+      mouseMonitor = nil
+    }
+  }
+
+  private func prURLAtClick(event: NSEvent) -> URL? {
+    // Convert window coordinates to view coordinates, then to a grid column.
+    let localPoint = convert(event.locationInWindow, from: nil)
+    guard bounds.contains(localPoint) else { return nil }
+
+    let term = getTerminal()
+    guard term.rows > 0, term.cols > 0 else { return nil }
+
+    // Derive cell dimensions from the view bounds and terminal grid size.
+    let cellWidth = bounds.width / CGFloat(term.cols)
+    let cellHeight = bounds.height / CGFloat(term.rows)
+    let col = Int(localPoint.x / cellWidth)
+    let row = Int((bounds.height - localPoint.y) / cellHeight)
+    guard row >= 0, row < term.rows else { return nil }
+    guard let line = term.getLine(row: row) else { return nil }
+
+    let text = line.translateToString(trimRight: true)
+    let nsText = text as NSString
+    let matches = Self.prPattern.matches(
+      in: text, range: NSRange(location: 0, length: nsText.length))
+
+    for match in matches {
+      guard match.range.location != NSNotFound else { continue }
+      let matchStart = match.range.location
+      let matchEnd = matchStart + match.range.length
+      guard col >= matchStart, col < matchEnd else { continue }
+
+      let matched = nsText.substring(with: match.range)
+      if let url = resolveGitHubURL(for: matched) {
+        return url
+      }
+    }
+    return nil
+  }
+
+  /// Turn `#123` or `owner/repo#123` into a GitHub pull URL.
+  private func resolveGitHubURL(for ref: String) -> URL? {
+    if ref.contains("/") {
+      // Fully qualified: owner/repo#123
+      let parts = ref.split(separator: "#", maxSplits: 1)
+      guard parts.count == 2, let number = Int(parts[1]) else { return nil }
+      return URL(string: "https://github.com/\(parts[0])/pull/\(number)")
+    }
+
+    // Bare #123 — resolve from the session's git remote
+    guard let number = Int(ref.dropFirst()) else { return nil }
+    guard let slug = gitHubSlug() else { return nil }
+    return URL(string: "https://github.com/\(slug)/pull/\(number)")
+  }
+
+  /// Derive `owner/repo` from the git remote of the active session's worktree.
+  private func gitHubSlug() -> String? {
+    let dir =
+      SessionManager.shared.activeSession?.worktreePath
+      ?? SessionManager.shared.projectDir
+    guard let dir = dir else { return nil }
+
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = ["-C", dir, "remote", "get-url", "origin"]
+    proc.environment = ProcessInfo.processInfo.environment
+      .filter { !$0.key.hasPrefix("GIT_") }
+    let pipe = Pipe()
+    proc.standardOutput = pipe
+    proc.standardError = Pipe()
+    do {
+      try proc.run()
+      proc.waitUntilExit()
+      guard proc.terminationStatus == 0 else { return nil }
+    } catch { return nil }
+
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    guard let raw = String(data: data, encoding: .utf8)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    else { return nil }
+
+    return Self.parseGitHubSlug(from: raw)
+  }
+
+  /// Extract `owner/repo` from a GitHub remote URL.
+  static func parseGitHubSlug(from remote: String) -> String? {
+    // SSH:   git@github.com:owner/repo.git
+    // HTTPS: https://github.com/owner/repo.git
+    let patterns = [
+      #"github\.com[:/]([\w.\-]+/[\w.\-]+?)(?:\.git)?$"#,
+    ]
+    for pattern in patterns {
+      guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+      let range = NSRange(remote.startIndex..., in: remote)
+      if let match = regex.firstMatch(in: remote, range: range),
+        let slugRange = Range(match.range(at: 1), in: remote)
+      {
+        return String(remote[slugRange])
+      }
+    }
+    return nil
   }
 
   // MARK: - Drag and Drop

@@ -15,6 +15,28 @@ final class DFSidebar: NSView {
   /// only.
   private var pendingRemovals: Set<String> = []
 
+  /// Composed SF Symbol: leaf with a small "+" badge in the bottom-right.
+  private static let leafPlusBadge: NSImage = {
+    let size = NSSize(width: 16, height: 16)
+    let img = NSImage(size: size, flipped: false) { rect in
+      // Draw the leaf
+      if let leaf = NSImage(systemSymbolName: "leaf", accessibilityDescription: nil) {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        let configured = leaf.withSymbolConfiguration(config) ?? leaf
+        configured.draw(in: NSRect(x: 0, y: 2, width: 13, height: 13))
+      }
+      // Draw the + badge
+      if let plus = NSImage(systemSymbolName: "plus", accessibilityDescription: nil) {
+        let config = NSImage.SymbolConfiguration(pointSize: 7, weight: .bold)
+        let configured = plus.withSymbolConfiguration(config) ?? plus
+        configured.draw(in: NSRect(x: 9, y: 0, width: 7, height: 7))
+      }
+      return true
+    }
+    img.isTemplate = true
+    return img
+  }()
+
   /// Guard against reentrant calls to `refreshWorktrees()`.
   /// `Process.waitUntilExit()` pumps the run loop, which can dispatch queued
   /// notifications and re-enter this method mid-iteration — splicing one
@@ -71,23 +93,22 @@ final class DFSidebar: NSView {
     projectHeader.translatesAutoresizingMaskIntoConstraints = false
     addSubview(projectHeader)
 
+    let openProjectBtn = NSButton(
+      title: "", target: self, action: #selector(openProjectClicked))
+    openProjectBtn.image = NSImage(
+      systemSymbolName: "folder.badge.plus", accessibilityDescription: "Open Project")
+    openProjectBtn.isBordered = false
+    openProjectBtn.imageScaling = .scaleProportionallyDown
+    openProjectBtn.contentTintColor = Theme.text3
+    openProjectBtn.toolTip = "Open Project"
+    openProjectBtn.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(openProjectBtn)
+
     worktreeStack.orientation = .vertical
     worktreeStack.spacing = 2
     worktreeStack.alignment = .leading
     worktreeStack.translatesAutoresizingMaskIntoConstraints = false
     addSubview(worktreeStack)
-
-    // Add worktree button
-    let addWorktreeBtn = makeClickableRow(
-      icon: "plus.circle", text: "New Worktree", detail: nil,
-      target: self, action: #selector(addWorktreeClicked))
-    addSubview(addWorktreeBtn)
-
-    // Open Project button
-    let openProjectBtn = makeClickableRow(
-      icon: "folder.badge.plus", text: "Open Project", detail: nil,
-      target: self, action: #selector(openProjectClicked))
-    addSubview(openProjectBtn)
 
     // Changes section — git diff changed files
     let changesSep = separator()
@@ -144,21 +165,16 @@ final class DFSidebar: NSView {
       projectHeader.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 12),
       projectHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
 
+      openProjectBtn.centerYAnchor.constraint(equalTo: projectHeader.centerYAnchor),
+      openProjectBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      openProjectBtn.widthAnchor.constraint(equalToConstant: 16),
+      openProjectBtn.heightAnchor.constraint(equalToConstant: 16),
+
       worktreeStack.topAnchor.constraint(equalTo: projectHeader.bottomAnchor, constant: 6),
       worktreeStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
       worktreeStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
 
-      addWorktreeBtn.topAnchor.constraint(equalTo: worktreeStack.bottomAnchor, constant: 4),
-      addWorktreeBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      addWorktreeBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-      addWorktreeBtn.heightAnchor.constraint(equalToConstant: 28),
-
-      openProjectBtn.topAnchor.constraint(equalTo: addWorktreeBtn.bottomAnchor, constant: 2),
-      openProjectBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      openProjectBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-      openProjectBtn.heightAnchor.constraint(equalToConstant: 28),
-
-      changesSep.topAnchor.constraint(equalTo: openProjectBtn.bottomAnchor, constant: 12),
+      changesSep.topAnchor.constraint(equalTo: worktreeStack.bottomAnchor, constant: 12),
       changesSep.leadingAnchor.constraint(equalTo: leadingAnchor),
       changesSep.trailingAnchor.constraint(equalTo: trailingAnchor),
 
@@ -247,7 +263,7 @@ final class DFSidebar: NSView {
       // Project header row — clickable to expand/collapse
       let projectRow = makeClickableRow(
         icon: chevron, text: project.name,
-        detail: isActive ? "active" : nil,
+        detail: nil,
         target: self, action: #selector(projectRowClicked(_:)))
       projectRow.worktreePath = project.path
       projectRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -257,6 +273,23 @@ final class DFSidebar: NSView {
         lbl.font = Theme.mono(12, weight: .medium)
         lbl.textColor = Theme.text1
       }
+
+      // Inline "+" button to create a worktree in this project
+      let addBtn = NSButton(title: "", target: self, action: #selector(addWorktreeForProject(_:)))
+      addBtn.image = Self.leafPlusBadge
+      addBtn.isBordered = false
+      addBtn.imageScaling = .scaleProportionallyDown
+      addBtn.contentTintColor = Theme.text3
+      addBtn.toolTip = "New worktree in \(project.name)"
+      addBtn.translatesAutoresizingMaskIntoConstraints = false
+      addBtn.tag = projects.firstIndex(where: { $0.path == project.path }) ?? 0
+      projectRow.addSubview(addBtn)
+      NSLayoutConstraint.activate([
+        addBtn.trailingAnchor.constraint(equalTo: projectRow.trailingAnchor),
+        addBtn.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
+        addBtn.widthAnchor.constraint(equalToConstant: 16),
+        addBtn.heightAnchor.constraint(equalToConstant: 16),
+      ])
 
       // Right-click context menu on project
       let menu = NSMenu()
@@ -519,10 +552,14 @@ final class DFSidebar: NSView {
     }
   }
 
-  @objc private func addWorktreeClicked() {
+  @objc private func addWorktreeForProject(_ sender: NSButton) {
+    let projects = ProjectManager.shared.projects
+    guard sender.tag >= 0, sender.tag < projects.count else { return }
+    let project = projects[sender.tag]
+
     let alert = NSAlert()
     alert.messageText = "New Worktree"
-    alert.informativeText = "Enter a name for the new worktree branch:"
+    alert.informativeText = "Enter a name for the new worktree branch in \(project.name):"
     alert.addButton(withTitle: "Create")
     alert.addButton(withTitle: "Cancel")
 
@@ -537,8 +574,8 @@ final class DFSidebar: NSView {
       guard !name.isEmpty else { return }
 
       do {
-        let path = try WorktreeManager.shared.createWorktree(name: name)
-        // Create a session in the worktree
+        let path = try WorktreeManager.shared.createWorktree(
+          repoRoot: project.path, name: name)
         SessionManager.shared.createSession(name: name, worktreePath: path)
         self.refreshWorktrees()
       } catch {
