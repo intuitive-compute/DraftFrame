@@ -183,8 +183,9 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     } catch { return nil }
 
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    guard let raw = String(data: data, encoding: .utf8)?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+      let raw = String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     else { return nil }
 
     return Self.parseGitHubSlug(from: raw)
@@ -195,7 +196,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     // SSH:   git@github.com:owner/repo.git
     // HTTPS: https://github.com/owner/repo.git
     let patterns = [
-      #"github\.com[:/]([\w.\-]+/[\w.\-]+?)(?:\.git)?$"#,
+      #"github\.com[:/]([\w.\-]+/[\w.\-]+?)(?:\.git)?$"#
     ]
     for pattern in patterns {
       guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
