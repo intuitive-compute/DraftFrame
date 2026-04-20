@@ -12,10 +12,20 @@ final class DFQuickTerminal {
 
   private init() {}
 
-  /// Show the quick terminal if hidden, hide it if currently visible.
+  /// Show the quick terminal if hidden, hide it if currently visible and key.
+  /// If visible but not key (user clicked the main window), re-focus it
+  /// instead of hiding — avoids requiring a double Cmd+` to get it back.
   func toggle() {
     if let win = window, win.isVisible {
-      win.orderOut(nil)
+      if win.isKeyWindow {
+        win.orderOut(nil)
+      } else {
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        if let tv = terminalView {
+          win.makeFirstResponder(tv)
+        }
+      }
     } else {
       show()
     }

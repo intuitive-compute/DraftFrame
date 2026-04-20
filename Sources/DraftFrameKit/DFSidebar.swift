@@ -78,20 +78,33 @@ final class DFSidebar: NSView {
   }
 
   private func buildUI() {
-    // Title
-    // All-caps looks the same either way
+    // Title — fixed at top, outside the scroll view
     let title = label("DRAFTFRAME", size: 10, color: Theme.text3, weight: .medium)
     title.translatesAutoresizingMaskIntoConstraints = false
     addSubview(title)
 
-    // Separator
     let sep = separator()
     addSubview(sep)
 
-    // Project section — shows repo name with worktrees nested under it
+    // Scrollable content area for everything below the title
+    let scrollView = NSScrollView()
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
+    scrollView.autohidesScrollers = true
+    scrollView.drawsBackground = false
+    scrollView.borderType = .noBorder
+    scrollView.scrollerStyle = .overlay
+    addSubview(scrollView)
+
+    let contentView = FlippedView()
+    contentView.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.documentView = contentView
+
+    // Project section
     let projectHeader = label("PROJECT", size: 9, color: Theme.text3, weight: .medium)
     projectHeader.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(projectHeader)
+    contentView.addSubview(projectHeader)
 
     let openProjectBtn = NSButton(
       title: "", target: self, action: #selector(openProjectClicked))
@@ -102,58 +115,59 @@ final class DFSidebar: NSView {
     openProjectBtn.contentTintColor = Theme.text3
     openProjectBtn.toolTip = "Open Project"
     openProjectBtn.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(openProjectBtn)
+    contentView.addSubview(openProjectBtn)
 
     worktreeStack.orientation = .vertical
     worktreeStack.spacing = 2
     worktreeStack.alignment = .leading
     worktreeStack.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(worktreeStack)
+    contentView.addSubview(worktreeStack)
 
-    // Changes section — git diff changed files
+    // Changes section
     let changesSep = separator()
-    addSubview(changesSep)
+    contentView.addSubview(changesSep)
     let changesHeader = label("CHANGES", size: 9, color: Theme.text3, weight: .medium)
     changesHeader.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(changesHeader)
+    contentView.addSubview(changesHeader)
 
     filesStack.orientation = .vertical
     filesStack.spacing = 2
     filesStack.alignment = .leading
     filesStack.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(filesStack)
+    contentView.addSubview(filesStack)
 
     // Toolkit section
     let toolkitSep = separator()
-    addSubview(toolkitSep)
+    contentView.addSubview(toolkitSep)
     let toolkitHeader = label("TOOLKIT", size: 9, color: Theme.text3, weight: .medium)
     toolkitHeader.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(toolkitHeader)
+    contentView.addSubview(toolkitHeader)
 
     toolkitStack.orientation = .vertical
     toolkitStack.spacing = 2
     toolkitStack.alignment = .leading
     toolkitStack.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(toolkitStack)
+    contentView.addSubview(toolkitStack)
 
     // Watchdogs section
     let watchdogSep = separator()
-    addSubview(watchdogSep)
+    contentView.addSubview(watchdogSep)
     let watchdogHeader = label("WATCHDOGS", size: 9, color: Theme.text3, weight: .medium)
     watchdogHeader.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(watchdogHeader)
+    contentView.addSubview(watchdogHeader)
 
     watchdogStack.orientation = .vertical
     watchdogStack.spacing = 2
     watchdogStack.alignment = .leading
     watchdogStack.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(watchdogStack)
+    contentView.addSubview(watchdogStack)
 
     let addWatchdogBtn = makeClickableRow(
       icon: "plus.circle", text: "New Watchdog", detail: nil,
       target: self, action: #selector(addWatchdogClicked))
-    addSubview(addWatchdogBtn)
+    contentView.addSubview(addWatchdogBtn)
 
+    // Layout — title and separator are fixed; scroll view fills the rest
     NSLayoutConstraint.activate([
       title.topAnchor.constraint(equalTo: topAnchor, constant: 38),
       title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -162,55 +176,72 @@ final class DFSidebar: NSView {
       sep.leadingAnchor.constraint(equalTo: leadingAnchor),
       sep.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-      projectHeader.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 12),
-      projectHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+      scrollView.topAnchor.constraint(equalTo: sep.bottomAnchor),
+      scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+      // Content view width tracks the scroll view (no horizontal scrolling)
+      contentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+      contentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+      contentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+
+      // Project section
+      projectHeader.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+      projectHeader.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
 
       openProjectBtn.centerYAnchor.constraint(equalTo: projectHeader.centerYAnchor),
-      openProjectBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      openProjectBtn.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
       openProjectBtn.widthAnchor.constraint(equalToConstant: 16),
       openProjectBtn.heightAnchor.constraint(equalToConstant: 16),
 
       worktreeStack.topAnchor.constraint(equalTo: projectHeader.bottomAnchor, constant: 6),
-      worktreeStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      worktreeStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      worktreeStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+      worktreeStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
 
+      // Changes section
       changesSep.topAnchor.constraint(equalTo: worktreeStack.bottomAnchor, constant: 12),
-      changesSep.leadingAnchor.constraint(equalTo: leadingAnchor),
-      changesSep.trailingAnchor.constraint(equalTo: trailingAnchor),
+      changesSep.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      changesSep.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
 
       changesHeader.topAnchor.constraint(equalTo: changesSep.bottomAnchor, constant: 12),
-      changesHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+      changesHeader.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
 
       filesStack.topAnchor.constraint(equalTo: changesHeader.bottomAnchor, constant: 6),
-      filesStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      filesStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      filesStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+      filesStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
 
+      // Toolkit section
       toolkitSep.topAnchor.constraint(equalTo: filesStack.bottomAnchor, constant: 12),
-      toolkitSep.leadingAnchor.constraint(equalTo: leadingAnchor),
-      toolkitSep.trailingAnchor.constraint(equalTo: trailingAnchor),
+      toolkitSep.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      toolkitSep.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
 
       toolkitHeader.topAnchor.constraint(equalTo: toolkitSep.bottomAnchor, constant: 12),
-      toolkitHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+      toolkitHeader.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
 
       toolkitStack.topAnchor.constraint(equalTo: toolkitHeader.bottomAnchor, constant: 6),
-      toolkitStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      toolkitStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      toolkitStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+      toolkitStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
 
+      // Watchdogs section
       watchdogSep.topAnchor.constraint(equalTo: toolkitStack.bottomAnchor, constant: 12),
-      watchdogSep.leadingAnchor.constraint(equalTo: leadingAnchor),
-      watchdogSep.trailingAnchor.constraint(equalTo: trailingAnchor),
+      watchdogSep.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      watchdogSep.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
 
       watchdogHeader.topAnchor.constraint(equalTo: watchdogSep.bottomAnchor, constant: 12),
-      watchdogHeader.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+      watchdogHeader.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
 
       watchdogStack.topAnchor.constraint(equalTo: watchdogHeader.bottomAnchor, constant: 6),
-      watchdogStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      watchdogStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      watchdogStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+      watchdogStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
 
       addWatchdogBtn.topAnchor.constraint(equalTo: watchdogStack.bottomAnchor, constant: 4),
-      addWatchdogBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      addWatchdogBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      addWatchdogBtn.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+      addWatchdogBtn.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
       addWatchdogBtn.heightAnchor.constraint(equalToConstant: 28),
+
+      // Bottom of content — drives the scroll view's content size
+      addWatchdogBtn.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
     ])
 
     refreshWorktrees()
@@ -1232,6 +1263,11 @@ final class DFSidebar: NSView {
 enum PRActionKey { case autoFix, autoMerge, autoArchive }
 
 /// A view that acts like a button — sends action on click.
+/// Flipped NSView so auto-layout content starts at the top in a scroll view.
+private final class FlippedView: NSView {
+  override var isFlipped: Bool { true }
+}
+
 final class ClickableRow: NSView {
   weak var target: AnyObject?
   var action: Selector?
