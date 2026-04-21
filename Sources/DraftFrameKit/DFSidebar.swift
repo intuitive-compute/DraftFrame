@@ -365,14 +365,19 @@ final class DFSidebar: NSView {
           // The primary worktree is the project root itself (not a child
           // under .claude/worktrees/).
           let isPrimary = !isBase && wt.path == project.path
-          let icon = "arrow.triangle.branch"
-          let detail = isBase ? "base" : (isPrimary ? "\u{25CF}" : nil)
+          let icon = isPrimary ? "circle.fill" : "arrow.triangle.branch"
+          let detail = isBase ? "base" : nil
           let row = makeClickableRow(
             icon: icon, text: "  \(branchName)",
             detail: detail,
             target: self, action: #selector(worktreeRowClicked(_:)))
           if isPrimary {
             row.toolTip = "Currently checked-out branch in \(project.name)"
+            // Shrink the circle.fill so it reads as a subtle dot
+            if let img = row.subviews.compactMap({ $0 as? NSImageView }).first {
+              let config = NSImage.SymbolConfiguration(pointSize: 6, weight: .regular)
+              img.image = img.image?.withSymbolConfiguration(config)
+            }
           }
           row.worktreeName = branchName
           row.worktreePath = wt.path

@@ -43,7 +43,8 @@ final class DFQuickTerminal {
       win.makeFirstResponder(tv)
       // cd to the active session's directory so the quick terminal always
       // reflects the project the user is currently working in.
-      let dir = SessionManager.shared.activeSession?.worktreePath
+      let dir =
+        SessionManager.shared.activeSession?.worktreePath
         ?? SessionManager.shared.projectDir
       if let dir = dir {
         tv.send(txt: "cd \(shellEscape(dir)) && clear\r")
