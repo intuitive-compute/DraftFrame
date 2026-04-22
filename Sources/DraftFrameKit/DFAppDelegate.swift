@@ -153,6 +153,22 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Rename Session", action: #selector(menuRenameSession), keyEquivalent: "")
     sessionMenu.addItem(
       withTitle: "Restart Session", action: #selector(menuRestartSession), keyEquivalent: "")
+    sessionMenu.addItem(NSMenuItem.separator())
+
+    // Model submenu — chooses which Claude model new sessions launch with.
+    let modelItem = NSMenuItem(title: "Model for New Sessions", action: nil, keyEquivalent: "")
+    let modelMenu = NSMenu(title: "Model for New Sessions")
+    let current = ModelPreference.current
+    for model in ClaudeModel.allCases {
+      let item = NSMenuItem(
+        title: model.displayName, action: #selector(menuSelectModel(_:)), keyEquivalent: "")
+      item.representedObject = model.rawValue
+      item.state = (model == current) ? .on : .off
+      modelMenu.addItem(item)
+    }
+    modelItem.submenu = modelMenu
+    sessionMenu.addItem(modelItem)
+
     sessionMenuItem.submenu = sessionMenu
     mainMenu.addItem(sessionMenuItem)
 
@@ -208,6 +224,18 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
   @objc private func menuRestartSession() {
     guard let session = SessionManager.shared.activeSession else { return }
     SessionManager.shared.restartSession(id: session.id)
+  }
+
+  @objc private func menuSelectModel(_ sender: NSMenuItem) {
+    guard let raw = sender.representedObject as? String,
+      let model = ClaudeModel(rawValue: raw)
+    else { return }
+    ModelPreference.current = model
+    if let parent = sender.menu {
+      for item in parent.items {
+        item.state = (item === sender) ? .on : .off
+      }
+    }
   }
 
   private func findAppIcon() -> String? {

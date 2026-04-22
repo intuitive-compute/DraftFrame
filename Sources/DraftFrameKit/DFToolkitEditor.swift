@@ -109,7 +109,16 @@ final class DFToolkitEditor: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     NSLayoutConstraint.activate([
       row.heightAnchor.constraint(equalToConstant: 38),
 
-      iconPreview.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 10),
+      nameField.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 10),
+      nameField.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      nameField.widthAnchor.constraint(equalToConstant: 120),
+
+      sep1.leadingAnchor.constraint(equalTo: nameField.trailingAnchor, constant: 8),
+      sep1.topAnchor.constraint(equalTo: row.topAnchor, constant: 8),
+      sep1.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -8),
+      sep1.widthAnchor.constraint(equalToConstant: 1),
+
+      iconPreview.leadingAnchor.constraint(equalTo: sep1.trailingAnchor, constant: 8),
       iconPreview.centerYAnchor.constraint(equalTo: row.centerYAnchor),
       iconPreview.widthAnchor.constraint(equalToConstant: 20),
       iconPreview.heightAnchor.constraint(equalToConstant: 20),
@@ -118,16 +127,7 @@ final class DFToolkitEditor: NSObject, NSTextFieldDelegate, NSWindowDelegate {
       iconField.centerYAnchor.constraint(equalTo: row.centerYAnchor),
       iconField.widthAnchor.constraint(equalToConstant: 110),
 
-      sep1.leadingAnchor.constraint(equalTo: iconField.trailingAnchor, constant: 8),
-      sep1.topAnchor.constraint(equalTo: row.topAnchor, constant: 8),
-      sep1.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -8),
-      sep1.widthAnchor.constraint(equalToConstant: 1),
-
-      nameField.leadingAnchor.constraint(equalTo: sep1.trailingAnchor, constant: 8),
-      nameField.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-      nameField.widthAnchor.constraint(equalToConstant: 120),
-
-      sep2.leadingAnchor.constraint(equalTo: nameField.trailingAnchor, constant: 8),
+      sep2.leadingAnchor.constraint(equalTo: iconField.trailingAnchor, constant: 8),
       sep2.topAnchor.constraint(equalTo: row.topAnchor, constant: 8),
       sep2.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -8),
       sep2.widthAnchor.constraint(equalToConstant: 1),
@@ -285,20 +285,20 @@ final class DFToolkitEditor: NSObject, NSTextFieldDelegate, NSWindowDelegate {
       return l
     }
 
-    let iconH = colLabel("Icon")
-    colHeaders.addSubview(iconH)
     let nameH = colLabel("Name")
     colHeaders.addSubview(nameH)
+    let iconH = colLabel("Icon")
+    colHeaders.addSubview(iconH)
     let cmdH = colLabel("Command")
     colHeaders.addSubview(cmdH)
 
     NSLayoutConstraint.activate([
       colHeaders.heightAnchor.constraint(equalToConstant: 16),
-      iconH.leadingAnchor.constraint(equalTo: colHeaders.leadingAnchor, constant: 10),
-      iconH.centerYAnchor.constraint(equalTo: colHeaders.centerYAnchor),
-      nameH.leadingAnchor.constraint(equalTo: colHeaders.leadingAnchor, constant: 155),
+      nameH.leadingAnchor.constraint(equalTo: colHeaders.leadingAnchor, constant: 10),
       nameH.centerYAnchor.constraint(equalTo: colHeaders.centerYAnchor),
-      cmdH.leadingAnchor.constraint(equalTo: colHeaders.leadingAnchor, constant: 292),
+      iconH.leadingAnchor.constraint(equalTo: colHeaders.leadingAnchor, constant: 147),
+      iconH.centerYAnchor.constraint(equalTo: colHeaders.centerYAnchor),
+      cmdH.leadingAnchor.constraint(equalTo: colHeaders.leadingAnchor, constant: 300),
       cmdH.centerYAnchor.constraint(equalTo: colHeaders.centerYAnchor),
     ])
 

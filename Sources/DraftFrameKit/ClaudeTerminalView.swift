@@ -45,6 +45,167 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     stickyScrollGuardActive = position < Self.atBottomThreshold
   }
 
+  // MARK: - Live Dictation (NSTextInputClient)
+  //
+  // Required to make macOS system Dictation deliver text to the terminal.
+  // SwiftTerm's default NSTextInputClient stubs (`selectedRange`/`markedRange`
+  // returning {NSNotFound, 0}, `attributedSubstring` returning nil, missing
+  // geometry probes) make macOS 14+ dictation abort before showing the mic
+  // UI. The overrides below supply the minimum stable values the probe
+  // needs, plus a streaming `setMarkedText` that writes the composition to
+  // the PTY live with backspace revisions — SwiftTerm's default is a no-op.
+
+  /// Synthetic caret offset. Terminals have no document offset, but
+  /// dictation's geometry probe rejects any NSNotFound location outright.
+  private static let cursorLocation: Int = 0
+
+  override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
+  override func isAccessibilityElement() -> Bool { true }
+  override func accessibilityValue() -> Any? { "" }
+  override func accessibilitySelectedText() -> String? { "" }
+  override func accessibilityNumberOfCharacters() -> Int { 0 }
+  override func accessibilityInsertionPointLineNumber() -> Int { 0 }
+
+  override func accessibilityVisibleCharacterRange() -> NSRange {
+    NSRange(location: 0, length: 0)
+  }
+
+  override func accessibilitySelectedTextRange() -> NSRange {
+    NSRange(location: Self.cursorLocation, length: 0)
+  }
+
+  /// Dictation sometimes commits by setting the AX value/selected-text
+  /// instead of calling `insertText`; forward both into the PTY.
+  override func setAccessibilityValue(_ accessibilityValue: Any?) {
+    forwardDictatedCommit(accessibilityValue)
+  }
+  override func setAccessibilitySelectedText(_ accessibilitySelectedText: String?) {
+    forwardDictatedCommit(accessibilitySelectedText)
+  }
+  override func setAccessibilitySelectedTextRange(_ range: NSRange) {}
+
+  override func isAccessibilitySelectorAllowed(_ selector: Selector) -> Bool {
+    let name = NSStringFromSelector(selector)
+    if name == "setAccessibilityValue:"
+      || name == "setAccessibilitySelectedText:"
+      || name == "setAccessibilitySelectedTextRange:"
+    {
+      return true
+    }
+    return super.isAccessibilitySelectorAllowed(selector)
+  }
+
+  override func selectedRange() -> NSRange {
+    NSRange(location: Self.cursorLocation, length: 0)
+  }
+
+  override func attributedSubstring(
+    forProposedRange range: NSRange, actualRange: NSRangePointer?
+  ) -> NSAttributedString? {
+    actualRange?.pointee = NSRange(location: Self.cursorLocation, length: 0)
+    return NSAttributedString(string: "")
+  }
+
+  override func characterIndex(for point: NSPoint) -> Int {
+    Self.cursorLocation
+  }
+
+  override func firstRect(
+    forCharacterRange range: NSRange, actualRange: NSRangePointer?
+  ) -> NSRect {
+    var r = super.firstRect(forCharacterRange: range, actualRange: actualRange)
+    if range.length == 0 { r.size.width = 0 }
+    return r
+  }
+
+  override func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+    [.foregroundColor, .backgroundColor, .underlineStyle, .underlineColor]
+  }
+
+  // macOS 14+ probes these via reflection as part of its geometry pass.
+  // Must return screen coordinates; a nil/0 return makes the probe abort.
+
+  @objc func attributedString() -> NSAttributedString {
+    NSAttributedString(string: "")
+  }
+
+  @objc func windowLevel() -> Int {
+    window?.level.rawValue ?? NSWindow.Level.normal.rawValue
+  }
+
+  @objc func unionRectInVisibleSelectedRange() -> NSRect {
+    firstRect(forCharacterRange: selectedRange(), actualRange: nil)
+  }
+
+  /// Deliberate coordinate-space mismatch with NSView's usual
+  /// `documentVisibleRect`: dictation expects screen coords here.
+  @objc var documentVisibleRect: NSRect {
+    guard let win = window else { return visibleRect }
+    return win.convertToScreen(convert(visibleRect, to: nil))
+  }
+
+  private var markedCompositionLength: Int = 0
+
+  private static func extractString(_ any: Any?) -> String {
+    guard let any = any else { return "" }
+    if let s = any as? String { return s }
+    if let s = any as? NSString { return s as String }
+    if let s = any as? NSAttributedString { return s.string }
+    return ""
+  }
+
+  private func forwardDictatedCommit(_ any: Any?) {
+    let s = Self.extractString(any)
+    guard !s.isEmpty else { return }
+    insertText(s, replacementRange: NSRange(location: NSNotFound, length: 0))
+  }
+
+  private func sendBackspaces(_ count: Int) {
+    guard count > 0 else { return }
+    // 0x7F (DEL) matches what SwiftTerm's keyDown path emits for Backspace.
+    send(txt: String(repeating: "\u{7F}", count: count))
+  }
+
+  override func hasMarkedText() -> Bool {
+    markedCompositionLength > 0
+  }
+
+  override func markedRange() -> NSRange {
+    NSRange(location: Self.cursorLocation, length: markedCompositionLength)
+  }
+
+  override func setMarkedText(
+    _ string: Any, selectedRange: NSRange, replacementRange: NSRange
+  ) {
+    let newText = Self.extractString(string)
+    sendBackspaces(markedCompositionLength)
+    if !newText.isEmpty {
+      send(txt: newText)
+    }
+    markedCompositionLength = newText.count
+
+    super.setMarkedText(
+      string, selectedRange: selectedRange, replacementRange: replacementRange)
+  }
+
+  override func unmarkText() {
+    markedCompositionLength = 0
+    super.unmarkText()
+  }
+
+  override func insertText(_ string: Any, replacementRange: NSRange) {
+    let newText = Self.extractString(string)
+    // Skip the erase+reinsert cycle when dictation commits exactly the text
+    // we already streamed — avoids a visible flicker.
+    if markedCompositionLength > 0 && newText.count == markedCompositionLength {
+      markedCompositionLength = 0
+      return
+    }
+    sendBackspaces(markedCompositionLength)
+    markedCompositionLength = 0
+    super.insertText(string, replacementRange: replacementRange)
+  }
+
   override func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
     NSLog(
       "[ClaudeTerminalView] processTerminated exitCode=%@",

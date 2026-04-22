@@ -5,6 +5,38 @@ import SwiftTerm
 extension Notification.Name {
   static let sessionsDidChange = Notification.Name("DFSessionsDidChange")
   static let activeSessionDidChange = Notification.Name("DFActiveSessionDidChange")
+  static let modelPreferenceDidChange = Notification.Name("DFModelPreferenceDidChange")
+}
+
+/// Which Claude model new sessions should launch with. Passed via `claude --model`.
+enum ClaudeModel: String, CaseIterable {
+  case `default` = ""
+  case opus45 = "claude-opus-4-5"
+  case opus46 = "claude-opus-4-6"
+
+  var displayName: String {
+    switch self {
+    case .default: return "Default"
+    case .opus45: return "Opus 4.5"
+    case .opus46: return "Opus 4.6"
+    }
+  }
+}
+
+/// Persisted preference for which model to launch `claude` with.
+enum ModelPreference {
+  private static let key = "DFClaudeModel"
+
+  static var current: ClaudeModel {
+    get {
+      let raw = UserDefaults.standard.string(forKey: key) ?? ""
+      return ClaudeModel(rawValue: raw) ?? .default
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: key)
+      NotificationCenter.default.post(name: .modelPreferenceDidChange, object: nil)
+    }
+  }
 }
 
 /// State of a Claude Code session, detected from terminal output.
@@ -249,7 +281,10 @@ final class SessionManager {
 
     // Resolve the `claude` command to an absolute path so we don't depend
     // on the spawned login shell re-sourcing PATH correctly.
-    let claudeCmd = SessionManager.resolveClaudePath(augmentedPath: composedPath)
+    let claudeBin = SessionManager.resolveClaudePath(augmentedPath: composedPath)
+    let model = ModelPreference.current
+    let claudeCmd =
+      model == .default ? claudeBin : "\(claudeBin) --model \(model.rawValue)"
 
     if let cmd = command {
       tv.startProcess(
