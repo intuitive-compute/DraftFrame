@@ -234,10 +234,82 @@ class ClaudeTerminalView: LocalProcessTerminalView {
         return event
       }
       installMouseMonitor()
+      installScrollMonitor()
     } else if window == nil, let monitor = keyMonitor {
       NSEvent.removeMonitor(monitor)
       keyMonitor = nil
       removeMouseMonitor()
+      removeScrollMonitor()
+    }
+  }
+
+  // MARK: - Alt-screen scroll translation
+  //
+  // Claude Code's fullscreen TUI (and other alt-screen apps like less/vim)
+  // own the screen directly — there's no scrollback to move through on the
+  // alternate buffer. SwiftTerm's built-in scrollWheel drives its own
+  // scrollback regardless, which does nothing visible on alt-screen. Claude
+  // Code binds transcript scrolling to PageUp/PageDown (Up/Down in the
+  // input box cycles prompt history), so translate wheel events to those
+  // via a local event monitor — we can't subclass-override `scrollWheel`
+  // because SwiftTerm declared it non-open.
+
+  private var scrollMonitor: Any?
+  private var altScrollAccumulator: CGFloat = 0
+
+  /// Floor for per-page trackpad gesture distance so tiny twitches don't
+  /// trigger a page jump on high-DPI displays with small font sizes.
+  private static let minPreciseScrollStep: CGFloat = 24
+  /// Ceiling on pages emitted per single wheel event — a hard fling
+  /// otherwise sends a double-digit burst that scrolls past everything.
+  private static let maxPagesPerEvent = 3
+
+  private func installScrollMonitor() {
+    guard scrollMonitor == nil else { return }
+    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) {
+      [weak self] event in
+      guard let self = self,
+        event.window === self.window,
+        self.terminal?.isCurrentBufferAlternate == true
+      else { return event }
+
+      let localPoint = self.convert(event.locationInWindow, from: nil)
+      guard self.bounds.contains(localPoint) else { return event }
+
+      let dy = event.scrollingDeltaY
+      guard dy != 0 else { return nil }
+
+      // Each step emits one PageUp/PageDown, which Claude Code's TUI treats
+      // as half-a-viewport of transcript scroll. Require ~2 line-heights of
+      // trackpad gesture per page so a small nudge doesn't leap pages.
+      let lineHeight = max(
+        self.bounds.height / max(CGFloat(self.terminal.rows), 1), 1)
+      let perStep: CGFloat =
+        event.hasPreciseScrollingDeltas
+        ? max(lineHeight * 2, Self.minPreciseScrollStep) : 1
+      self.altScrollAccumulator += dy
+      let rawSteps = Int(
+        (self.altScrollAccumulator / perStep).rounded(.towardZero))
+      guard rawSteps != 0 else { return nil }
+      self.altScrollAccumulator -= CGFloat(rawSteps) * perStep
+
+      let cap = Self.maxPagesPerEvent
+      let steps = max(-cap, min(cap, rawSteps))
+      let seq: [UInt8] =
+        steps > 0 ? EscapeSequences.cmdPageUp : EscapeSequences.cmdPageDown
+      let count = abs(steps)
+      var bytes: [UInt8] = []
+      bytes.reserveCapacity(seq.count * count)
+      for _ in 0..<count { bytes.append(contentsOf: seq) }
+      self.send(bytes)
+      return nil
+    }
+  }
+
+  private func removeScrollMonitor() {
+    if let monitor = scrollMonitor {
+      NSEvent.removeMonitor(monitor)
+      scrollMonitor = nil
     }
   }
 
