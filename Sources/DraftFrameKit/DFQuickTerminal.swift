@@ -70,7 +70,7 @@ final class DFQuickTerminal {
     win.titlebarAppearsTransparent = true
     win.titleVisibility = .hidden
     win.backgroundColor = Theme.bg
-    win.isMovableByWindowBackground = true
+    win.isMovableByWindowBackground = false
     win.hidesOnDeactivate = true
     win.level = .normal
     win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
