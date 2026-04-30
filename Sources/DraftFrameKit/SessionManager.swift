@@ -26,31 +26,36 @@ enum ClaudeModel: String, CaseIterable {
 /// Maximum context window size (in tokens) for a given model identifier.
 enum ModelContextWindow {
   /// Look up the cap given the bare model id from a JSONL message (e.g.
-  /// `claude-opus-4-7`) and the session's working directory. The `[1m]`
-  /// variant is not recorded in JSONL message bodies, so we consult
-  /// `~/.claude.json` -> `projects[cwd].lastModelUsage` to see whether the
-  /// `[1m]` variant of this model has been used recently in the project.
-  static func maxTokens(forBareModel model: String, cwd: String) -> Int {
-    if isUsing1MVariant(bareModel: model, cwd: cwd) { return 1_000_000 }
+  /// `claude-opus-4-7`). The `[1m]` variant is not recorded in JSONL message
+  /// bodies and `projects[cwd].lastModelUsage` is empty mid-session, so we
+  /// scan every project's `lastModelUsage` in `~/.claude.json` for any
+  /// `<model>[1m]` entry with non-zero usage. If the user has used the 1M
+  /// variant of this model anywhere recently, treat it as their preference.
+  static func maxTokens(forBareModel model: String) -> Int {
+    if hasUsed1MVariant(bareModel: model) { return 1_000_000 }
     return 200_000
   }
 
-  private static func isUsing1MVariant(bareModel: String, cwd: String) -> Bool {
+  private static func hasUsed1MVariant(bareModel: String) -> Bool {
     guard !bareModel.isEmpty else { return false }
     let path = "\(NSHomeDirectory())/.claude.json"
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
       let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let projects = root["projects"] as? [String: Any],
-      let proj = projects[cwd] as? [String: Any],
-      let usage = proj["lastModelUsage"] as? [String: Any]
+      let projects = root["projects"] as? [String: Any]
     else { return false }
 
     let oneMKey = "\(bareModel)[1m]"
-    guard let entry = usage[oneMKey] as? [String: Any] else { return false }
-    let inTok = entry["inputTokens"] as? Int ?? 0
-    let cacheRead = entry["cacheReadInputTokens"] as? Int ?? 0
-    let cacheCreate = entry["cacheCreationInputTokens"] as? Int ?? 0
-    return (inTok + cacheRead + cacheCreate) > 0
+    for (_, value) in projects {
+      guard let proj = value as? [String: Any],
+        let usage = proj["lastModelUsage"] as? [String: Any],
+        let entry = usage[oneMKey] as? [String: Any]
+      else { continue }
+      let inTok = entry["inputTokens"] as? Int ?? 0
+      let cacheRead = entry["cacheReadInputTokens"] as? Int ?? 0
+      let cacheCreate = entry["cacheCreationInputTokens"] as? Int ?? 0
+      if (inTok + cacheRead + cacheCreate) > 0 { return true }
+    }
+    return false
   }
 }
 

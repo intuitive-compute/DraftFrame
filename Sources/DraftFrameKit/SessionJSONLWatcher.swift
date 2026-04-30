@@ -243,8 +243,7 @@ final class SessionJSONLWatcher {
       let tOut = totalTokensOut
       let model = latestModel
       let ctx = currentContextTokens
-      let maxCtx = ModelContextWindow.maxTokens(
-        forBareModel: latestBareModel, cwd: workingDirectory)
+      let maxCtx = ModelContextWindow.maxTokens(forBareModel: latestBareModel)
       DispatchQueue.main.async { [weak self] in
         self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx)
       }
@@ -266,7 +265,10 @@ final class SessionJSONLWatcher {
     let cacheCreationTokens = usage["cache_creation_input_tokens"] as? Int ?? 0
     let cacheReadTokens = usage["cache_read_input_tokens"] as? Int ?? 0
 
-    if let model = message["model"] as? String {
+    // Claude Code emits placeholder assistant messages with model="<synthetic>"
+    // for tool-result wrappers and similar. Ignore those so we don't clobber
+    // the real model id captured from a prior turn.
+    if let model = message["model"] as? String, model != "<synthetic>" {
       latestModel = Self.shortModelName(model)
       latestBareModel = model
     }
