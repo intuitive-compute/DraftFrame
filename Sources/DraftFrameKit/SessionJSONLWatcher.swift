@@ -27,13 +27,25 @@ final class SessionJSONLWatcher {
 
   // MARK: - Public state
 
-  typealias UpdateCallback = (_ cost: Double, _ tokensIn: Int, _ tokensOut: Int, _ model: String) ->
-    Void
+  typealias UpdateCallback = (
+    _ cost: Double,
+    _ tokensIn: Int,
+    _ tokensOut: Int,
+    _ model: String,
+    _ contextTokens: Int,
+    _ maxContextTokens: Int
+  ) -> Void
 
   private(set) var totalCost: Double = 0
   private(set) var totalTokensIn: Int = 0
   private(set) var totalTokensOut: Int = 0
   private(set) var latestModel: String = "sonnet"
+  /// Tokens fed to the model on the most recent assistant turn
+  /// (input + cache_creation + cache_read). Snapshot, not a sum.
+  private(set) var currentContextTokens: Int = 0
+  /// Bare model id from the most recent assistant turn (e.g.
+  /// "claude-opus-4-7"). Note: JSONL bodies never carry the "[1m]" suffix.
+  private(set) var latestBareModel: String = ""
 
   /// Most recent assistant text response parsed from the JSONL stream.
   /// Used by the dashboard's cross-session summary view. Nil until the
@@ -230,8 +242,11 @@ final class SessionJSONLWatcher {
       let tIn = totalTokensIn
       let tOut = totalTokensOut
       let model = latestModel
+      let ctx = currentContextTokens
+      let maxCtx = ModelContextWindow.maxTokens(
+        forBareModel: latestBareModel, cwd: workingDirectory)
       DispatchQueue.main.async { [weak self] in
-        self?.onUpdate(cost, tIn, tOut, model)
+        self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx)
       }
     }
   }
@@ -253,7 +268,10 @@ final class SessionJSONLWatcher {
 
     if let model = message["model"] as? String {
       latestModel = Self.shortModelName(model)
+      latestBareModel = model
     }
+
+    currentContextTokens = inputTokens + cacheCreationTokens + cacheReadTokens
 
     // Capture assistant text content for the cross-session summary view.
     // The `content` field may be an array of typed blocks or (rarely) a

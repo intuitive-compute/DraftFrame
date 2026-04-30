@@ -252,9 +252,24 @@ final class SessionCard: NSView {
     costLabel.textColor = Theme.text2
     costLabel.translatesAutoresizingMaskIntoConstraints = false
 
+    // Context window usage (e.g. "42.1K / 200K"). Hidden until the JSONL
+    // watcher has parsed at least one assistant turn.
+    let contextLabel: NSTextField? = {
+      guard session.contextTokens > 0 else { return nil }
+      let label = NSTextField(
+        labelWithString:
+          "\(TokenFormat.short(session.contextTokens)) / \(TokenFormat.short(session.maxContextTokens))"
+      )
+      label.font = Theme.mono(9)
+      label.textColor = Theme.text3
+      label.translatesAutoresizingMaskIntoConstraints = false
+      return label
+    }()
+
     for v in [avatar, nameLabel, dot, statusLabel, modelLabel, costLabel] as [NSView] {
       addSubview(v)
     }
+    if let cl = contextLabel { addSubview(cl) }
 
     // PR status pill (only if gh reports a PR for this worktree).
     let prStatus = PRMonitor.shared.status(for: session.id)
@@ -265,8 +280,10 @@ final class SessionCard: NSView {
       return label
     }
 
+    let cardHeight: CGFloat = contextLabel == nil ? 56 : 72
+
     var constraints: [NSLayoutConstraint] = [
-      heightAnchor.constraint(equalToConstant: 56),
+      heightAnchor.constraint(equalToConstant: cardHeight),
 
       avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
       avatar.topAnchor.constraint(equalTo: topAnchor, constant: 10),
@@ -290,6 +307,12 @@ final class SessionCard: NSView {
       modelLabel.leadingAnchor.constraint(equalTo: statusLabel.trailingAnchor, constant: 8),
       modelLabel.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
     ]
+    if let cl = contextLabel {
+      constraints.append(contentsOf: [
+        cl.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 8),
+        cl.topAnchor.constraint(equalTo: dot.bottomAnchor, constant: 5),
+      ])
+    }
     if let pill = prPill {
       constraints.append(contentsOf: [
         pill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),

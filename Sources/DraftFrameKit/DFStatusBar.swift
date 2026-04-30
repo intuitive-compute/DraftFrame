@@ -1,5 +1,17 @@
 import AppKit
 
+/// Compact "1.2K" / "3.4M" formatting for token counts.
+enum TokenFormat {
+  static func short(_ count: Int) -> String {
+    if count >= 1_000_000 {
+      return String(format: "%.1fM", Double(count) / 1_000_000.0)
+    } else if count >= 1000 {
+      return String(format: "%.1fK", Double(count) / 1000.0)
+    }
+    return "\(count)"
+  }
+}
+
 /// Bottom status bar: live branch, tokens, cost from SessionManager.
 final class DFStatusBar: NSView {
 
@@ -146,14 +158,7 @@ final class DFStatusBar: NSView {
     }
   }
 
-  private func formatTokens(_ count: Int) -> String {
-    if count >= 1_000_000 {
-      return String(format: "%.1fM", Double(count) / 1_000_000.0)
-    } else if count >= 1000 {
-      return String(format: "%.1fK", Double(count) / 1000.0)
-    }
-    return "\(count)"
-  }
+  private func formatTokens(_ count: Int) -> String { TokenFormat.short(count) }
 
   private func mono(_ text: String) -> NSTextField {
     let l = NSTextField(labelWithString: text)
