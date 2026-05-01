@@ -123,13 +123,17 @@ final class Session {
   /// Start monitoring the JSONL file for the given working directory.
   func startJSONLWatcher(directory: String) {
     jsonlWatcher = SessionJSONLWatcher(workingDirectory: directory) {
-      [weak self] cost, tokensIn, tokensOut, model, contextTokens in
+      [weak self] cost, tokensIn, tokensOut, model, contextTokens, maxContextTokens in
       guard let self = self else { return }
       self.cost = cost
       self.tokensIn = tokensIn
       self.tokensOut = tokensOut
       self.model = model
       self.contextTokens = contextTokens
+      // 0 means "no JSONL signal yet" — leave the value the PTY banner set.
+      if maxContextTokens > 0 {
+        self.maxContextTokens = maxContextTokens
+      }
       NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
     }
 
