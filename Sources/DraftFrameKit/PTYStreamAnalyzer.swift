@@ -6,8 +6,10 @@ import Foundation
 final class PTYStreamAnalyzer {
 
   var onStateChange: ((SessionState) -> Void)?
+  var onContextWindowChange: ((Int) -> Void)?
 
   private(set) var state: SessionState = .idle
+  private var lastContextWindow: Int = 0
 
   // ANSI parser state
   private var inEscape = false
@@ -46,6 +48,12 @@ final class PTYStreamAnalyzer {
         // Other control chars (BEL, BS, TAB, etc.) — ignore for analysis
       }
     }
+
+    // Detect 1M context banner before the rolling buffer trims it away.
+    // The banner is among the first bytes Claude Code prints, but TUI
+    // animation can flood the buffer and push it out before analyzeFrame
+    // (debounced 50ms) gets a chance to look.
+    detectContextWindowFromBanner()
 
     // Trim recent text buffer
     if recentText.count > recentTextLimit {
@@ -207,6 +215,18 @@ final class PTYStreamAnalyzer {
     onStateChange?(newState)
   }
 
+  /// Promote the cap to 1M if Claude Code's banner ever printed
+  /// `(1M context)` in this session's output. We don't try to demote — TUI
+  /// rendering recycles the buffer too aggressively to reliably observe the
+  /// inverse, and a fresh DraftFrame session restarts the analyzer anyway.
+  private func detectContextWindowFromBanner() {
+    guard lastContextWindow != 1_000_000 else { return }
+    if recentText.contains("(1M context)") {
+      lastContextWindow = 1_000_000
+      onContextWindowChange?(1_000_000)
+    }
+  }
+
   /// Reset the analyzer (e.g., when restarting a session).
   func reset() {
     state = .idle
@@ -215,5 +235,6 @@ final class PTYStreamAnalyzer {
     escapeBuffer = []
     frameText = ""
     recentText = ""
+    lastContextWindow = 0
   }
 }

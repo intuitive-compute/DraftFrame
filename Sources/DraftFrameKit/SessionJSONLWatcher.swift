@@ -32,8 +32,7 @@ final class SessionJSONLWatcher {
     _ tokensIn: Int,
     _ tokensOut: Int,
     _ model: String,
-    _ contextTokens: Int,
-    _ maxContextTokens: Int
+    _ contextTokens: Int
   ) -> Void
 
   private(set) var totalCost: Double = 0
@@ -243,9 +242,8 @@ final class SessionJSONLWatcher {
       let tOut = totalTokensOut
       let model = latestModel
       let ctx = currentContextTokens
-      let maxCtx = ModelContextWindow.maxTokens(forBareModel: latestBareModel)
       DispatchQueue.main.async { [weak self] in
-        self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx)
+        self?.onUpdate(cost, tIn, tOut, model, ctx)
       }
     }
   }

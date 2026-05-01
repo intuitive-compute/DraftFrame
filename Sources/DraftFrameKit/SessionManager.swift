@@ -23,42 +23,6 @@ enum ClaudeModel: String, CaseIterable {
   }
 }
 
-/// Maximum context window size (in tokens) for a given model identifier.
-enum ModelContextWindow {
-  /// Look up the cap given the bare model id from a JSONL message (e.g.
-  /// `claude-opus-4-7`). The `[1m]` variant is not recorded in JSONL message
-  /// bodies and `projects[cwd].lastModelUsage` is empty mid-session, so we
-  /// scan every project's `lastModelUsage` in `~/.claude.json` for any
-  /// `<model>[1m]` entry with non-zero usage. If the user has used the 1M
-  /// variant of this model anywhere recently, treat it as their preference.
-  static func maxTokens(forBareModel model: String) -> Int {
-    if hasUsed1MVariant(bareModel: model) { return 1_000_000 }
-    return 200_000
-  }
-
-  private static func hasUsed1MVariant(bareModel: String) -> Bool {
-    guard !bareModel.isEmpty else { return false }
-    let path = "\(NSHomeDirectory())/.claude.json"
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-      let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let projects = root["projects"] as? [String: Any]
-    else { return false }
-
-    let oneMKey = "\(bareModel)[1m]"
-    for (_, value) in projects {
-      guard let proj = value as? [String: Any],
-        let usage = proj["lastModelUsage"] as? [String: Any],
-        let entry = usage[oneMKey] as? [String: Any]
-      else { continue }
-      let inTok = entry["inputTokens"] as? Int ?? 0
-      let cacheRead = entry["cacheReadInputTokens"] as? Int ?? 0
-      let cacheCreate = entry["cacheCreationInputTokens"] as? Int ?? 0
-      if (inTok + cacheRead + cacheCreate) > 0 { return true }
-    }
-    return false
-  }
-}
-
 /// Persisted preference for which model to launch `claude` with.
 enum ModelPreference {
   private static let key = "DFClaudeModel"
@@ -117,16 +81,23 @@ final class Session {
   /// Reflects the live context window usage, not a cumulative sum.
   var contextTokens: Int
   /// Maximum context window for the model in use (200K standard, 1M for
-  /// `[1m]` variants). Resolved by the JSONL watcher.
+  /// `[1m]` variants). Resolved from Claude Code's startup banner via
+  /// `PTYStreamAnalyzer.onContextWindowChange`.
   var maxContextTokens: Int
   var worktreePath: String?
   var terminalView: ClaudeTerminalView?
 
-  /// Real-time PTY stream analyzer for Claude Code state detection.
+  /// PTY stream analyzer — used for the 1M-context banner detection.
+  /// State detection now comes from `SessionStatusWatcher` instead, since
+  /// the per-pid status file Claude Code maintains is authoritative whereas
+  /// PTY parsing was racy with the TUI redraw loop.
   let ptyAnalyzer = PTYStreamAnalyzer()
 
   /// Watches the Claude Code JSONL log for cost/token updates.
   var jsonlWatcher: SessionJSONLWatcher?
+
+  /// Watches `~/.claude/sessions/<pid>.json` for authoritative session state.
+  var statusWatcher: SessionStatusWatcher?
 
   init(name: String, worktreePath: String? = nil) {
     self.id = UUID()
@@ -140,10 +111,9 @@ final class Session {
     self.maxContextTokens = 200_000
     self.worktreePath = worktreePath
 
-    // Wire up state changes from the PTY analyzer
-    ptyAnalyzer.onStateChange = { [weak self] newState in
+    ptyAnalyzer.onContextWindowChange = { [weak self] maxTokens in
       guard let self = self else { return }
-      self.state = newState
+      self.maxContextTokens = maxTokens
       DispatchQueue.main.async {
         NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
       }
@@ -153,14 +123,19 @@ final class Session {
   /// Start monitoring the JSONL file for the given working directory.
   func startJSONLWatcher(directory: String) {
     jsonlWatcher = SessionJSONLWatcher(workingDirectory: directory) {
-      [weak self] cost, tokensIn, tokensOut, model, contextTokens, maxContextTokens in
+      [weak self] cost, tokensIn, tokensOut, model, contextTokens in
       guard let self = self else { return }
       self.cost = cost
       self.tokensIn = tokensIn
       self.tokensOut = tokensOut
       self.model = model
       self.contextTokens = contextTokens
-      self.maxContextTokens = maxContextTokens
+      NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+    }
+
+    statusWatcher = SessionStatusWatcher(cwd: directory) { [weak self] newState in
+      guard let self = self else { return }
+      self.state = newState
       NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
     }
   }
@@ -382,6 +357,7 @@ final class SessionManager {
   func closeSession(at index: Int) {
     guard index >= 0, index < sessions.count else { return }
     sessions[index].jsonlWatcher?.stop()
+    sessions[index].statusWatcher?.stop()
     sessions.remove(at: index)
 
     if sessions.isEmpty {
