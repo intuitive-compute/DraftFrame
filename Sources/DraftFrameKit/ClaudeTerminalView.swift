@@ -443,6 +443,26 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     return nil
   }
 
+  // MARK: - Right-click context menu
+
+  override func menu(for event: NSEvent) -> NSMenu? {
+    let menu = NSMenu()
+    let copyItem = NSMenuItem(
+      title: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+    copyItem.target = self
+    let pasteItem = NSMenuItem(
+      title: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
+    pasteItem.target = self
+    menu.addItem(copyItem)
+    menu.addItem(pasteItem)
+    menu.addItem(NSMenuItem.separator())
+    let selectAllItem = NSMenuItem(
+      title: "Select All", action: #selector(selectAll(_:)), keyEquivalent: "")
+    selectAllItem.target = self
+    menu.addItem(selectAllItem)
+    return menu
+  }
+
   // MARK: - Drag and Drop
 
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
