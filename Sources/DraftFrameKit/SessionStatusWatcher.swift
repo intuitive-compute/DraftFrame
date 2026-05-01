@@ -23,10 +23,11 @@ final class SessionStatusWatcher {
     self.cwd = cwd
     self.onUpdate = onUpdate
 
-    // Resolve the matching pid file every 2s (a new claude run, or a
-    // restart, will create a different pid file we need to follow).
+    // Re-resolve the matching pid file frequently so a new claude run, a
+    // restart, or an atomic-rename of the JSON (which invalidates our
+    // file-event subscription) all converge within ~1.5s.
     let timer = DispatchSource.makeTimerSource(queue: queue)
-    timer.schedule(deadline: .now() + 0.5, repeating: 2.0)
+    timer.schedule(deadline: .now() + 0.5, repeating: 1.5)
     timer.setEventHandler { [weak self] in
       self?.tick()
     }
