@@ -115,14 +115,17 @@ final class SessionCard: NSView {
     layer?.cornerRadius = 8
 
     if isActive {
-      // Bright background + thick orange left bar
+      // Bright background + status-coloured border and left bar so the
+      // active card visually telegraphs what claude is currently doing.
+      let stateColor = session.state.color
       layer?.backgroundColor = Theme.surface3.cgColor
-      layer?.borderColor = Theme.accent.cgColor
+      layer?.borderColor = stateColor.cgColor
       layer?.borderWidth = 1.5
 
       let accentBar = CALayer()
-      accentBar.backgroundColor = Theme.accent.cgColor
-      accentBar.frame = CGRect(x: 0, y: 0, width: 4, height: 56)
+      accentBar.backgroundColor = stateColor.cgColor
+      accentBar.frame = CGRect(x: 0, y: 0, width: 4, height: bounds.height)
+      accentBar.autoresizingMask = [.layerHeightSizable]
       accentBar.cornerRadius = 0
       layer?.masksToBounds = true
       layer?.addSublayer(accentBar)
