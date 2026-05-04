@@ -207,7 +207,7 @@ final class SessionCard: NSView {
     avatar.translatesAutoresizingMaskIntoConstraints = false
 
     // Name
-    let nameLabel = NSTextField(labelWithString: session.name)
+    let nameLabel = NSTextField(labelWithString: session.displayName)
     nameLabel.font = Theme.mono(12, weight: .medium)
     nameLabel.textColor = Theme.text1
     nameLabel.translatesAutoresizingMaskIntoConstraints = false

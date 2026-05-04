@@ -242,7 +242,7 @@ final class DashboardCard: NSView {
     addSubview(avatar)
 
     // Name — truncate so it doesn't collide with cost/tokens
-    let nameLabel = NSTextField(labelWithString: session.name)
+    let nameLabel = NSTextField(labelWithString: session.displayName)
     nameLabel.font = Theme.mono(14, weight: .bold)
     nameLabel.textColor = Theme.text1
     nameLabel.lineBreakMode = .byTruncatingTail
@@ -263,14 +263,10 @@ final class DashboardCard: NSView {
     statusLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(statusLabel)
 
-    // Branch — show branch name, not the full filesystem path
-    let branchDisplay: String = {
-      if let path = session.worktreePath {
-        return (path as NSString).lastPathComponent
-      }
-      return "main"
-    }()
-    let branchLabel = NSTextField(labelWithString: branchDisplay)
+    // Branch — show the actual branch name. For main/master sessions the
+    // top label already shows the project repo name, so this stays
+    // informative instead of duplicating it.
+    let branchLabel = NSTextField(labelWithString: session.name)
     branchLabel.font = Theme.mono(10)
     branchLabel.textColor = Theme.text3
     branchLabel.lineBreakMode = .byTruncatingTail
@@ -526,7 +522,7 @@ final class SummaryCard: NSView {
     avatar.translatesAutoresizingMaskIntoConstraints = false
     addSubview(avatar)
 
-    let nameLabel = NSTextField(labelWithString: session.name)
+    let nameLabel = NSTextField(labelWithString: session.displayName)
     nameLabel.font = Theme.mono(13, weight: .bold)
     nameLabel.textColor = Theme.text1
     nameLabel.translatesAutoresizingMaskIntoConstraints = false

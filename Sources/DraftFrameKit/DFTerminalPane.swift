@@ -193,7 +193,8 @@ final class DFTerminalPane: NSView {
         .font: Theme.mono(11, weight: isActive ? .medium : .regular),
         .foregroundColor: nameColor,
       ]
-      nameBtn.attributedTitle = NSAttributedString(string: " \(session.name) ", attributes: attrs)
+      nameBtn.attributedTitle = NSAttributedString(
+        string: " \(session.displayName) ", attributes: attrs)
       container.addSubview(nameBtn)
 
       // Double-click gesture on name button for rename

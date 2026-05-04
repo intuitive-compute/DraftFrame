@@ -87,6 +87,21 @@ final class Session {
   var worktreePath: String?
   var terminalView: ClaudeTerminalView?
 
+  /// Label shown in the UI. When the session is on `main`/`master`, the bare
+  /// branch name is indistinguishable across projects, so we substitute the
+  /// project repo name (derived from `worktreePath`). Other branches show
+  /// `name` unchanged.
+  var displayName: String {
+    guard name == "main" || name == "master" else { return name }
+    guard let path = worktreePath else { return name }
+    let subpath = WorktreeManager.worktreeSubpath + "/"
+    if let range = path.range(of: subpath) {
+      let projectRoot = String(path[..<range.lowerBound])
+      return (projectRoot as NSString).lastPathComponent
+    }
+    return (path as NSString).lastPathComponent
+  }
+
   /// PTY stream analyzer — used for the 1M-context banner detection.
   /// State detection now comes from `SessionStatusWatcher` instead, since
   /// the per-pid status file Claude Code maintains is authoritative whereas
