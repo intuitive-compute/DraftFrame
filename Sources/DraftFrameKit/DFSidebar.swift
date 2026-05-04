@@ -43,6 +43,30 @@ final class DFSidebar: NSView {
   /// project's worktree rows under another project's header.
   private var isRefreshingWorktrees = false
 
+  /// Comparable snapshot of everything that affects the rendered worktree
+  /// rows. `.sessionsDidChange` fires every ~1.5s from JSONL/status pollers
+  /// regardless of whether projects, active dir, or worktrees actually
+  /// changed; we use this to skip the rebuild in those no-op cases. Excludes
+  /// `isExpanded` so collapse/expand can animate without rebuilding rows.
+  private struct WorktreesContentSnapshot: Equatable {
+    let projectPaths: [String]
+    let activeDir: String?
+    let pendingRemovals: Set<String>
+    let worktreesPerProject: [String: [WorktreeKey]]
+  }
+  private struct WorktreeKey: Equatable {
+    let path: String
+    let branch: String
+    let isBare: Bool
+  }
+  private var lastContentSnapshot: WorktreesContentSnapshot?
+
+  /// Per-project view references so collapse/expand can animate `isHidden`
+  /// on existing rows instead of tearing the stack down and rebuilding.
+  private var projectChevronViews: [String: NSImageView] = [:]
+  private var projectWorktreeRows: [String: [NSView]] = [:]
+  private var lastExpansionStates: [String: Bool] = [:]
+
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
@@ -279,33 +303,93 @@ final class DFSidebar: NSView {
     isRefreshingWorktrees = true
     defer { isRefreshingWorktrees = false }
 
+    let projects = ProjectManager.shared.projects
+    let activeDir = SessionManager.shared.projectDir
+
+    // Always fetch every project's worktrees, including collapsed ones, so
+    // the rows exist in the stack and can be hidden/shown via animator()
+    // without tearing the view down on every expand/collapse.
+    var worktreesPerProject: [String: [WorktreeManager.Worktree]] = [:]
+    for project in projects {
+      worktreesPerProject[project.path] = getWorktrees(for: project.path)
+        .filter { !pendingRemovals.contains($0.path) }
+    }
+
+    let snapshot = WorktreesContentSnapshot(
+      projectPaths: projects.map { $0.path },
+      activeDir: activeDir,
+      pendingRemovals: pendingRemovals,
+      worktreesPerProject: worktreesPerProject.mapValues { wts in
+        wts.map { WorktreeKey(path: $0.path, branch: $0.branch, isBare: $0.isBare) }
+      }
+    )
+    let expansionStates = projects.reduce(into: [String: Bool]()) {
+      $0[$1.path] = $1.isExpanded
+    }
+
+    let contentChanged = (snapshot != lastContentSnapshot)
+    let expansionChanged = (expansionStates != lastExpansionStates)
+    if !contentChanged && !expansionChanged {
+      // Polling-driven .sessionsDidChange lands here ~40x/min — nothing
+      // visible has changed, so skip the rebuild and the resulting flash.
+      return
+    }
+
+    if contentChanged {
+      rebuildWorktreeRows(
+        projects: projects,
+        activeDir: activeDir,
+        worktreesPerProject: worktreesPerProject)
+      lastContentSnapshot = snapshot
+      // Rows are freshly created; apply expansion state synchronously so
+      // collapsed projects don't briefly flash their worktrees.
+      applyExpansionStates(expansionStates, animated: false)
+    } else {
+      applyExpansionStates(expansionStates, animated: !lastExpansionStates.isEmpty)
+    }
+    lastExpansionStates = expansionStates
+  }
+
+  private func rebuildWorktreeRows(
+    projects: [ProjectManager.Project],
+    activeDir: String?,
+    worktreesPerProject: [String: [WorktreeManager.Worktree]]
+  ) {
     for v in worktreeStack.arrangedSubviews {
       worktreeStack.removeArrangedSubview(v)
       v.removeFromSuperview()
     }
+    projectChevronViews.removeAll(keepingCapacity: true)
+    projectWorktreeRows.removeAll(keepingCapacity: true)
 
-    let projects = ProjectManager.shared.projects
-    let activeDir = SessionManager.shared.projectDir
+    if projects.isEmpty {
+      let emptyRow = makeRow(icon: "folder.badge.plus", text: "Open Project", detail: nil)
+      emptyRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
+      worktreeStack.addArrangedSubview(emptyRow)
+      return
+    }
 
-    for project in projects {
+    for (idx, project) in projects.enumerated() {
       let isActive = project.path == activeDir
-      let chevron = project.isExpanded ? "chevron.down" : "chevron.right"
 
-      // Project header row — clickable to expand/collapse
+      // Project header row — clickable to expand/collapse. Chevron icon is
+      // set by applyExpansionStates so we don't need to rebuild on toggle.
       let projectRow = makeClickableRow(
-        icon: chevron, text: project.name,
+        icon: "chevron.right", text: project.name,
         detail: nil,
         target: self, action: #selector(projectRowClicked(_:)))
       projectRow.worktreePath = project.path
       projectRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
-      // Bold the active project name
       if isActive, let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
         lbl.font = Theme.mono(12, weight: .medium)
         lbl.textColor = Theme.text1
       }
 
-      // Inline "+" button to create a worktree in this project
+      if let chevron = projectRow.subviews.compactMap({ $0 as? NSImageView }).first {
+        projectChevronViews[project.path] = chevron
+      }
+
       let addBtn = NSButton(title: "", target: self, action: #selector(addWorktreeForProject(_:)))
       addBtn.image = Self.leafPlusBadge
       addBtn.isBordered = false
@@ -313,7 +397,7 @@ final class DFSidebar: NSView {
       addBtn.contentTintColor = Theme.text3
       addBtn.toolTip = "New worktree in \(project.name)"
       addBtn.translatesAutoresizingMaskIntoConstraints = false
-      addBtn.tag = projects.firstIndex(where: { $0.path == project.path }) ?? 0
+      addBtn.tag = idx
       projectRow.addSubview(addBtn)
       NSLayoutConstraint.activate([
         addBtn.trailingAnchor.constraint(equalTo: projectRow.trailingAnchor),
@@ -322,7 +406,6 @@ final class DFSidebar: NSView {
         addBtn.heightAnchor.constraint(equalToConstant: 16),
       ])
 
-      // Right-click context menu on project
       let menu = NSMenu()
       let switchItem = NSMenuItem(
         title: "Switch to Project", action: #selector(switchToProject(_:)), keyEquivalent: "")
@@ -346,18 +429,15 @@ final class DFSidebar: NSView {
       projectRow.menu = menu
       worktreeStack.addArrangedSubview(projectRow)
 
-      // Show worktrees only if expanded
-      guard project.isExpanded else { continue }
-
-      // Get worktrees for this project; hide any currently being removed so
-      // the row stays gone even if another notification refreshes the sidebar
-      // mid-removal.
-      let worktrees = getWorktrees(for: project.path)
-        .filter { !pendingRemovals.contains($0.path) }
+      // Build worktree rows for every project regardless of expansion. They
+      // start hidden; applyExpansionStates flips isHidden to reveal them.
+      let worktrees = worktreesPerProject[project.path] ?? []
+      var wtRows: [NSView] = []
       if worktrees.isEmpty {
         let mainRow = makeRow(icon: "arrow.triangle.branch", text: "  main", detail: "base")
         mainRow.heightAnchor.constraint(equalToConstant: 26).isActive = true
         worktreeStack.addArrangedSubview(mainRow)
+        wtRows.append(mainRow)
       } else {
         for wt in worktrees {
           let branchName = wt.branch.isEmpty ? "detached" : wt.branch
@@ -373,7 +453,6 @@ final class DFSidebar: NSView {
             target: self, action: #selector(worktreeRowClicked(_:)))
           if isPrimary {
             row.toolTip = "Currently checked-out branch in \(project.name)"
-            // Shrink the circle.fill so it reads as a subtle dot
             if let img = row.subviews.compactMap({ $0 as? NSImageView }).first {
               let config = NSImage.SymbolConfiguration(pointSize: 6, weight: .regular)
               img.image = img.image?.withSymbolConfiguration(config)
@@ -383,7 +462,6 @@ final class DFSidebar: NSView {
           row.worktreePath = wt.path
           row.isBaseWorktree = isBase
 
-          // Context menu
           let wtMenu = NSMenu()
           let openItem = NSMenuItem(
             title: "Open Session Here", action: #selector(openSessionFromMenu(_:)),
@@ -413,15 +491,44 @@ final class DFSidebar: NSView {
 
           row.heightAnchor.constraint(equalToConstant: 26).isActive = true
           worktreeStack.addArrangedSubview(row)
+          wtRows.append(row)
+        }
+      }
+      projectWorktreeRows[project.path] = wtRows
+    }
+  }
+
+  private func applyExpansionStates(_ states: [String: Bool], animated: Bool) {
+    // Symbol swap can't animate cleanly, do it synchronously regardless.
+    for (path, isExpanded) in states {
+      if let chevron = projectChevronViews[path] {
+        chevron.image = NSImage(
+          systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
+          accessibilityDescription: nil)
+      }
+    }
+
+    let apply: () -> Void = { [weak self] in
+      guard let self = self else { return }
+      for (path, isExpanded) in states {
+        for row in self.projectWorktreeRows[path] ?? [] {
+          if animated {
+            row.animator().isHidden = !isExpanded
+          } else {
+            row.isHidden = !isExpanded
+          }
         }
       }
     }
 
-    // If no projects at all, show placeholder
-    if projects.isEmpty {
-      let emptyRow = makeRow(icon: "folder.badge.plus", text: "Open Project", detail: nil)
-      emptyRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
-      worktreeStack.addArrangedSubview(emptyRow)
+    if animated {
+      NSAnimationContext.runAnimationGroup { ctx in
+        ctx.duration = 0.18
+        ctx.allowsImplicitAnimation = true
+        apply()
+      }
+    } else {
+      apply()
     }
   }
 
