@@ -148,8 +148,17 @@ final class DFWindowController: NSWindowController {
 
   // MARK: - Sidebar Toggle
 
+  /// Inset applied to the terminal pane's tab bar when the sidebar is
+  /// collapsed, so the first tab clears the macOS traffic-light buttons
+  /// (the window uses `.fullSizeContentView`). The terminal *content* still
+  /// fills the full pane width — only the tab bar is shifted.
+  private let tabBarTrafficLightInset: CGFloat = 78
+  private let tabBarDefaultInset: CGFloat = 4
+
   func toggleSidebar() {
     sidebar.isHidden = !sidebar.isHidden
+    terminalPane.setLeadingTabInset(
+      sidebar.isHidden ? tabBarTrafficLightInset : tabBarDefaultInset)
   }
 
   private func setupShortcuts() {

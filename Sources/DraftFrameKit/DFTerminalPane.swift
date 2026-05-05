@@ -11,6 +11,11 @@ final class DFTerminalPane: NSView {
   /// Each entry is the container view for a tab (holds name button + close button).
   private var tabViews: [NSView] = []
 
+  /// Adjustable so the window controller can shift the tab row right when the
+  /// sidebar is collapsed (clears the macOS traffic lights). The terminal
+  /// container below stays full-width.
+  private var tabStackLeadingConstraint: NSLayoutConstraint?
+
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
@@ -69,6 +74,10 @@ final class DFTerminalPane: NSView {
     terminalContainer.translatesAutoresizingMaskIntoConstraints = false
     addSubview(terminalContainer)
 
+    let tabStackLeading = tabStack.leadingAnchor.constraint(
+      equalTo: tabBar.leadingAnchor, constant: 4)
+    tabStackLeadingConstraint = tabStackLeading
+
     NSLayoutConstraint.activate([
       tabBar.topAnchor.constraint(equalTo: topAnchor),
       tabBar.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -80,7 +89,7 @@ final class DFTerminalPane: NSView {
       tabBorder.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor),
       tabBorder.heightAnchor.constraint(equalToConstant: 1),
 
-      tabStack.leadingAnchor.constraint(equalTo: tabBar.leadingAnchor, constant: 4),
+      tabStackLeading,
       tabStack.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
       tabStack.trailingAnchor.constraint(lessThanOrEqualTo: addBtn.leadingAnchor, constant: -4),
 
@@ -93,6 +102,12 @@ final class DFTerminalPane: NSView {
       terminalContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
       terminalContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
+  }
+
+  /// Shifts the tab row right by `inset` from the pane's leading edge.
+  /// Used to clear the macOS traffic lights when the sidebar is collapsed.
+  func setLeadingTabInset(_ inset: CGFloat) {
+    tabStackLeadingConstraint?.constant = inset
   }
 
   // MARK: - Tab Management
