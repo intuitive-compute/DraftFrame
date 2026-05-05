@@ -210,6 +210,9 @@ final class SessionCard: NSView {
     let nameLabel = NSTextField(labelWithString: session.displayName)
     nameLabel.font = Theme.mono(12, weight: .medium)
     nameLabel.textColor = Theme.text1
+    nameLabel.lineBreakMode = .byTruncatingTail
+    nameLabel.maximumNumberOfLines = 1
+    nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     nameLabel.translatesAutoresizingMaskIntoConstraints = false
 
     // Status dot + label
@@ -295,6 +298,7 @@ final class SessionCard: NSView {
 
       nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 8),
       nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+      nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: costLabel.leadingAnchor, constant: -8),
 
       costLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
       costLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),

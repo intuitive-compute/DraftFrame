@@ -241,11 +241,16 @@ final class DashboardCard: NSView {
     avatar.translatesAutoresizingMaskIntoConstraints = false
     addSubview(avatar)
 
-    // Name — truncate so it doesn't collide with cost/tokens
+    // Name — truncate so it doesn't collide with cost/tokens. NSTextField
+    // labels need maximumNumberOfLines=1 plus lowered compression
+    // resistance for the trailing <= cost constraint to actually pinch
+    // the field instead of letting it wrap or push past.
     let nameLabel = NSTextField(labelWithString: session.displayName)
     nameLabel.font = Theme.mono(14, weight: .bold)
     nameLabel.textColor = Theme.text1
     nameLabel.lineBreakMode = .byTruncatingTail
+    nameLabel.maximumNumberOfLines = 1
+    nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     nameLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(nameLabel)
 
@@ -525,6 +530,9 @@ final class SummaryCard: NSView {
     let nameLabel = NSTextField(labelWithString: session.displayName)
     nameLabel.font = Theme.mono(13, weight: .bold)
     nameLabel.textColor = Theme.text1
+    nameLabel.lineBreakMode = .byTruncatingTail
+    nameLabel.maximumNumberOfLines = 1
+    nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     nameLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(nameLabel)
 
@@ -565,6 +573,7 @@ final class SummaryCard: NSView {
 
       nameLabel.topAnchor.constraint(equalTo: avatar.topAnchor),
       nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
+      nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timestamp.leadingAnchor, constant: -8),
 
       dot.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 5),
       dot.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
