@@ -9,6 +9,14 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   override init(frame: NSRect) {
     super.init(frame: frame)
     registerForDraggedTypes([.fileURL])
+    // SwiftTerm cancels the active selection on every PTY feed and on every
+    // linefeed when allowMouseReporting is true (its default). Claude Code's
+    // TUI streams continuously, so leaving this on means selection drops
+    // within milliseconds of the model starting to think or stream. We don't
+    // need raw mouse forwarding into Claude — it's keyboard-driven, and our
+    // Cmd+Click PR refs and trackpad-scroll translation use independent
+    // local event monitors.
+    allowMouseReporting = false
   }
 
   @available(*, unavailable)
