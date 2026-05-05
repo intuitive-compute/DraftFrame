@@ -312,6 +312,12 @@ final class DFTerminalPane: NSView {
       tv.bottomAnchor.constraint(equalTo: terminalContainer.bottomAnchor, constant: -pad),
     ])
 
+    // Settle the frame synchronously so SessionManager can fork the child
+    // process with the correct PTY winsize on the very first byte. Without
+    // this, autolayout resolves on the next runloop tick and SwiftTerm's
+    // initial cols/rows reflect a zero/stale frame.
+    terminalContainer.layoutSubtreeIfNeeded()
+
     window?.makeFirstResponder(tv)
 
     NSLog(

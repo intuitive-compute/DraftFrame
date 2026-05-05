@@ -268,8 +268,13 @@ final class SessionManager {
     let sessionName = name ?? "session-\(sessions.count + 1)"
     let session = Session(name: sessionName, worktreePath: worktreePath)
 
-    // Create the terminal view (ClaudeTerminalView intercepts PTY data)
-    let tv = ClaudeTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    // Create the terminal view (ClaudeTerminalView intercepts PTY data).
+    // Use a zero frame — autolayout will resize to the real visible area
+    // once the view is parented in `terminalContainer`. Forking the child
+    // process before that resize would bake a stale `cols`/`rows` into the
+    // PTY's initial winsize, which makes Claude Code's TUI wrap and
+    // cursor-position at a column count that doesn't match what's drawn.
+    let tv = ClaudeTerminalView(frame: .zero)
     tv.nativeForegroundColor = Theme.text1
     tv.nativeBackgroundColor = Theme.bg
     tv.selectedTextBackgroundColor = Theme.selected
@@ -282,7 +287,8 @@ final class SessionManager {
       session?.ptyAnalyzer.feed(bytes)
     }
 
-    // Start the process
+    // Build the child env up front so we only start the process once the
+    // view has settled into its final on-screen size below.
     let parentEnv = ProcessInfo.processInfo.environment
     // Resolve the shell to an absolute path. $SHELL may be unset or set to
     // a bare name like "zsh" (some setups do this), and execve requires an
@@ -326,6 +332,23 @@ final class SessionManager {
     let claudeCmd =
       model == .default ? claudeBin : "\(claudeBin) --model \(model.rawValue)"
 
+    // Start JSONL watcher for cost/token tracking.
+    let watchDir = worktreePath ?? projectDir ?? FileManager.default.currentDirectoryPath
+    session.startJSONLWatcher(directory: watchDir)
+
+    // Register and broadcast the session first. The notification synchronously
+    // drives DFTerminalPane to parent `tv` in its terminal container with the
+    // real layout constraints; forcing layout immediately after gives the view
+    // its final frame before we fork the child process.
+    sessions.append(session)
+    activeSessionIndex = sessions.count - 1
+
+    NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+    NotificationCenter.default.post(name: .activeSessionDidChange, object: nil)
+
+    tv.window?.layoutIfNeeded()
+    tv.superview?.layoutSubtreeIfNeeded()
+
     if let cmd = command {
       tv.startProcess(
         executable: shell,
@@ -340,27 +363,15 @@ final class SessionManager {
         execName: nil)
     }
 
-    // cd into worktree directory then launch claude
+    // The PTY's initial winsize now matches the visible area, so the shell
+    // (and `claude` once it launches) wrap at the same column count we render.
+    // The kernel buffers the bytes until the shell calls read(), so we don't
+    // need a delay before sending.
     if let wtPath = worktreePath {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-        tv.send(txt: "cd \(wtPath) && clear && \(claudeCmd)\r")
-      }
+      tv.send(txt: "cd \(wtPath) && clear && \(claudeCmd)\r")
     } else {
-      // No worktree — just launch claude
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-        tv.send(txt: "clear && \(claudeCmd)\r")
-      }
+      tv.send(txt: "clear && \(claudeCmd)\r")
     }
-
-    // Start JSONL watcher for cost/token tracking.
-    let watchDir = worktreePath ?? projectDir ?? FileManager.default.currentDirectoryPath
-    session.startJSONLWatcher(directory: watchDir)
-
-    sessions.append(session)
-    activeSessionIndex = sessions.count - 1
-
-    NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
-    NotificationCenter.default.post(name: .activeSessionDidChange, object: nil)
 
     return session
   }
