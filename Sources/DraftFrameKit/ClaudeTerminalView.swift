@@ -53,6 +53,19 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     stickyScrollGuardActive = position < Self.atBottomThreshold
   }
 
+  /// True for keys SwiftTerm (or AppKit) routes to local scrollback
+  /// navigation on the primary buffer rather than sending to the PTY.
+  /// We must not snap-to-bottom for these or PageUp would visibly bounce
+  /// to the bottom before scrolling up.
+  private static func isLocalScrollKey(_ event: NSEvent) -> Bool {
+    switch event.specialKey {
+    case .some(.pageUp), .some(.pageDown), .some(.home), .some(.end):
+      return true
+    default:
+      return false
+    }
+  }
+
   // MARK: - Live Dictation (NSTextInputClient)
   //
   // Required to make macOS system Dictation deliver text to the terminal.
@@ -230,9 +243,21 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     if window != nil && keyMonitor == nil {
       keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
         guard let self = self, self.window?.firstResponder === self else { return event }
-        // Any keypress releases the sticky scroll guard so the viewport
-        // follows the cursor when the user starts typing or submits.
-        self.stickyScrollGuardActive = false
+        // Any input keypress releases the sticky scroll guard and snaps the
+        // viewport to the bottom. SwiftTerm's `send()` already calls
+        // `ensureCaretIsVisible`, but that's a no-op when the user has only
+        // scrolled up a row or two and the cursor is still inside the
+        // viewport — Ink redraws Claude's input field at rows near yBase
+        // that fall just below the visible region, so typed characters
+        // land in the buffer invisibly. Force yDisp back to yBase here.
+        // Skip for PageUp/PageDown/Home/End so SwiftTerm's local scroll
+        // navigation on the primary buffer still works.
+        if !Self.isLocalScrollKey(event) {
+          self.stickyScrollGuardActive = false
+          if self.scrollPosition < 1.0 {
+            self.scroll(toPosition: 1.0)
+          }
+        }
         // Shift+Enter: send newline (LF) instead of carriage return (CR)
         // so Claude Code inserts a line break rather than submitting.
         if event.keyCode == 36 && event.modifierFlags.contains(.shift) {
