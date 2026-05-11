@@ -448,7 +448,7 @@ final class PRMonitor {
     do {
       try proc.run()
       proc.waitUntilExit()
-      let data = out.fileHandleForReading.readDataToEndOfFile()
+      let data = (try out.fileHandleForReading.readToEnd()) ?? Data()
       return String(data: data, encoding: .utf8) ?? ""
     } catch {
       return ""
