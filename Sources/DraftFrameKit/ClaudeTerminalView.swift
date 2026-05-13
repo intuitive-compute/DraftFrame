@@ -5,6 +5,7 @@ import SwiftTerm
 /// dataReceived(slice:) is the only `open` method in the data path.
 class ClaudeTerminalView: LocalProcessTerminalView {
   var onPtyData: ((ArraySlice<UInt8>) -> Void)?
+  var onProcessExit: ((Int32?) -> Void)?
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -232,6 +233,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       "[ClaudeTerminalView] processTerminated exitCode=%@",
       exitCode.map(String.init) ?? "nil")
     super.processTerminated(source, exitCode: exitCode)
+    onProcessExit?(exitCode)
   }
 
   // MARK: - Keyboard

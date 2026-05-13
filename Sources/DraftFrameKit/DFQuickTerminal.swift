@@ -101,9 +101,23 @@ final class DFQuickTerminal {
     ])
     terminalView = tv
 
+    tv.onProcessExit = { [weak self] _ in
+      DispatchQueue.main.async { self?.teardown() }
+    }
+
     startShell(in: tv)
 
     self.window = win
+  }
+
+  /// Hide and discard the window and terminal view so the next `show()`
+  /// rebuilds a fresh shell — used when the user types `exit` and the PTY
+  /// dies, otherwise the cached terminal stays around in a dead state.
+  private func teardown() {
+    window?.orderOut(nil)
+    window?.contentView = nil
+    terminalView = nil
+    window = nil
   }
 
   private func startShell(in tv: ClaudeTerminalView) {
