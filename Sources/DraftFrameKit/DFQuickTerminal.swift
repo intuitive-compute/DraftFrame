@@ -1,16 +1,35 @@
 import AppKit
 import SwiftTerm
 
-/// Floating quick-terminal window — a plain shell rooted at the current
-/// project directory. Toggled with Cmd+` (backtick). The shell persists
-/// across show/hide so commands in progress keep running.
+/// Floating quick-terminal window. Toggled with Cmd+` (backtick). Each
+/// session tab owns its own shell — switching tabs swaps which terminal
+/// view is mounted in the single floating window. Shells persist across
+/// show/hide and across session switches, so scrollback and in-flight
+/// commands survive a toggle.
 final class DFQuickTerminal {
   static let shared = DFQuickTerminal()
 
   private var window: NSWindow?
-  private var terminalView: ClaudeTerminalView?
+  private var container: NSView?
+  private var terminals: [UUID: ClaudeTerminalView] = [:]
+  private var currentlyInstalledSessionID: UUID?
 
-  private init() {}
+  /// Container inset matching the transparent titlebar so content doesn't
+  /// render behind the traffic lights.
+  private static let titlebarInset: CGFloat = 28
+
+  private init() {
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(activeSessionDidChange),
+      name: .activeSessionDidChange,
+      object: nil)
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(sessionsDidChange),
+      name: .sessionsDidChange,
+      object: nil)
+  }
 
   /// Show the quick terminal if hidden, hide it if currently visible and key.
   /// If visible but not key (user clicked the main window), re-focus it
@@ -22,7 +41,7 @@ final class DFQuickTerminal {
       } else {
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if let tv = terminalView {
+        if let id = currentlyInstalledSessionID, let tv = terminals[id] {
           win.makeFirstResponder(tv)
         }
       }
@@ -36,20 +55,16 @@ final class DFQuickTerminal {
       buildWindow()
     }
     guard let win = window else { return }
+    guard let active = SessionManager.shared.activeSession else {
+      // No session to attach to — quick terminal is session-scoped.
+      return
+    }
+    let tv = terminal(for: active)
+    install(tv, for: active)
     positionAtTop(of: win)
     win.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
-    if let tv = terminalView {
-      win.makeFirstResponder(tv)
-      // cd to the active session's directory so the quick terminal always
-      // reflects the project the user is currently working in.
-      let dir =
-        SessionManager.shared.activeSession?.worktreePath
-        ?? SessionManager.shared.projectDir
-      if let dir = dir {
-        tv.send(txt: "cd \(shellEscape(dir)) && clear\r")
-      }
-    }
+    win.makeFirstResponder(tv)
   }
 
   func hide() {
@@ -82,9 +97,18 @@ final class DFQuickTerminal {
     container.layer?.backgroundColor = Theme.bg.cgColor
     win.contentView = container
 
-    // Inset the terminal below the transparent titlebar so content doesn't
-    // render behind the traffic lights.
-    let titlebarInset: CGFloat = 28
+    self.container = container
+    self.window = win
+  }
+
+  // MARK: - Per-session terminal lifecycle
+
+  /// Return the cached terminal view for `session`, lazy-creating and
+  /// starting a fresh shell rooted at the session's worktree if none exists.
+  private func terminal(for session: Session) -> ClaudeTerminalView {
+    if let existing = terminals[session.id] {
+      return existing
+    }
     let tv = ClaudeTerminalView(frame: .zero)
     tv.translatesAutoresizingMaskIntoConstraints = false
     tv.nativeForegroundColor = Theme.text1
@@ -92,35 +116,89 @@ final class DFQuickTerminal {
     tv.selectedTextBackgroundColor = Theme.selected
     tv.caretColor = Theme.accent
     tv.font = Theme.mono(13)
+
+    let sessionID = session.id
+    tv.onProcessExit = { [weak self] _ in
+      DispatchQueue.main.async { self?.handleProcessExit(for: sessionID) }
+    }
+
+    terminals[session.id] = tv
+
+    let dir = session.worktreePath ?? SessionManager.shared.projectDir
+    startShell(in: tv, workingDirectory: dir)
+    return tv
+  }
+
+  /// Mount `tv` in the floating window's container, replacing whatever was
+  /// previously shown. No-op if `tv` is already the installed view.
+  private func install(_ tv: ClaudeTerminalView, for session: Session) {
+    guard let container = container else { return }
+    if currentlyInstalledSessionID == session.id, tv.superview === container {
+      window?.title = "Quick Terminal — \(session.displayName)"
+      return
+    }
+    // Drop any currently installed view (don't tear down its shell —
+    // we want to swap back to it later with state intact).
+    for sub in container.subviews { sub.removeFromSuperview() }
+
     container.addSubview(tv)
     NSLayoutConstraint.activate([
-      tv.topAnchor.constraint(equalTo: container.topAnchor, constant: titlebarInset),
+      tv.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.titlebarInset),
       tv.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
       tv.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
       tv.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
     ])
-    terminalView = tv
+    currentlyInstalledSessionID = session.id
+    window?.title = "Quick Terminal — \(session.displayName)"
+  }
 
-    tv.onProcessExit = { [weak self] _ in
-      DispatchQueue.main.async { self?.teardown() }
+  /// Called when a session's quick-terminal shell exits (user typed `exit`).
+  /// Drop the cached view; if it was the visible one, hide the window so
+  /// the next Cmd+` for that session lazy-rebuilds a fresh shell.
+  private func handleProcessExit(for sessionID: UUID) {
+    terminals.removeValue(forKey: sessionID)
+    if currentlyInstalledSessionID == sessionID {
+      currentlyInstalledSessionID = nil
+      container?.subviews.forEach { $0.removeFromSuperview() }
+      window?.orderOut(nil)
     }
-
-    startShell(in: tv)
-
-    self.window = win
   }
 
-  /// Hide and discard the window and terminal view so the next `show()`
-  /// rebuilds a fresh shell — used when the user types `exit` and the PTY
-  /// dies, otherwise the cached terminal stays around in a dead state.
-  private func teardown() {
-    window?.orderOut(nil)
-    window?.contentView = nil
-    terminalView = nil
-    window = nil
+  // MARK: - Session notifications
+
+  @objc private func activeSessionDidChange() {
+    // Only swap eagerly while the window is visible — otherwise wait for
+    // the next show() so we don't spin up a shell for a session the user
+    // may never quick-terminal into.
+    guard let win = window, win.isVisible else { return }
+    guard let active = SessionManager.shared.activeSession else {
+      currentlyInstalledSessionID = nil
+      container?.subviews.forEach { $0.removeFromSuperview() }
+      win.orderOut(nil)
+      return
+    }
+    let tv = terminal(for: active)
+    install(tv, for: active)
+    win.makeFirstResponder(tv)
   }
 
-  private func startShell(in tv: ClaudeTerminalView) {
+  @objc private func sessionsDidChange() {
+    // Drop cached terminal views for sessions that no longer exist.
+    let liveIDs = Set(SessionManager.shared.sessions.map(\.id))
+    let orphaned = terminals.keys.filter { !liveIDs.contains($0) }
+    for id in orphaned {
+      terminals.removeValue(forKey: id)
+      if currentlyInstalledSessionID == id {
+        currentlyInstalledSessionID = nil
+        container?.subviews.forEach { $0.removeFromSuperview() }
+        window?.orderOut(nil)
+      }
+    }
+  }
+
+  // MARK: - Shell startup
+
+  private func startShell(in tv: ClaudeTerminalView, workingDirectory: String?) {
     let parentEnv = ProcessInfo.processInfo.environment
     let shell = SessionManager.resolveShellPath(parentEnv: parentEnv)
 
@@ -153,9 +231,11 @@ final class DFQuickTerminal {
       environment: env,
       execName: nil)
 
-    // cd into the current project directory so the quick terminal opens
-    // rooted where the user is working.
-    if let dir = SessionManager.shared.projectDir {
+    // Login shell lands in $HOME; cd into the session's worktree so the
+    // quick terminal opens where the user is working. `clear` wipes the
+    // login banner so a fresh shell looks clean. Done once at creation —
+    // never on show/hide, so scrollback survives toggling.
+    if let dir = workingDirectory {
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
         tv.send(txt: "cd \(shellEscape(dir)) && clear\r")
       }
