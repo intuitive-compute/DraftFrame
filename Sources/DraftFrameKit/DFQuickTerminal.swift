@@ -159,7 +159,7 @@ final class DFQuickTerminal {
     terminals.removeValue(forKey: sessionID)
     if currentlyInstalledSessionID == sessionID {
       currentlyInstalledSessionID = nil
-      container?.subviews.forEach { $0.removeFromSuperview() }
+      for sub in container?.subviews ?? [] { sub.removeFromSuperview() }
       window?.orderOut(nil)
     }
   }
@@ -173,7 +173,7 @@ final class DFQuickTerminal {
     guard let win = window, win.isVisible else { return }
     guard let active = SessionManager.shared.activeSession else {
       currentlyInstalledSessionID = nil
-      container?.subviews.forEach { $0.removeFromSuperview() }
+      for sub in container?.subviews ?? [] { sub.removeFromSuperview() }
       win.orderOut(nil)
       return
     }
@@ -190,7 +190,7 @@ final class DFQuickTerminal {
       terminals.removeValue(forKey: id)
       if currentlyInstalledSessionID == id {
         currentlyInstalledSessionID = nil
-        container?.subviews.forEach { $0.removeFromSuperview() }
+        for sub in container?.subviews ?? [] { sub.removeFromSuperview() }
         window?.orderOut(nil)
       }
     }
