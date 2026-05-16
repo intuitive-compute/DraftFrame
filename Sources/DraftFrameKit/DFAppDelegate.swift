@@ -28,15 +28,21 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     _ = WatchdogManager.shared
     _ = PRMonitor.shared
 
-    // Check for updates in the background (throttled to once per day)
-    UpdateManager.shared.checkOnLaunchIfNeeded()
-
     buildMenuBar()
 
     let wc = DFWindowController()
     wc.showWindow(nil)
     wc.window?.makeKeyAndOrderFront(nil)
     windowController = wc
+
+    // Check for updates in the background (throttled to once per day).
+    // Deferred a few seconds past launch so the update modal can't blot
+    // out the main window mid-startup — clicking "Download" while the
+    // window was still being constructed used to leave the app in a
+    // half-initialized state where nothing visible happened.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+      UpdateManager.shared.checkOnLaunchIfNeeded()
+    }
   }
 
   public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
