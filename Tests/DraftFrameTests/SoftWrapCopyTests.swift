@@ -1,5 +1,5 @@
-import XCTest
 import SwiftTerm
+import XCTest
 
 @testable import DraftFrameKit
 
@@ -27,8 +27,10 @@ final class SoftWrapCopyTests: XCTestCase {
     let end = Position(col: 20, row: 1)
     let copied = terminal.getText(start: start, end: end)
 
-    XCTAssertEqual(copied, command,
-      "Soft-wrapped selection should join continuation rows with no newline or padding. Got: \(copied.debugDescription)")
+    XCTAssertEqual(
+      copied, command,
+      "Soft-wrapped selection should join continuation rows with no newline or padding. Got: \(copied.debugDescription)"
+    )
   }
 
   func testHardNewlinesArePreserved() {
@@ -37,8 +39,10 @@ final class SoftWrapCopyTests: XCTestCase {
 
     let copied = terminal.getText(start: Position(col: 0, row: 0), end: Position(col: 8, row: 1))
 
-    XCTAssertEqual(copied, "line one\nline two",
-      "Distinct logical lines must be separated by a single newline. Got: \(copied.debugDescription)")
+    XCTAssertEqual(
+      copied, "line one\nline two",
+      "Distinct logical lines must be separated by a single newline. Got: \(copied.debugDescription)"
+    )
   }
 
   func testMixedHardAndSoftWrap() {
@@ -48,7 +52,8 @@ final class SoftWrapCopyTests: XCTestCase {
 
     let copied = terminal.getText(start: Position(col: 0, row: 0), end: Position(col: 5, row: 2))
 
-    XCTAssertEqual(copied, longCommand + "\nshort",
+    XCTAssertEqual(
+      copied, longCommand + "\nshort",
       "Soft-wrap should join, hard newline should be preserved. Got: \(copied.debugDescription)")
   }
 }
