@@ -29,6 +29,49 @@ enum Theme {
   static func mono(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
     NSFont.monospacedSystemFont(ofSize: size, weight: weight)
   }
+
+  // Terminal mono font — prefers an installed Nerd Font so Powerline /
+  // Starship / Powerlevel10k glyphs render. Falls back to SF Mono when
+  // no Nerd Font is installed.
+  static func terminalMono(_ size: CGFloat) -> NSFont {
+    if let family = resolvedTerminalFontFamily,
+      let font = NSFontManager.shared.font(
+        withFamily: family,
+        traits: [],
+        weight: 5,
+        size: size
+      )
+    {
+      return font
+    }
+    return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+  }
+
+  private static let resolvedTerminalFontFamily: String? = {
+    let available = NSFontManager.shared.availableFontFamilies
+    let availableSet = Set(available)
+    let preferred = [
+      "MesloLGS NF",
+      "MesloLGS Nerd Font",
+      "MesloLGM NF",
+      "JetBrainsMono Nerd Font Mono",
+      "JetBrainsMonoNL Nerd Font Mono",
+      "JetBrainsMono Nerd Font",
+      "Hack Nerd Font Mono",
+      "Hack Nerd Font",
+      "FiraCode Nerd Font Mono",
+      "FiraCode Nerd Font",
+      "FiraMono Nerd Font Mono",
+      "Menlo Nerd Font Mono",
+      "SauceCodePro Nerd Font Mono",
+      "Iosevka Nerd Font Mono",
+    ]
+    if let exact = preferred.first(where: { availableSet.contains($0) }) {
+      return exact
+    }
+    return available.first { $0.contains("Nerd Font") && $0.contains("Mono") }
+      ?? available.first { $0.contains("Nerd Font") }
+  }()
 }
 
 extension NSColor {

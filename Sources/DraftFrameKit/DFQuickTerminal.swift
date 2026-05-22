@@ -115,7 +115,7 @@ final class DFQuickTerminal {
     tv.nativeBackgroundColor = Theme.bg
     tv.selectedTextBackgroundColor = Theme.selected
     tv.caretColor = Theme.accent
-    tv.font = Theme.mono(13)
+    tv.font = Theme.terminalMono(13)
 
     let sessionID = session.id
     tv.onProcessExit = { [weak self] _ in
