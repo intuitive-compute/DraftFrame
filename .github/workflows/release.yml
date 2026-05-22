@@ -6,11 +6,16 @@ on:
       - "v*"
 
 jobs:
-  release:
-    runs-on: macos-15
-    permissions:
-      contents: write
-
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -52,13 +57,36 @@ jobs:
             --password "$APPLE_APP_SPECIFIC_PASSWORD"
 
       - name: Build, sign, notarize & package DMG
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          VERSION=$VERSION scripts/package.sh --notarize
+          VERSION=$VERSION ARCH=$ARCH scripts/package.sh --notarize
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DraftFrame-${{ matrix.arch }}
+          path: dist/DraftFrame-${{ env.VERSION }}-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download DMG artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/DraftFrame-${{ env.VERSION }}.dmg
+          files: dist/*.dmg
           generate_release_notes: true
+          fail_on_unmatched_files: true

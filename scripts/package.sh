@@ -9,6 +9,7 @@
 # Required env / config:
 #   SIGN_IDENTITY  - Developer ID Application identity (defaults below)
 #   NOTARY_PROFILE - notarytool keychain profile name (default: DRAFTFRAME_NOTARY)
+#   ARCH           - target architecture: arm64 (default) or x86_64
 #
 # One-time notarization setup:
 #   xcrun notarytool store-credentials DRAFTFRAME_NOTARY \
@@ -23,6 +24,12 @@ SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Intuitive Compute Inc 
 NOTARY_PROFILE="${NOTARY_PROFILE:-DRAFTFRAME_NOTARY}"
 VERSION="${VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
+ARCH="${ARCH:-arm64}"
+
+case "$ARCH" in
+    arm64|x86_64) ;;
+    *) echo "error: ARCH must be 'arm64' or 'x86_64' (got '$ARCH')" >&2; exit 2 ;;
+esac
 
 NOTARIZE=0
 for arg in "$@"; do
@@ -36,7 +43,7 @@ done
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
-DMG="$DIST/$APP_NAME-$VERSION.dmg"
+DMG="$DIST/$APP_NAME-$VERSION-$ARCH.dmg"
 PLIST_SRC="$ROOT/scripts/Info.plist"
 ENTITLEMENTS="$ROOT/scripts/DraftFrame.entitlements"
 ICON_SRC="$ROOT/Sources/DraftFrame/AppIcon.png"
@@ -47,15 +54,16 @@ echo "==> Cleaning $DIST"
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
-# ---------- 1. build arm64 release binary ----------
-# Apple Silicon only. Xcode 26 requires the Metal Toolchain to build
-# universal binaries, which we'd rather not depend on.
-echo "==> Building arm64 release binary"
+# ---------- 1. build single-arch release binary ----------
+# We build one slice at a time (no universal/lipo). Xcode 26 gates universal
+# macOS builds behind the separate Metal Toolchain download, which we avoid.
+# CI runs this script twice (once per arch) and ships two DMGs.
+echo "==> Building $ARCH release binary"
 swift build -c release \
-    --arch arm64 \
+    --arch "$ARCH" \
     --disable-sandbox
 
-BIN=".build/arm64-apple-macosx/release/$APP_NAME"
+BIN=".build/$ARCH-apple-macosx/release/$APP_NAME"
 if [[ ! -f "$BIN" ]]; then
     echo "error: built binary not found at $BIN" >&2
     exit 1
