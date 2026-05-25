@@ -1,15 +1,22 @@
 import AppKit
 
+extension NSPasteboard.PasteboardType {
+  fileprivate static let dfSessionDrag = NSPasteboard.PasteboardType("com.draftframe.sessiondrag")
+}
+
 /// Right sidebar: session cards with live status, driven by SessionManager.
 final class DFSessionBar: NSView {
 
   private let cardStack = NSStackView()
+  private let dropIndicator = NSView()
+  private var lastDropIndex: Int?
 
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
     layer?.backgroundColor = Theme.surface1.cgColor
     buildUI()
+    registerForDraggedTypes([.dfSessionDrag])
 
     NotificationCenter.default.addObserver(
       self, selector: #selector(sessionsChanged),
@@ -55,6 +62,12 @@ final class DFSessionBar: NSView {
     cardStack.translatesAutoresizingMaskIntoConstraints = false
     addSubview(cardStack)
 
+    dropIndicator.wantsLayer = true
+    dropIndicator.layer?.backgroundColor = Theme.accent.cgColor
+    dropIndicator.layer?.cornerRadius = 1
+    dropIndicator.isHidden = true
+    addSubview(dropIndicator)
+
     NSLayoutConstraint.activate([
       title.topAnchor.constraint(equalTo: topAnchor, constant: 38),
       title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
@@ -95,6 +108,87 @@ final class DFSessionBar: NSView {
       cardStack.addArrangedSubview(card)
     }
   }
+
+  // MARK: - Drag & Drop reordering
+
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    sourceIndex(from: sender) == nil ? [] : .move
+  }
+
+  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    guard sourceIndex(from: sender) != nil else { return [] }
+    showDropIndicator(at: targetIndex(for: sender))
+    return .move
+  }
+
+  override func draggingExited(_ sender: NSDraggingInfo?) {
+    hideDropIndicator()
+  }
+
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    guard let from = sourceIndex(from: sender) else { return false }
+    let to = targetIndex(for: sender)
+    hideDropIndicator()
+    SessionManager.shared.moveSession(from: from, to: to)
+    return true
+  }
+
+  override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+    hideDropIndicator()
+  }
+
+  private func sourceIndex(from info: NSDraggingInfo) -> Int? {
+    guard
+      let items = info.draggingPasteboard.pasteboardItems,
+      let str = items.first?.string(forType: .dfSessionDrag),
+      let idx = Int(str)
+    else { return nil }
+    return idx
+  }
+
+  /// Map the current drag location to an insertion index in `cardStack`.
+  /// Returns 0 if above the first card, `count` if below the last.
+  private func targetIndex(for info: NSDraggingInfo) -> Int {
+    let cards = cardStack.arrangedSubviews.compactMap { $0 as? SessionCard }
+    guard !cards.isEmpty else { return 0 }
+    let pointInStack = cardStack.convert(info.draggingLocation, from: nil)
+    for (i, card) in cards.enumerated() {
+      if pointInStack.y > card.frame.midY { return i }
+    }
+    return cards.count
+  }
+
+  private func showDropIndicator(at index: Int) {
+    if !dropIndicator.isHidden, lastDropIndex == index { return }
+    let cards = cardStack.arrangedSubviews.compactMap { $0 as? SessionCard }
+    guard !cards.isEmpty else {
+      hideDropIndicator()
+      return
+    }
+
+    let stackFrame = cardStack.frame
+    let lineY: CGFloat
+    if index <= 0 {
+      lineY = cards[0].frame.maxY + stackFrame.minY + 2
+    } else if index >= cards.count {
+      lineY = cards[cards.count - 1].frame.minY + stackFrame.minY - 3
+    } else {
+      let above = cards[index - 1]
+      let below = cards[index]
+      let gapMid = (above.frame.minY + below.frame.maxY) / 2
+      lineY = gapMid + stackFrame.minY
+    }
+
+    dropIndicator.frame = NSRect(
+      x: stackFrame.minX, y: lineY - 1, width: stackFrame.width, height: 2)
+    dropIndicator.isHidden = false
+    lastDropIndex = index
+  }
+
+  private func hideDropIndicator() {
+    dropIndicator.isHidden = true
+    lastDropIndex = nil
+  }
 }
 
 // MARK: - Session Card (Live Data)
@@ -103,11 +197,14 @@ final class SessionCard: NSView {
 
   private let session: Session
   private let index: Int
+  private let isActive: Bool
   private var glowLayer: CALayer?
+  private var mouseDownPoint: NSPoint?
 
   init(session: Session, isActive: Bool, index: Int) {
     self.session = session
     self.index = index
+    self.isActive = isActive
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
@@ -335,6 +432,67 @@ final class SessionCard: NSView {
     field.textColor = status.displayColor
     field.toolTip = status.url
     return field
+  }
+
+  // MARK: - Drag source
+
+  override func mouseDown(with event: NSEvent) {
+    mouseDownPoint = event.locationInWindow
+    super.mouseDown(with: event)
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    guard let start = mouseDownPoint else {
+      super.mouseDragged(with: event)
+      return
+    }
+    let dx = event.locationInWindow.x - start.x
+    let dy = event.locationInWindow.y - start.y
+    // 4pt threshold so click and double-click still register.
+    if dx * dx + dy * dy < 16 { return }
+    mouseDownPoint = nil
+    beginDrag(with: event)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    mouseDownPoint = nil
+    super.mouseUp(with: event)
+  }
+
+  private func beginDrag(with event: NSEvent) {
+    let item = NSPasteboardItem()
+    item.setString(String(index), forType: .dfSessionDrag)
+    let dragItem = NSDraggingItem(pasteboardWriter: item)
+    dragItem.setDraggingFrame(bounds, contents: snapshotImage())
+    let dragSession = beginDraggingSession(with: [dragItem], event: event, source: self)
+    dragSession.animatesToStartingPositionsOnCancelOrFail = true
+  }
+
+  private func snapshotImage() -> NSImage {
+    guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return NSImage() }
+    cacheDisplay(in: bounds, to: rep)
+    let img = NSImage(size: bounds.size)
+    img.addRepresentation(rep)
+    return img
+  }
+}
+
+extension SessionCard: NSDraggingSource {
+  func draggingSession(
+    _ session: NSDraggingSession,
+    sourceOperationMaskFor context: NSDraggingContext
+  ) -> NSDragOperation {
+    context == .withinApplication ? .move : []
+  }
+
+  func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+    alphaValue = 0.3
+  }
+
+  func draggingSession(
+    _ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation
+  ) {
+    alphaValue = isActive ? 1.0 : 0.6
   }
 }
 

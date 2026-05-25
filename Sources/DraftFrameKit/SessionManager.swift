@@ -407,6 +407,28 @@ final class SessionManager {
     }
   }
 
+  /// Move the session at `from` to `to`. Preserves which session is active.
+  func moveSession(from: Int, to: Int) {
+    guard from >= 0, from < sessions.count else { return }
+    guard to >= 0, to <= sessions.count, to != from else { return }
+
+    let activeID = activeSession?.id
+    let priorActiveIndex = activeSessionIndex
+    let moved = sessions.remove(at: from)
+    // After removal, an insertion index past `from` shifts down by one.
+    let insertAt = to > from ? to - 1 : to
+    sessions.insert(moved, at: insertAt)
+
+    if let id = activeID, let newIdx = sessions.firstIndex(where: { $0.id == id }) {
+      activeSessionIndex = newIdx
+    }
+
+    NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+    if activeSessionIndex != priorActiveIndex {
+      NotificationCenter.default.post(name: .activeSessionDidChange, object: nil)
+    }
+  }
+
   /// Restart session by ID — closes and re-creates.
   func restartSession(id: UUID) {
     guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
