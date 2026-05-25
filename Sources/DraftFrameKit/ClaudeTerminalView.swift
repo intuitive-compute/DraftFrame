@@ -26,16 +26,23 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   override func dataReceived(slice: ArraySlice<UInt8>) {
     onPtyData?(slice)
     // While the user is parked above the bottom (reading back through
-    // output), new PTY data would normally snap the viewport back down.
-    // Capture their row before super runs and restore it directly on the
-    // buffer — **not** via scrollTo(), which forces a second full redraw
-    // and makes the selection highlight flicker.
-    if stickyScrollGuardActive {
-      let savedYDisp = terminal.buffer.yDisp
-      super.dataReceived(slice: slice)
-      terminal.buffer.yDisp = savedYDisp
-    } else {
-      super.dataReceived(slice: slice)
+    // output), new PTY data would normally snap the viewport back down:
+    // SwiftTerm's internal handling calls scrollTo(newBottom) as lines are
+    // appended, which both renders the view at the bottom and (via the
+    // scrolled() delegate) trips our sticky-scroll guard off — so every
+    // subsequent chunk would also jump. Save the user's row, suppress
+    // guard updates for any scrolled() callbacks fired from inside super,
+    // then re-render at the saved row with scrollTo() so the user's
+    // viewport actually moves back. The flicker concern from the older
+    // direct-yDisp write approach is real but unavoidable: without a
+    // re-render the screen sticks at whatever super last drew.
+    let savedYDisp = terminal.buffer.yDisp
+    let wasGuarded = stickyScrollGuardActive
+    suppressGuardUpdates = wasGuarded
+    super.dataReceived(slice: slice)
+    suppressGuardUpdates = false
+    if wasGuarded && terminal.buffer.yDisp != savedYDisp {
+      scrollTo(row: savedYDisp)
     }
   }
 
@@ -45,12 +52,19 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   /// Flipped by `scrolled(source:position:)`; consulted by `dataReceived`.
   private var stickyScrollGuardActive = false
 
+  /// True while we're inside `dataReceived`; gates out `scrolled()`
+  /// callbacks SwiftTerm fires when its own auto-follow walks `yDisp`
+  /// to the new bottom. Without this guard, every streaming chunk would
+  /// silently unset `stickyScrollGuardActive`.
+  private var suppressGuardUpdates = false
+
   /// How close to the bottom we treat as "at bottom" — leaves headroom for
   /// floating-point rounding since `scrollPosition` is a computed Double.
   private static let atBottomThreshold: Double = 0.999
 
   open override func scrolled(source: TerminalView, position: Double) {
     super.scrolled(source: source, position: position)
+    if suppressGuardUpdates { return }
     stickyScrollGuardActive = position < Self.atBottomThreshold
   }
 
@@ -245,16 +259,21 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     if window != nil && keyMonitor == nil {
       keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
         guard let self = self, self.window?.firstResponder === self else { return event }
-        // Any input keypress releases the sticky scroll guard and snaps the
-        // viewport to the bottom. SwiftTerm's `send()` already calls
+        // A PTY input keypress releases the sticky scroll guard and snaps
+        // the viewport to the bottom. SwiftTerm's `send()` already calls
         // `ensureCaretIsVisible`, but that's a no-op when the user has only
         // scrolled up a row or two and the cursor is still inside the
         // viewport — Ink redraws Claude's input field at rows near yBase
         // that fall just below the visible region, so typed characters
         // land in the buffer invisibly. Force yDisp back to yBase here.
         // Skip for PageUp/PageDown/Home/End so SwiftTerm's local scroll
-        // navigation on the primary buffer still works.
-        if !Self.isLocalScrollKey(event) {
+        // navigation on the primary buffer still works, and skip for
+        // ⌘-modified shortcuts (⌘C, ⌘V, ⌘A, …) which AppKit dispatches
+        // via menu items rather than the PTY — those should leave the
+        // user's scroll position alone.
+        if !Self.isLocalScrollKey(event)
+          && !event.modifierFlags.contains(.command)
+        {
           self.stickyScrollGuardActive = false
           if self.scrollPosition < 1.0 {
             self.scroll(toPosition: 1.0)
@@ -269,84 +288,21 @@ class ClaudeTerminalView: LocalProcessTerminalView {
         return event
       }
       installMouseMonitor()
-      installScrollMonitor()
     } else if window == nil, let monitor = keyMonitor {
       NSEvent.removeMonitor(monitor)
       keyMonitor = nil
       removeMouseMonitor()
-      removeScrollMonitor()
     }
   }
 
-  // MARK: - Alt-screen scroll translation
-  //
-  // Claude Code's fullscreen TUI (and other alt-screen apps like less/vim)
-  // own the screen directly — there's no scrollback to move through on the
-  // alternate buffer. SwiftTerm's built-in scrollWheel drives its own
-  // scrollback regardless, which does nothing visible on alt-screen. Claude
-  // Code binds transcript scrolling to PageUp/PageDown (Up/Down in the
-  // input box cycles prompt history), so translate wheel events to those
-  // via a local event monitor — we can't subclass-override `scrollWheel`
-  // because SwiftTerm declared it non-open.
-
-  private var scrollMonitor: Any?
-  private var altScrollAccumulator: CGFloat = 0
-
-  /// Floor for per-page trackpad gesture distance so tiny twitches don't
-  /// trigger a page jump on high-DPI displays with small font sizes.
-  private static let minPreciseScrollStep: CGFloat = 24
-  /// Ceiling on pages emitted per single wheel event — a hard fling
-  /// otherwise sends a double-digit burst that scrolls past everything.
-  private static let maxPagesPerEvent = 3
-
-  private func installScrollMonitor() {
-    guard scrollMonitor == nil else { return }
-    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) {
-      [weak self] event in
-      guard let self = self,
-        event.window === self.window,
-        self.terminal?.isCurrentBufferAlternate == true
-      else { return event }
-
-      let localPoint = self.convert(event.locationInWindow, from: nil)
-      guard self.bounds.contains(localPoint) else { return event }
-
-      let dy = event.scrollingDeltaY
-      guard dy != 0 else { return nil }
-
-      // Each step emits one PageUp/PageDown, which Claude Code's TUI treats
-      // as half-a-viewport of transcript scroll. Require ~2 line-heights of
-      // trackpad gesture per page so a small nudge doesn't leap pages.
-      let lineHeight = max(
-        self.bounds.height / max(CGFloat(self.terminal.rows), 1), 1)
-      let perStep: CGFloat =
-        event.hasPreciseScrollingDeltas
-        ? max(lineHeight * 2, Self.minPreciseScrollStep) : 1
-      self.altScrollAccumulator += dy
-      let rawSteps = Int(
-        (self.altScrollAccumulator / perStep).rounded(.towardZero))
-      guard rawSteps != 0 else { return nil }
-      self.altScrollAccumulator -= CGFloat(rawSteps) * perStep
-
-      let cap = Self.maxPagesPerEvent
-      let steps = max(-cap, min(cap, rawSteps))
-      let seq: [UInt8] =
-        steps > 0 ? EscapeSequences.cmdPageUp : EscapeSequences.cmdPageDown
-      let count = abs(steps)
-      var bytes: [UInt8] = []
-      bytes.reserveCapacity(seq.count * count)
-      for _ in 0..<count { bytes.append(contentsOf: seq) }
-      self.send(bytes)
-      return nil
-    }
-  }
-
-  private func removeScrollMonitor() {
-    if let monitor = scrollMonitor {
-      NSEvent.removeMonitor(monitor)
-      scrollMonitor = nil
-    }
-  }
+  // Trackpad/wheel events are intentionally left to SwiftTerm's default
+  // handling on the alternate screen. We previously translated them to
+  // PageUp/PageDown so Claude Code's TUI would scroll its transcript view,
+  // but that opted users into Claude Code's auto-follow-on-stream behavior:
+  // any scroll-up would snap back down as soon as the model emitted another
+  // token. iTerm2 avoids this by never telling the app the user scrolled,
+  // and we now match that. Users can still scroll the transcript explicitly
+  // with the PageUp/PageDown keys (fn+↑/fn+↓ on compact Mac keyboards).
 
   // MARK: - Cmd+Click PR/Issue References
 
