@@ -40,12 +40,13 @@ final class SessionStatusWatcher {
   func stop() {
     pollTimer?.cancel()
     pollTimer = nil
+    // The cancel handler owns `close(fd)`. Don't close it here too —
+    // `cancel()` is async, so a synchronous close would free the fd number
+    // for reuse before the handler runs, and the handler would then close a
+    // now-unrelated fd (libdispatch EV_VANISHED trap).
     fileSource?.cancel()
     fileSource = nil
-    if watchedFD >= 0 {
-      close(watchedFD)
-      watchedFD = -1
-    }
+    watchedFD = -1
   }
 
   private func tick() {
@@ -108,13 +109,12 @@ final class SessionStatusWatcher {
   }
 
   private func detachFileWatcher() {
+    // Sole closer of the event fd is the source's cancel handler; closing
+    // it synchronously here would race fd reuse and crash libdispatch.
     fileSource?.cancel()
     fileSource = nil
     watchedPath = nil
-    if watchedFD >= 0 {
-      close(watchedFD)
-      watchedFD = -1
-    }
+    watchedFD = -1
   }
 
   private func readAndDispatch() {

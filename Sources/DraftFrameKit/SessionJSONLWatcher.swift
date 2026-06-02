@@ -95,20 +95,18 @@ final class SessionJSONLWatcher {
   // MARK: - Public
 
   func stop() {
+    // `cancel()` is async and the source's cancel handler owns `close(fd)`.
+    // Closing the fd here too would free its number for reuse before the
+    // handler runs, so the handler would later close an unrelated fd and
+    // trip libdispatch's EV_VANISHED guard.
     dispatchSource?.cancel()
     dispatchSource = nil
+    watcherFD = -1
     directorySource?.cancel()
     directorySource = nil
+    directoryHandle = -1
     pollTimer?.cancel()
     pollTimer = nil
-    if watcherFD >= 0 {
-      close(watcherFD)
-      watcherFD = -1
-    }
-    if directoryHandle >= 0 {
-      close(directoryHandle)
-      directoryHandle = -1
-    }
   }
 
   // MARK: - Resolution
@@ -229,12 +227,12 @@ final class SessionJSONLWatcher {
   /// Resets the read offset and the partial-line buffer so we begin
   /// streaming the new file from byte 0.
   private func switchTo(path: String) {
+    // Let the old source's cancel handler close its fd. The fd stays open
+    // until the handler runs, so the `open()` below is guaranteed a fresh
+    // number — closing it synchronously here would race that reuse.
     dispatchSource?.cancel()
     dispatchSource = nil
-    if watcherFD >= 0 {
-      close(watcherFD)
-      watcherFD = -1
-    }
+    watcherFD = -1
     watchedPath = path
     fileOffset = 0
     lineBuffer = ""

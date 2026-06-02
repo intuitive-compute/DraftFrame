@@ -103,8 +103,10 @@ final class ToolkitManager {
       let flags = source.data
       if flags.contains(.delete) || flags.contains(.rename) {
         // File was replaced (common with editors that save atomically).
+        // `cancel()` triggers the cancel handler, which is the sole owner of
+        // `close(fd)`. Closing it here too would double-close once the number
+        // is reused and crash libdispatch with EV_VANISHED.
         source.cancel()
-        close(fd)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
           self.loadConfig()
           NotificationCenter.default.post(name: .toolkitDidChange, object: nil)
