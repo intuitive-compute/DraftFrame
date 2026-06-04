@@ -107,6 +107,25 @@ final class PTYStreamAnalyzerTests: XCTestCase {
     XCTAssertTrue(analyzer.alternateBufferActive)
   }
 
+  func testAlternateBufferEnterFiresCallbackOnceOnTransition() {
+    var fireCount = 0
+    analyzer.onAlternateBufferEnter = { fireCount += 1 }
+
+    let enter: [UInt8] = [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]
+    analyzer.feed(enter[...])
+    XCTAssertEqual(fireCount, 1)
+
+    // A second enter while already in the alternate buffer must not re-fire.
+    analyzer.feed(enter[...])
+    XCTAssertEqual(fireCount, 1)
+
+    // Leaving and re-entering fires again.
+    let leave: [UInt8] = [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x6C]
+    analyzer.feed(leave[...])
+    analyzer.feed(enter[...])
+    XCTAssertEqual(fireCount, 2)
+  }
+
   func testAlternateBufferLeaveResetsToIdle() {
     // Enter alternate buffer first
     let enter: [UInt8] = [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]

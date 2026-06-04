@@ -14,9 +14,43 @@ final class DFQuickTerminal {
   private var terminals: [UUID: ClaudeTerminalView] = [:]
   private var currentlyInstalledSessionID: UUID?
 
+  /// In-flight loading state for sessions whose shell is still booting.
+  /// Present only while a fresh shell renders its banner and runs the
+  /// `cd && clear` bootstrap; cleared once the shell settles.
+  private var loads: [UUID: LoadState] = [:]
+
+  /// Tracks one booting shell: the overlay shown over it, the timers that
+  /// decide when it's settled, and the rolling scan for the ready marker.
+  private final class LoadState {
+    let overlay: TerminalLoadingOverlay
+    var settleTimer: Timer?
+    var maxTimer: Timer?
+    /// True once the invisible ready marker has been observed in the PTY
+    /// stream — the shell has finished sourcing rc files and run the
+    /// bootstrap. Quiescence only counts toward "ready" after this.
+    var sawMarker = false
+    /// Rolling window of recent printable bytes, scanned for the marker.
+    var scanBuffer = ""
+    init(overlay: TerminalLoadingOverlay) { self.overlay = overlay }
+  }
+
   /// Container inset matching the transparent titlebar so content doesn't
   /// render behind the traffic lights.
   private static let titlebarInset: CGFloat = 28
+
+  /// Token emitted (invisibly, inside an OSC sequence) by the bootstrap once
+  /// the shell is ready. Split across printf's format and argument so the
+  /// literal token never appears in the shell's echo of the typed command —
+  /// only the actual emission matches.
+  private static let readyToken = "DFQT_READY"
+
+  /// Once the marker is seen, how long the prompt must stay quiet before we
+  /// reveal — just long enough to let the fresh prompt paint.
+  private static let settleQuiet: TimeInterval = 0.15
+
+  /// Hard ceiling on the loading overlay so a shell that never emits the
+  /// marker (exotic shell, wedged rc file) still reveals itself.
+  private static let maxLoad: TimeInterval = 6.0
 
   private init() {
     NotificationCenter.default.addObserver(
@@ -41,9 +75,7 @@ final class DFQuickTerminal {
       } else {
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if let id = currentlyInstalledSessionID, let tv = terminals[id] {
-          win.makeFirstResponder(tv)
-        }
+        focusInstalledContent()
       }
     } else {
       show()
@@ -64,7 +96,7 @@ final class DFQuickTerminal {
     positionAtTop(of: win)
     win.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
-    win.makeFirstResponder(tv)
+    focusInstalledContent()
   }
 
   func hide() {
@@ -124,8 +156,14 @@ final class DFQuickTerminal {
 
     terminals[session.id] = tv
 
+    // Cover the booting shell with a loading overlay until it settles. The
+    // overlay is mounted by install() and torn down by finishLoading().
+    let overlay = TerminalLoadingOverlay(message: "Starting terminal…")
+    overlay.translatesAutoresizingMaskIntoConstraints = false
+    loads[session.id] = LoadState(overlay: overlay)
+
     let dir = session.worktreePath ?? SessionManager.shared.projectDir
-    startShell(in: tv, workingDirectory: dir)
+    startShell(in: tv, for: session, workingDirectory: dir)
     return tv
   }
 
@@ -148,8 +186,33 @@ final class DFQuickTerminal {
       tv.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
       tv.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
     ])
+
+    // If this shell is still booting, lay its loading overlay on top of the
+    // terminal (added after `tv`, so it's above it in z-order).
+    if let overlay = loads[session.id]?.overlay {
+      container.addSubview(overlay)
+      NSLayoutConstraint.activate([
+        overlay.topAnchor.constraint(equalTo: tv.topAnchor),
+        overlay.leadingAnchor.constraint(equalTo: tv.leadingAnchor),
+        overlay.trailingAnchor.constraint(equalTo: tv.trailingAnchor),
+        overlay.bottomAnchor.constraint(equalTo: tv.bottomAnchor),
+      ])
+    }
+
     currentlyInstalledSessionID = session.id
     window?.title = "Quick Terminal — \(session.displayName)"
+  }
+
+  /// Make the installed session's terminal the first responder — unless it's
+  /// still booting, in which case focus its loading overlay so typed-ahead
+  /// keystrokes are swallowed rather than corrupting the bootstrap command.
+  private func focusInstalledContent() {
+    guard let win = window, let id = currentlyInstalledSessionID else { return }
+    if let overlay = loads[id]?.overlay {
+      win.makeFirstResponder(overlay)
+    } else if let tv = terminals[id] {
+      win.makeFirstResponder(tv)
+    }
   }
 
   /// Called when a session's quick-terminal shell exits (user typed `exit`).
@@ -157,6 +220,7 @@ final class DFQuickTerminal {
   /// the next Cmd+` for that session lazy-rebuilds a fresh shell.
   private func handleProcessExit(for sessionID: UUID) {
     terminals.removeValue(forKey: sessionID)
+    cancelLoading(for: sessionID)
     if currentlyInstalledSessionID == sessionID {
       currentlyInstalledSessionID = nil
       for sub in container?.subviews ?? [] { sub.removeFromSuperview() }
@@ -179,7 +243,7 @@ final class DFQuickTerminal {
     }
     let tv = terminal(for: active)
     install(tv, for: active)
-    win.makeFirstResponder(tv)
+    focusInstalledContent()
   }
 
   @objc private func sessionsDidChange() {
@@ -188,6 +252,7 @@ final class DFQuickTerminal {
     let orphaned = terminals.keys.filter { !liveIDs.contains($0) }
     for id in orphaned {
       terminals.removeValue(forKey: id)
+      cancelLoading(for: id)
       if currentlyInstalledSessionID == id {
         currentlyInstalledSessionID = nil
         for sub in container?.subviews ?? [] { sub.removeFromSuperview() }
@@ -198,7 +263,9 @@ final class DFQuickTerminal {
 
   // MARK: - Shell startup
 
-  private func startShell(in tv: ClaudeTerminalView, workingDirectory: String?) {
+  private func startShell(
+    in tv: ClaudeTerminalView, for session: Session, workingDirectory: String?
+  ) {
     let parentEnv = ProcessInfo.processInfo.environment
     let shell = SessionManager.resolveShellPath(parentEnv: parentEnv)
 
@@ -231,15 +298,98 @@ final class DFQuickTerminal {
       environment: env,
       execName: nil)
 
-    // Login shell lands in $HOME; cd into the session's worktree so the
-    // quick terminal opens where the user is working. `clear` wipes the
-    // login banner so a fresh shell looks clean. Done once at creation —
-    // never on show/hide, so scrollback survives toggling.
-    if let dir = workingDirectory {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-        tv.send(txt: "cd \(shellEscape(dir)) && clear\r")
+    let sessionID = session.id
+
+    // Watch the raw PTY stream for the invisible ready marker. dataReceived
+    // (and thus onPtyData) fires on the main thread, so timer scheduling and
+    // mutation of the load's scan state here are safe. Once the marker is
+    // seen the shell is genuinely ready; a short quiescence after lets the
+    // fresh prompt paint before we reveal.
+    tv.onPtyData = { [weak self] slice in
+      guard let self = self, let load = self.loads[sessionID] else { return }
+      if !load.sawMarker {
+        self.appendToScanBuffer(slice, of: load)
+        guard load.scanBuffer.contains(Self.readyToken) else { return }
+        load.sawMarker = true
       }
+      self.scheduleSettle(for: sessionID)
     }
+
+    // Login shell lands in $HOME; cd into the session's worktree so the quick
+    // terminal opens where the user is working. `clear` wipes the login
+    // banner so a fresh shell looks clean, then the bootstrap prints the
+    // ready marker. Done once at creation — never on show/hide, so scrollback
+    // survives toggling. The kernel buffers this until the shell reads it, so
+    // it runs only after rc files finish sourcing. The loading overlay blocks
+    // input until then so typed-ahead characters can't interleave with the
+    // buffered command and break the `cd` path.
+    let cdPrefix = workingDirectory.map { "cd \(shellEscape($0)) && " } ?? ""
+    tv.send(txt: "\(cdPrefix)clear; \(Self.readyMarkerCommand)\r")
+
+    // Hard ceiling so the overlay never sticks if the marker never arrives.
+    loads[sessionID]?.maxTimer = Timer.scheduledTimer(
+      withTimeInterval: Self.maxLoad, repeats: false
+    ) { [weak self] _ in
+      self?.finishLoading(for: sessionID)
+    }
+  }
+
+  /// Shell command that emits `readyToken` inside an unused OSC sequence —
+  /// invisible in the terminal but present in the raw byte stream. The token
+  /// is split across printf's format and `%s` argument so the shell's echo of
+  /// the typed line never contains it literally (which would match early).
+  private static let readyMarkerCommand =
+    "printf '\\033]5379;DFQT_%s\\007' 'READY'"
+
+  // MARK: - Loading lifecycle
+
+  /// Append the printable ASCII of `slice` to the load's rolling scan buffer,
+  /// capped so it stays cheap to search. Non-printable bytes (the marker's
+  /// surrounding ESC/BEL) are dropped, which is fine — the token is ASCII.
+  private func appendToScanBuffer(_ slice: ArraySlice<UInt8>, of load: LoadState) {
+    for byte in slice where byte >= 0x20 && byte < 0x7F {
+      load.scanBuffer.append(Character(UnicodeScalar(byte)))
+    }
+    if load.scanBuffer.count > 256 {
+      load.scanBuffer = String(load.scanBuffer.suffix(256))
+    }
+  }
+
+  /// (Re)arm the quiescence timer: once the marker has been seen, when PTY
+  /// output then stays quiet for `settleQuiet`, the shell is ready.
+  private func scheduleSettle(for sessionID: UUID) {
+    guard let load = loads[sessionID], load.sawMarker else { return }
+    load.settleTimer?.invalidate()
+    load.settleTimer = Timer.scheduledTimer(
+      withTimeInterval: Self.settleQuiet, repeats: false
+    ) { [weak self] _ in
+      self?.finishLoading(for: sessionID)
+    }
+  }
+
+  /// Shell is ready: stop watching, fade out the overlay, and hand focus to
+  /// the terminal if this session is the visible one.
+  private func finishLoading(for sessionID: UUID) {
+    guard let load = loads.removeValue(forKey: sessionID) else { return }
+    load.settleTimer?.invalidate()
+    load.maxTimer?.invalidate()
+    terminals[sessionID]?.onPtyData = nil
+    load.overlay.fadeOut { [weak self] in
+      guard let self = self,
+        self.currentlyInstalledSessionID == sessionID,
+        let win = self.window, win.isKeyWindow,
+        let tv = self.terminals[sessionID]
+      else { return }
+      win.makeFirstResponder(tv)
+    }
+  }
+
+  /// Abandon loading without revealing (shell exited, session deleted).
+  private func cancelLoading(for sessionID: UUID) {
+    guard let load = loads.removeValue(forKey: sessionID) else { return }
+    load.settleTimer?.invalidate()
+    load.maxTimer?.invalidate()
+    load.overlay.removeFromSuperview()
   }
 
   /// Anchor the window near the top-center of the main window's screen so it

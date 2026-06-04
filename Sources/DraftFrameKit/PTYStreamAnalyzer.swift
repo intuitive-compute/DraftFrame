@@ -7,6 +7,10 @@ final class PTYStreamAnalyzer {
 
   var onStateChange: ((SessionState) -> Void)?
   var onContextWindowChange: ((Int) -> Void)?
+  /// Fired the first time the stream switches into the alternate screen
+  /// buffer (`CSI ?1049h`) — the moment Claude Code's TUI takes over the
+  /// screen and starts drawing. Used to dismiss the startup loading overlay.
+  var onAlternateBufferEnter: (() -> Void)?
 
   private(set) var state: SessionState = .idle
   private var lastContextWindow: Int = 0
@@ -138,8 +142,10 @@ final class PTYStreamAnalyzer {
     // CSI ? 1049 l = leave alternate buffer
     if paramStr == "?1049" {
       if finalByte == 0x68 {  // 'h'
+        let wasActive = alternateBufferActive
         alternateBufferActive = true
         frameText = ""  // fresh frame
+        if !wasActive { onAlternateBufferEnter?() }
       } else if finalByte == 0x6C {  // 'l'
         alternateBufferActive = false
         frameText = ""

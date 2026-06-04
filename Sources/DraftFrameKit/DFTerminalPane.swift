@@ -16,6 +16,32 @@ final class DFTerminalPane: NSView {
   /// container below stays full-width.
   private var tabStackLeadingConstraint: NSLayoutConstraint?
 
+  /// Per-session loading overlays, present only while a freshly created
+  /// session's Claude TUI is starting up. Keyed by session id.
+  private var loads: [UUID: LoadState] = [:]
+
+  /// Session ids we've already started tracking, so the loading overlay is
+  /// shown once — the first time a newly created session appears — and not
+  /// re-triggered on every tab rebuild.
+  private var knownSessionIDs: Set<UUID> = []
+
+  /// Tracks one starting session: the overlay shown over its terminal and the
+  /// timers governing when it's revealed.
+  private final class LoadState {
+    let overlay: TerminalLoadingOverlay
+    var maxTimer: Timer?
+    var revealTimer: Timer?
+    init(overlay: TerminalLoadingOverlay) { self.overlay = overlay }
+  }
+
+  /// After Claude's TUI takes over the screen, wait briefly so its first
+  /// frame paints before we reveal it.
+  private static let claudeRevealDelay: TimeInterval = 0.15
+
+  /// Ceiling so the overlay never sticks if Claude never reaches its TUI
+  /// (failed launch, slow first run).
+  private static let claudeMaxLoad: TimeInterval = 12.0
+
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
@@ -139,6 +165,8 @@ final class DFTerminalPane: NSView {
   }
 
   private func rebuildTabs() {
+    syncLoadingState()
+
     // Remove old tab views
     for view in tabViews {
       tabStack.removeArrangedSubview(view)
@@ -255,6 +283,78 @@ final class DFTerminalPane: NSView {
     showActiveTerminal()
   }
 
+  // MARK: - Startup loading overlay
+
+  /// Reconcile loading overlays with the live session list: tear down loads
+  /// for closed sessions and start one for any newly created session.
+  private func syncLoadingState() {
+    let live = SessionManager.shared.sessions
+    let liveIDs = Set(live.map(\.id))
+    for id in Set(loads.keys).subtracting(liveIDs) {
+      cancelLoading(for: id)
+    }
+    knownSessionIDs.formIntersection(liveIDs)
+    for session in live where !knownSessionIDs.contains(session.id) {
+      knownSessionIDs.insert(session.id)
+      beginLoading(for: session)
+    }
+  }
+
+  /// Cover a freshly created session's terminal with a loading overlay until
+  /// Claude's TUI takes over the screen. Input is blocked until then so
+  /// keystrokes can't interleave with the `cd && clear && claude` bootstrap.
+  private func beginLoading(for session: Session) {
+    let overlay = TerminalLoadingOverlay(message: "Starting Claude…")
+    overlay.translatesAutoresizingMaskIntoConstraints = false
+    let load = LoadState(overlay: overlay)
+    loads[session.id] = load
+
+    let sessionID = session.id
+
+    // Claude entering the alternate screen is the deterministic "its UI is
+    // up" signal; reveal a touch later so the first frame has painted.
+    session.ptyAnalyzer.onAlternateBufferEnter = { [weak self] in
+      guard let self = self, let load = self.loads[sessionID] else { return }
+      load.revealTimer?.invalidate()
+      load.revealTimer = Timer.scheduledTimer(
+        withTimeInterval: Self.claudeRevealDelay, repeats: false
+      ) { [weak self] _ in
+        self?.finishLoading(for: sessionID)
+      }
+    }
+
+    load.maxTimer = Timer.scheduledTimer(
+      withTimeInterval: Self.claudeMaxLoad, repeats: false
+    ) { [weak self] _ in
+      self?.finishLoading(for: sessionID)
+    }
+  }
+
+  /// Reveal the terminal: fade out the overlay and, if its session is still
+  /// active, hand focus back to the terminal.
+  private func finishLoading(for sessionID: UUID) {
+    guard let load = loads.removeValue(forKey: sessionID) else { return }
+    load.maxTimer?.invalidate()
+    load.revealTimer?.invalidate()
+    SessionManager.shared.sessions
+      .first { $0.id == sessionID }?
+      .ptyAnalyzer.onAlternateBufferEnter = nil
+    load.overlay.fadeOut {
+      guard let active = SessionManager.shared.activeSession, active.id == sessionID,
+        let tv = active.terminalView, let win = tv.window
+      else { return }
+      win.makeFirstResponder(tv)
+    }
+  }
+
+  /// Abandon loading without revealing (session closed).
+  private func cancelLoading(for sessionID: UUID) {
+    guard let load = loads.removeValue(forKey: sessionID) else { return }
+    load.maxTimer?.invalidate()
+    load.revealTimer?.invalidate()
+    load.overlay.removeFromSuperview()
+  }
+
   @objc private func tabClicked(_ sender: NSButton) {
     SessionManager.shared.switchTo(index: sender.tag)
   }
@@ -327,13 +427,30 @@ final class DFTerminalPane: NSView {
       tv.bottomAnchor.constraint(equalTo: terminalContainer.bottomAnchor, constant: -pad),
     ])
 
+    // While this session's Claude is still starting, lay its loading overlay
+    // on top of the terminal (added after `tv`, so it's above it) and give it
+    // first responder so input is blocked until Claude is ready.
+    if let overlay = loads[session.id]?.overlay {
+      terminalContainer.addSubview(overlay)
+      NSLayoutConstraint.activate([
+        overlay.topAnchor.constraint(equalTo: tv.topAnchor),
+        overlay.leadingAnchor.constraint(equalTo: tv.leadingAnchor),
+        overlay.trailingAnchor.constraint(equalTo: tv.trailingAnchor),
+        overlay.bottomAnchor.constraint(equalTo: tv.bottomAnchor),
+      ])
+    }
+
     // Settle the frame synchronously so SessionManager can fork the child
     // process with the correct PTY winsize on the very first byte. Without
     // this, autolayout resolves on the next runloop tick and SwiftTerm's
     // initial cols/rows reflect a zero/stale frame.
     terminalContainer.layoutSubtreeIfNeeded()
 
-    window?.makeFirstResponder(tv)
+    if let overlay = loads[session.id]?.overlay {
+      window?.makeFirstResponder(overlay)
+    } else {
+      window?.makeFirstResponder(tv)
+    }
 
     NSLog(
       "[TerminalPane] showActiveTerminal: self.frame=%@, container.frame=%@, tv.frame=%@",
@@ -345,8 +462,14 @@ final class DFTerminalPane: NSView {
   override var acceptsFirstResponder: Bool { true }
 
   override func becomeFirstResponder() -> Bool {
-    if let tv = SessionManager.shared.activeSession?.terminalView {
-      window?.makeFirstResponder(tv)
+    if let session = SessionManager.shared.activeSession {
+      // Route focus to the loading overlay (which blocks input) while the
+      // session is still starting, otherwise to its terminal.
+      if let overlay = loads[session.id]?.overlay {
+        window?.makeFirstResponder(overlay)
+      } else if let tv = session.terminalView {
+        window?.makeFirstResponder(tv)
+      }
     }
     return true
   }
