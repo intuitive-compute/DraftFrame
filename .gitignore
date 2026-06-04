@@ -6,3 +6,4 @@ DerivedData/
 dist/
 *.dmg
 RELEASE.md
+.claude/worktrees/
