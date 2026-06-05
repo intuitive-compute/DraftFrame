@@ -158,7 +158,7 @@ final class DFQuickTerminal {
 
     // Cover the booting shell with a loading overlay until it settles. The
     // overlay is mounted by install() and torn down by finishLoading().
-    let overlay = TerminalLoadingOverlay(message: "Starting terminal…")
+    let overlay = TerminalLoadingOverlay(message: "Starting terminal…", style: .zoom)
     overlay.translatesAutoresizingMaskIntoConstraints = false
     loads[session.id] = LoadState(overlay: overlay)
 

@@ -34,8 +34,8 @@ final class DFTerminalPane: NSView {
     init(overlay: TerminalLoadingOverlay) { self.overlay = overlay }
   }
 
-  /// After Claude's TUI takes over the screen, wait briefly so its first
-  /// frame paints before we reveal it.
+  /// After Claude's TUI is detected, wait briefly so its first frame settles
+  /// before we reveal it.
   private static let claudeRevealDelay: TimeInterval = 0.15
 
   /// Ceiling so the overlay never sticks if Claude never reaches its TUI
@@ -311,9 +311,9 @@ final class DFTerminalPane: NSView {
 
     let sessionID = session.id
 
-    // Claude entering the alternate screen is the deterministic "its UI is
-    // up" signal; reveal a touch later so the first frame has painted.
-    session.ptyAnalyzer.onAlternateBufferEnter = { [weak self] in
+    // Claude's TUI painting is the "its UI is up" signal; reveal a touch
+    // later so the first frame has settled.
+    session.ptyAnalyzer.onClaudeReady = { [weak self] in
       guard let self = self, let load = self.loads[sessionID] else { return }
       load.revealTimer?.invalidate()
       load.revealTimer = Timer.scheduledTimer(
@@ -338,7 +338,7 @@ final class DFTerminalPane: NSView {
     load.revealTimer?.invalidate()
     SessionManager.shared.sessions
       .first { $0.id == sessionID }?
-      .ptyAnalyzer.onAlternateBufferEnter = nil
+      .ptyAnalyzer.onClaudeReady = nil
     load.overlay.fadeOut {
       guard let active = SessionManager.shared.activeSession, active.id == sessionID,
         let tv = active.terminalView, let win = tv.window

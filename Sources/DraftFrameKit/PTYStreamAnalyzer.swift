@@ -7,10 +7,13 @@ final class PTYStreamAnalyzer {
 
   var onStateChange: ((SessionState) -> Void)?
   var onContextWindowChange: ((Int) -> Void)?
-  /// Fired the first time the stream switches into the alternate screen
-  /// buffer (`CSI ?1049h`) — the moment Claude Code's TUI takes over the
-  /// screen and starts drawing. Used to dismiss the startup loading overlay.
-  var onAlternateBufferEnter: (() -> Void)?
+  /// Fired once, the first time we positively identify Claude Code's TUI in
+  /// the stream — used to dismiss the startup loading overlay. Claude renders
+  /// in the main screen buffer (no alternate-screen switch to key off of), so
+  /// we detect it by the markers it paints: see `detectClaudeReady`.
+  var onClaudeReady: (() -> Void)?
+  /// Guards `onClaudeReady` so it fires at most once per (re)start.
+  private var claudeReadyFired = false
 
   private(set) var state: SessionState = .idle
   private var lastContextWindow: Int = 0
@@ -142,10 +145,11 @@ final class PTYStreamAnalyzer {
     // CSI ? 1049 l = leave alternate buffer
     if paramStr == "?1049" {
       if finalByte == 0x68 {  // 'h'
-        let wasActive = alternateBufferActive
         alternateBufferActive = true
         frameText = ""  // fresh frame
-        if !wasActive { onAlternateBufferEnter?() }
+        // Belt-and-suspenders: if a future Claude version ever does take over
+        // the alternate screen, treat that as the ready signal too.
+        fireClaudeReady()
       } else if finalByte == 0x6C {  // 'l'
         alternateBufferActive = false
         frameText = ""
@@ -175,6 +179,8 @@ final class PTYStreamAnalyzer {
   private func analyzeFrame() {
     // Look at the most recent content (last ~500 chars) for bottom-of-screen indicators
     let recentLower = String(recentText.suffix(500)).lowercased()
+
+    detectClaudeReady(recentLower)
 
     let newState: SessionState
 
@@ -221,6 +227,29 @@ final class PTYStreamAnalyzer {
     onStateChange?(newState)
   }
 
+  /// Detect that Claude Code's TUI has painted (as opposed to the bare login
+  /// shell that runs first during the `clear && claude` bootstrap). Claude
+  /// renders in the main buffer, so we look for strings only its UI prints:
+  /// the bottom status bar (`/effort`, the shortcuts hint) and the working
+  /// indicator. The login shell's prompt contains none of these, so this
+  /// won't fire on the shell that precedes Claude.
+  private func detectClaudeReady(_ recentLower: String) {
+    guard !claudeReadyFired else { return }
+    if recentLower.contains("/effort")
+      || recentLower.contains("esc to interrupt")
+      || recentLower.contains("esc to cancel")
+      || recentLower.contains("? for shortcuts")
+    {
+      fireClaudeReady()
+    }
+  }
+
+  private func fireClaudeReady() {
+    guard !claudeReadyFired else { return }
+    claudeReadyFired = true
+    onClaudeReady?()
+  }
+
   /// Promote the cap to 1M if Claude Code's banner ever printed
   /// `(1M context)` in this session's output. We don't try to demote — TUI
   /// rendering recycles the buffer too aggressively to reliably observe the
@@ -237,6 +266,7 @@ final class PTYStreamAnalyzer {
   func reset() {
     state = .idle
     alternateBufferActive = false
+    claudeReadyFired = false
     inEscape = false
     escapeBuffer = []
     frameText = ""
