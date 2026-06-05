@@ -9,16 +9,27 @@ extension Notification.Name {
 }
 
 /// Which Claude model new sessions should launch with. Passed via `claude --model`.
+///
+/// Raw values are full model names (e.g. `claude-opus-4-8`). The CLI also accepts
+/// aliases like `opus`/`sonnet`/`haiku` that always resolve to the latest model of
+/// that family — switch an entry's raw value to one of those if you'd rather it
+/// auto-track new releases instead of pinning to a version.
 enum ClaudeModel: String, CaseIterable {
   case `default` = ""
-  case opus45 = "claude-opus-4-5"
+  case opus48 = "claude-opus-4-8"
+  case opus47 = "claude-opus-4-7"
   case opus46 = "claude-opus-4-6"
+  case sonnet46 = "claude-sonnet-4-6"
+  case haiku45 = "claude-haiku-4-5"
 
   var displayName: String {
     switch self {
     case .default: return "Default"
-    case .opus45: return "Opus 4.5"
+    case .opus48: return "Opus 4.8"
+    case .opus47: return "Opus 4.7"
     case .opus46: return "Opus 4.6"
+    case .sonnet46: return "Sonnet 4.6"
+    case .haiku45: return "Haiku 4.5"
     }
   }
 }
