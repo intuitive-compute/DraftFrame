@@ -113,6 +113,12 @@ final class Session {
     return (path as NSString).lastPathComponent
   }
 
+  /// Stable, unique-per-session seed for the generated avatar. Prefers the
+  /// worktree path so two sessions sharing a branch name (e.g. `main` in two
+  /// different projects) still get distinct marks, and so the mark survives a
+  /// rename. Falls back to the name for sessions without a worktree.
+  var avatarSeed: String { worktreePath ?? name }
+
   /// PTY stream analyzer — used for the 1M-context banner detection.
   /// State detection now comes from `SessionStatusWatcher` instead, since
   /// the per-pid status file Claude Code maintains is authoritative whereas

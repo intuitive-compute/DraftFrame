@@ -300,7 +300,7 @@ final class SessionCard: NSView {
 
   private func buildCard() {
     // Avatar
-    let avatar = PixelAvatar(seed: session.name)
+    let avatar = GenerativeAvatar(seed: session.avatarSeed)
     avatar.translatesAutoresizingMaskIntoConstraints = false
 
     // Name
@@ -390,8 +390,8 @@ final class SessionCard: NSView {
 
       avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
       avatar.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-      avatar.widthAnchor.constraint(equalToConstant: 32),
-      avatar.heightAnchor.constraint(equalToConstant: 32),
+      avatar.widthAnchor.constraint(equalToConstant: 40),
+      avatar.heightAnchor.constraint(equalToConstant: 40),
 
       nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 8),
       nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
@@ -496,55 +496,178 @@ extension SessionCard: NSDraggingSource {
   }
 }
 
-// MARK: - Pixel Avatar
+// MARK: - Generative Avatar
 
-final class PixelAvatar: NSView {
+/// A unique pixel-art robot generated from the session seed. The same seed
+/// always produces the same robot, so each session keeps a stable, friendly,
+/// instantly recognizable identity. The seeded DJB2 -> LCG stream picks the
+/// robot's palette, head shape, antenna, eyes, mouth and side details, so the
+/// structure (not just the colour) varies between sessions and look-alikes are
+/// rare.
+final class GenerativeAvatar: NSView {
   let seed: String
 
   init(seed: String) {
     self.seed = seed
     super.init(frame: .zero)
     wantsLayer = true
-    layer?.cornerRadius = 4
+    layer?.cornerRadius = 9
     layer?.masksToBounds = true
+    layer?.borderWidth = 1
+    layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
+  // Keep the corner radius proportional across the sizes the avatar is used at.
+  override func layout() {
+    super.layout()
+    layer?.cornerRadius = bounds.width * 0.22
+  }
+
   override func draw(_ dirtyRect: NSRect) {
     guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-    let grid = 6
-    let cellW = bounds.width / CGFloat(grid)
-    let cellH = bounds.height / CGFloat(grid)
+    drawPixelRobot(seed: seed, into: ctx, bounds: bounds)
+  }
+}
 
-    var hash: UInt64 = 5381
-    for byte in seed.utf8 { hash = ((hash &<< 5) &+ hash) &+ UInt64(byte) }
+/// Renders a deterministic pixel-art robot for `seed` into `ctx`, filling
+/// `bounds`. Kept as a free function (not a method) so it can be reused outside
+/// the view. Pure CoreGraphics, no asset files.
+func drawPixelRobot(seed: String, into ctx: CGContext, bounds: CGRect) {
+  // ---- Seeded RNG: a DJB2 hash of the seed feeds an LCG we pull every choice
+  // from, so the same seed always grows the same robot. ----
+  var hash: UInt64 = 5381
+  for byte in seed.utf8 { hash = ((hash &<< 5) &+ hash) &+ UInt64(byte) }
+  var rngState = hash | 1
+  func bits() -> UInt64 {
+    rngState = rngState &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+    return rngState >> 17
+  }
+  func roll(_ n: Int) -> Int { Int(bits() % UInt64(n)) }
+  func chance(_ p: Int, outOf q: Int) -> Bool { roll(q) < p }
 
-    let hue = CGFloat(hash % 360) / 360.0
-    let colors = [
-      NSColor(hue: hue, saturation: 0.6, brightness: 0.9, alpha: 1),
-      NSColor(
-        hue: (hue + 0.15).truncatingRemainder(dividingBy: 1), saturation: 0.5, brightness: 0.7,
-        alpha: 1),
-      Theme.surface2,
-    ]
+  // ---- Palette: a single seeded hue drives a small, cohesive metal palette. ----
+  func color(_ h: CGFloat, _ s: CGFloat, _ b: CGFloat) -> CGColor {
+    let c = NSColor(hue: h, saturation: s, brightness: b, alpha: 1)
+    let srgb = c.usingColorSpace(.sRGB) ?? c
+    return CGColor(
+      srgbRed: srgb.redComponent, green: srgb.greenComponent, blue: srgb.blueComponent, alpha: 1)
+  }
+  func wrapHue(_ h: CGFloat) -> CGFloat {
+    let m = h.truncatingRemainder(dividingBy: 1)
+    return m < 0 ? m + 1 : m
+  }
+  let baseHue = CGFloat(hash % 360) / 360
+  let bg = color(baseHue, 0.40, 0.13)         // dark tinted tile
+  let body = color(baseHue, 0.16, 0.80)       // robot "metal"
+  let bodyShade = color(baseHue, 0.24, 0.52)  // darker metal for depth
+  let bodyLight = color(baseHue, 0.08, 0.95)  // highlight sheen
+  // Eyes glow either warm amber (the app's energy) or a vivid complementary hue.
+  let eye = chance(1, outOf: 2) ? color(34.0 / 360, 0.88, 1.0) : color(wrapHue(baseHue + 0.5), 0.80, 1.0)
 
-    var rng = hash
-    for row in 0..<grid {
-      for col in 0..<(grid / 2 + 1) {
-        rng = rng &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-        let c = colors[Int(rng >> 32) % colors.count]
-        ctx.setFillColor(c.cgColor)
-        ctx.fill(
-          CGRect(x: CGFloat(col) * cellW, y: CGFloat(row) * cellH, width: cellW, height: cellH))
-        let mirror = grid - 1 - col
-        if mirror != col {
-          ctx.fill(
-            CGRect(x: CGFloat(mirror) * cellW, y: CGFloat(row) * cellH, width: cellW, height: cellH)
-          )
-        }
-      }
+  // ---- Pixel grid: chunky cells, left/right symmetric like a face. ----
+  let grid = 11
+  let center = grid / 2  // 5
+  let side = min(bounds.width, bounds.height)
+  let ox = bounds.minX + (bounds.width - side) / 2
+  let oy = bounds.minY + (bounds.height - side) / 2
+  // Pixel-snapped edges so neighbouring cells share crisp seams at any size.
+  func edge(_ i: Int) -> CGFloat { (CGFloat(i) * side / CGFloat(grid)).rounded() }
+
+  var cells = [[CGColor?]](repeating: [CGColor?](repeating: nil, count: grid), count: grid)
+  func put(_ col: Int, _ row: Int, _ c: CGColor) {
+    guard row >= 0, row < grid, col >= 0, col < grid else { return }
+    cells[row][col] = c
+  }
+  // Mirror across the vertical centre line so the robot is symmetric.
+  func sym(_ col: Int, _ row: Int, _ c: CGColor) {
+    put(col, row, c)
+    put(grid - 1 - col, row, c)
+  }
+
+  // Background tile.
+  ctx.setFillColor(bg)
+  ctx.fill(CGRect(x: ox, y: oy, width: side, height: side))
+
+  // ---- Head: rows 0-1 hold the antenna, the head spans rows 2...9. ----
+  let headTop = 2, headBot = 9
+  let headW = chance(1, outOf: 2) ? 9 : 7
+  let hl = (grid - headW) / 2
+  let hr = grid - 1 - hl
+  for r in headTop...headBot {
+    for c in hl...hr { put(c, r, body) }
+  }
+  for c in hl...hr { put(c, headBot, bodyShade) }  // chin shadow
+  put(hl, headTop, bodyLight)  // top-left sheen
+  if chance(1, outOf: 2) {  // rounded head corners
+    sym(hl, headTop, bg)
+    sym(hl, headBot, bg)
+  }
+
+  // ---- Antenna ----
+  switch roll(3) {
+  case 0:
+    break  // none
+  case 1:  // single centre antenna
+    put(center, 1, bodyShade)
+    put(center, 0, eye)
+  default:  // twin antennae
+    sym(hl + 1, 1, bodyShade)
+    sym(hl + 1, 0, eye)
+  }
+
+  // ---- Side bolts / ears ----
+  if chance(1, outOf: 2), hl - 1 >= 0 {
+    sym(hl - 1, 5, bodyShade)
+  }
+
+  // ---- Eyes (row 4) ----
+  switch roll(4) {
+  case 0:  // two dot eyes
+    sym(center - 2, 4, eye)
+  case 1:  // tall eyes
+    sym(center - 2, 4, eye)
+    sym(center - 2, 5, eye)
+  case 2:  // visor bar
+    for c in (center - 2)...(center + 2) { put(c, 4, eye) }
+  default:  // single wide eye
+    for c in (center - 1)...(center + 1) { put(c, 4, eye) }
+  }
+
+  // ---- Mouth (rows 6-7) ----
+  switch roll(4) {
+  case 0:  // grille teeth
+    put(center - 2, 7, bodyShade)
+    put(center, 7, bodyShade)
+    put(center + 2, 7, bodyShade)
+  case 1:  // straight bar
+    for c in (center - 2)...(center + 2) { put(c, 7, bodyShade) }
+  case 2:  // smile
+    sym(center - 2, 6, bodyShade)
+    for c in (center - 1)...(center + 1) { put(c, 7, bodyShade) }
+  default:  // grid grille
+    for r in 6...7 {
+      for c in (center - 2)...(center + 2) where (r + c) % 2 == 0 { put(c, r, bodyShade) }
+    }
+  }
+
+  // ---- Cheek lights ----
+  if chance(1, outOf: 3) {
+    sym(hl + 1, 5, eye)
+  }
+
+  // ---- Render: row 0 is the top row. ----
+  for r in 0..<grid {
+    for c in 0..<grid {
+      guard let cellColor = cells[r][c] else { continue }
+      let x0 = ox + edge(c)
+      let x1 = ox + edge(c + 1)
+      let yTop = oy + side - edge(r)
+      let yBot = oy + side - edge(r + 1)
+      ctx.setFillColor(cellColor)
+      ctx.fill(CGRect(x: x0, y: yBot, width: x1 - x0, height: yTop - yBot))
     }
   }
 }

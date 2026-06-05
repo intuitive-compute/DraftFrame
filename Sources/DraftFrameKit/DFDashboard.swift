@@ -237,7 +237,7 @@ final class DashboardCard: NSView {
 
   private func buildUI() {
     // Avatar
-    let avatar = PixelAvatar(seed: session.name)
+    let avatar = GenerativeAvatar(seed: session.avatarSeed)
     avatar.translatesAutoresizingMaskIntoConstraints = false
     addSubview(avatar)
 
@@ -341,8 +341,8 @@ final class DashboardCard: NSView {
       // Avatar
       avatar.topAnchor.constraint(equalTo: topAnchor, constant: 24),
       avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-      avatar.widthAnchor.constraint(equalToConstant: 36),
-      avatar.heightAnchor.constraint(equalToConstant: 36),
+      avatar.widthAnchor.constraint(equalToConstant: 52),
+      avatar.heightAnchor.constraint(equalToConstant: 52),
 
       // Name + status centered vertically against avatar
       nameLabel.topAnchor.constraint(equalTo: avatar.topAnchor, constant: 2),
@@ -523,7 +523,7 @@ final class SummaryCard: NSView {
   }
 
   private func buildUI() {
-    let avatar = PixelAvatar(seed: session.name)
+    let avatar = GenerativeAvatar(seed: session.avatarSeed)
     avatar.translatesAutoresizingMaskIntoConstraints = false
     addSubview(avatar)
 
@@ -568,8 +568,8 @@ final class SummaryCard: NSView {
     NSLayoutConstraint.activate([
       avatar.topAnchor.constraint(equalTo: topAnchor, constant: 12),
       avatar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-      avatar.widthAnchor.constraint(equalToConstant: 28),
-      avatar.heightAnchor.constraint(equalToConstant: 28),
+      avatar.widthAnchor.constraint(equalToConstant: 40),
+      avatar.heightAnchor.constraint(equalToConstant: 40),
 
       nameLabel.topAnchor.constraint(equalTo: avatar.topAnchor),
       nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
