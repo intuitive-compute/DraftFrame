@@ -560,12 +560,13 @@ func drawPixelRobot(seed: String, into ctx: CGContext, bounds: CGRect) {
     return m < 0 ? m + 1 : m
   }
   let baseHue = CGFloat(hash % 360) / 360
-  let bg = color(baseHue, 0.40, 0.13)         // dark tinted tile
-  let body = color(baseHue, 0.16, 0.80)       // robot "metal"
+  let bg = color(baseHue, 0.40, 0.13)  // dark tinted tile
+  let body = color(baseHue, 0.16, 0.80)  // robot "metal"
   let bodyShade = color(baseHue, 0.24, 0.52)  // darker metal for depth
   let bodyLight = color(baseHue, 0.08, 0.95)  // highlight sheen
   // Eyes glow either warm amber (the app's energy) or a vivid complementary hue.
-  let eye = chance(1, outOf: 2) ? color(34.0 / 360, 0.88, 1.0) : color(wrapHue(baseHue + 0.5), 0.80, 1.0)
+  let eye =
+    chance(1, outOf: 2) ? color(34.0 / 360, 0.88, 1.0) : color(wrapHue(baseHue + 0.5), 0.80, 1.0)
 
   // ---- Pixel grid: chunky cells, left/right symmetric like a face. ----
   let grid = 11
@@ -592,7 +593,8 @@ func drawPixelRobot(seed: String, into ctx: CGContext, bounds: CGRect) {
   ctx.fill(CGRect(x: ox, y: oy, width: side, height: side))
 
   // ---- Head: rows 0-1 hold the antenna, the head spans rows 2...9. ----
-  let headTop = 2, headBot = 9
+  let headTop = 2
+  let headBot = 9
   let headW = chance(1, outOf: 2) ? 9 : 7
   let hl = (grid - headW) / 2
   let hr = grid - 1 - hl

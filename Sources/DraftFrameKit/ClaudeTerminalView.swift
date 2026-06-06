@@ -304,7 +304,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   // and we now match that. Users can still scroll the transcript explicitly
   // with the PageUp/PageDown keys (fn+↑/fn+↓ on compact Mac keyboards).
 
-  // MARK: - Cmd+Click PR/Issue References
+  // MARK: - Cmd+Click PR/Issue References and file paths
 
   /// Regex matching `#123` or `owner/repo#123` patterns.
   private static let prPattern = try! NSRegularExpression(
@@ -312,19 +312,51 @@ class ClaudeTerminalView: LocalProcessTerminalView {
 
   private var mouseMonitor: Any?
 
+  /// Cmd+click opens PR/issue refs and file paths. SwiftTerm declares `mouseUp`
+  /// as `public` (not `open`), so we can't override it from this module; instead
+  /// we intercept the click with an app-wide local event monitor that fires
+  /// before SwiftTerm's own `mouseUp`. This matters because SwiftTerm's default
+  /// `requestOpenLink` feeds the raw matched text to `NSWorkspace.open`, which
+  /// fails with Finder error -50 for schemeless file paths. Returning `nil`
+  /// consumes the click; returning the event lets SwiftTerm handle web links.
   private func installMouseMonitor() {
     guard mouseMonitor == nil else { return }
     mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
       guard let self = self,
-        self.window?.firstResponder === self,
-        event.modifierFlags.contains(.command)
+        event.modifierFlags.contains(.command),
+        event.window === self.window,
+        self.window?.isKeyWindow == true
       else { return event }
 
-      if let url = self.prURLAtClick(event: event) {
+      // bounds-checked: returns nil when the click isn't on this view.
+      guard let (text, col) = self.lineAndColumn(at: event) else { return event }
+      let token = self.tokenAtClick(in: text, col: col)
+      NSLog(
+        "[ClaudeTerminalView] cmd+click col=%d len=%d token=%@ line=|%@|",
+        col, (text as NSString).length, token ?? "<none>", text)
+
+      if let url = self.prURL(in: text, col: col) {
         NSWorkspace.shared.open(url)
         return nil
       }
-      return event
+      if let target = self.fileTargetAtClick(in: text, col: col) {
+        NSLog(
+          "[ClaudeTerminalView] cmd+click opening file: %@ line=%@",
+          target.path, target.line.map(String.init) ?? "nil")
+        EditorOpener.open(path: target.path, line: target.line, column: target.col)
+        return nil
+      }
+      // Defer only tokens with a scheme NSWorkspace can open (SwiftTerm handles
+      // those correctly); consume anything else so SwiftTerm's default handler
+      // never feeds a schemeless string to NSWorkspace.open and triggers -50.
+      if let token = token, Self.hasOpenableScheme(token) {
+        NSLog("[ClaudeTerminalView] cmd+click deferring web link to SwiftTerm: %@", token)
+        return event
+      }
+      NSLog(
+        "[ClaudeTerminalView] cmd+click no match; consuming to avoid -50 (token=%@)",
+        token ?? "<none>")
+      return nil
     }
   }
 
@@ -335,7 +367,8 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     }
   }
 
-  private func prURLAtClick(event: NSEvent) -> URL? {
+  /// Map a click to the text of the terminal line under it and the column hit.
+  private func lineAndColumn(at event: NSEvent) -> (text: String, col: Int)? {
     // Convert window coordinates to view coordinates, then to a grid column.
     let localPoint = convert(event.locationInWindow, from: nil)
     guard bounds.contains(localPoint) else { return nil }
@@ -351,7 +384,11 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     guard row >= 0, row < term.rows else { return nil }
     guard let line = term.getLine(row: row) else { return nil }
 
-    let text = line.translateToString(trimRight: true)
+    return (line.translateToString(trimRight: true), col)
+  }
+
+  /// Return a GitHub URL if a PR/issue ref sits under `col` in `text`.
+  private func prURL(in text: String, col: Int) -> URL? {
     let nsText = text as NSString
     let matches = Self.prPattern.matches(
       in: text, range: NSRange(location: 0, length: nsText.length))
@@ -370,6 +407,144 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     return nil
   }
 
+  // MARK: - Cmd+Click file paths
+
+  /// Matches whitespace-delimited tokens (candidate paths/links) on a line.
+  private static let tokenRegex = try! NSRegularExpression(pattern: #"\S+"#)
+
+  /// Find a file/dir path on the clicked line. We scan every whitespace-delimited
+  /// token rather than only the one under the cursor: mapping a pixel to an exact
+  /// terminal column is imprecise, so the token nearest the click that resolves
+  /// to something real on disk wins. Returns its absolute path plus any
+  /// `:line:col` suffix. Existence on disk is the disambiguator, so labels, prose
+  /// words, and web URLs don't match.
+  private func fileTargetAtClick(in text: String, col: Int)
+    -> (path: String, line: Int?, col: Int?)?
+  {
+    let nsText = text as NSString
+    let cwd = sessionWorkingDirectory()
+    var best: (path: String, line: Int?, col: Int?, distance: Int)?
+
+    let tokens = Self.tokenRegex.matches(
+      in: text, range: NSRange(location: 0, length: nsText.length))
+    for token in tokens {
+      let raw = nsText.substring(with: token.range)
+      for (candidate, line, column) in Self.pathCandidates(from: raw) {
+        guard let abs = Self.resolveExistingFile(candidate, cwd: cwd) else { continue }
+        let lo = token.range.location
+        let hi = lo + token.range.length - 1
+        let distance = col < lo ? lo - col : (col > hi ? col - hi : 0)
+        if best == nil || distance < best!.distance {
+          best = (abs, line, column, distance)
+        }
+        break  // first resolving candidate for this token
+      }
+    }
+    return best.map { ($0.path, $0.line, $0.col) }
+  }
+
+  /// The maximal run of non-whitespace characters under `col`, or nil when the
+  /// click landed on whitespace or outside the line's text.
+  private func tokenAtClick(in text: String, col: Int) -> String? {
+    let nsText = text as NSString
+    guard col >= 0, col < nsText.length else { return nil }
+
+    // Surrogate code units (non-BMP chars like emoji) have no scalar and are
+    // treated as non-whitespace rather than force-unwrapped.
+    let whitespace = CharacterSet.whitespaces
+    func isSpace(_ i: Int) -> Bool {
+      guard let scalar = UnicodeScalar(nsText.character(at: i)) else { return false }
+      return whitespace.contains(scalar)
+    }
+    guard !isSpace(col) else { return nil }
+    var start = col
+    while start > 0, !isSpace(start - 1) { start -= 1 }
+    var end = col
+    while end + 1 < nsText.length, !isSpace(end + 1) { end += 1 }
+    return nsText.substring(with: NSRange(location: start, length: end - start + 1))
+  }
+
+  /// True if the token carries a scheme NSWorkspace can open directly, so it's
+  /// safe to defer to SwiftTerm. Schemeless tokens are consumed by the caller to
+  /// keep SwiftTerm's default handler from passing them to `NSWorkspace.open`
+  /// (which fails with Finder error -50).
+  static func hasOpenableScheme(_ token: String) -> Bool {
+    let trimmed =
+      token
+      .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`()[]{}<>"))
+      .lowercased()
+    return ["http://", "https://", "ftp://", "ftps://", "ssh://", "file://", "mailto:"]
+      .contains { trimmed.hasPrefix($0) }
+  }
+
+  /// Progressive interpretations of a clicked token: strip surrounding wrappers,
+  /// a trailing `:line(:col)?` suffix (capturing the numbers), and trailing prose
+  /// punctuation. The first whose path exists on disk wins.
+  static func pathCandidates(from raw: String) -> [(path: String, line: Int?, col: Int?)] {
+    var token = raw
+    // Strip surrounding wrapper characters in matched-ish pairs.
+    let trimSet = CharacterSet(charactersIn: "\"'`()[]{}<>")
+    token = token.trimmingCharacters(in: trimSet)
+    guard !token.isEmpty else { return [] }
+
+    var out: [(String, Int?, Int?)] = [(token, nil, nil)]
+
+    // `path:line` or `path:line:col` suffix.
+    if let m = try? NSRegularExpression(pattern: #"^(.*?):(\d+)(?::(\d+))?$"#),
+      let match = m.firstMatch(
+        in: token, range: NSRange(token.startIndex..., in: token)),
+      let pathRange = Range(match.range(at: 1), in: token),
+      let lineRange = Range(match.range(at: 2), in: token)
+    {
+      let path = String(token[pathRange])
+      let line = Int(token[lineRange])
+      var col: Int? = nil
+      if let cRange = Range(match.range(at: 3), in: token) { col = Int(token[cRange]) }
+      if !path.isEmpty { out.append((path, line, col)) }
+    }
+
+    // Drop one trailing prose punctuation char (e.g. "see foo.swift.").
+    if let last = token.unicodeScalars.last,
+      CharacterSet(charactersIn: ".,;!?").contains(last)
+    {
+      let trimmed = String(token.dropLast())
+      if !trimmed.isEmpty { out.append((trimmed, nil, nil)) }
+    }
+
+    return out
+  }
+
+  /// Resolve a candidate to an absolute path if it exists on disk (file or
+  /// directory; directories open in Finder). Expands `~`, treats `/…` as
+  /// absolute, and resolves relative paths against `cwd`.
+  static func resolveExistingFile(_ candidate: String, cwd: String?) -> String? {
+    let expanded = (candidate as NSString).expandingTildeInPath
+    let absolute: String
+    if expanded.hasPrefix("/") {
+      absolute = expanded
+    } else if let cwd = cwd {
+      absolute = (cwd as NSString).appendingPathComponent(expanded)
+    } else {
+      return nil
+    }
+    let standardized = (absolute as NSString).standardizingPath
+
+    guard FileManager.default.fileExists(atPath: standardized) else { return nil }
+    return standardized
+  }
+
+  /// The working directory for the clicked view's session, resolved by identity so
+  /// it's correct even when another session is the globally active one.
+  private func sessionWorkingDirectory() -> String? {
+    let mgr = SessionManager.shared
+    if let session = mgr.sessions.first(where: { $0.terminalView === self }),
+      let path = session.worktreePath
+    {
+      return path
+    }
+    return mgr.activeSession?.worktreePath ?? mgr.projectDir
+  }
+
   /// Turn `#123` or `owner/repo#123` into a GitHub pull URL.
   private func resolveGitHubURL(for ref: String) -> URL? {
     if ref.contains("/") {
@@ -385,12 +560,9 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     return URL(string: "https://github.com/\(slug)/pull/\(number)")
   }
 
-  /// Derive `owner/repo` from the git remote of the active session's worktree.
+  /// Derive `owner/repo` from the git remote of the clicked session's worktree.
   private func gitHubSlug() -> String? {
-    let dir =
-      SessionManager.shared.activeSession?.worktreePath
-      ?? SessionManager.shared.projectDir
-    guard let dir = dir else { return nil }
+    guard let dir = sessionWorkingDirectory() else { return nil }
 
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")

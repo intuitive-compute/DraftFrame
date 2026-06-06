@@ -156,9 +156,11 @@ private final class ScalingMatrixView: MatrixAnimationView {
 
   override func layout() {
     super.layout()
-    position(cells, gridOrigin: CGPoint(
-      x: (bounds.width - Self.gridSide) / 2,
-      y: (bounds.height - Self.gridSide) / 2))
+    position(
+      cells,
+      gridOrigin: CGPoint(
+        x: (bounds.width - Self.gridSide) / 2,
+        y: (bounds.height - Self.gridSide) / 2))
   }
 
   override func startAnimating() {
@@ -320,11 +322,13 @@ private final class ZoomingMatrixView: MatrixAnimationView {
     for i in 0...steps {
       let u = Double(i) / Double(steps)
       let e = (1 - cos(.pi * u)) / 2  // cosine ease: zero velocity at both ends
-      let s = pow(z, e)               // geometric zoom: uniform perceived speed
+      let s = pow(z, e)  // geometric zoom: uniform perceived speed
       scaleValues.append(NSNumber(value: s))
-      positionValues.append(NSValue(point: CGPoint(
-        x: cx + ox * (1 - e) - ox * s,
-        y: cy + oy * (1 - e) - oy * s)))
+      positionValues.append(
+        NSValue(
+          point: CGPoint(
+            x: cx + ox * (1 - e) - ox * s,
+            y: cy + oy * (1 - e) - oy * s)))
       keyTimes.append(NSNumber(value: u))
     }
 
