@@ -107,25 +107,6 @@ final class PTYStreamAnalyzerTests: XCTestCase {
     XCTAssertTrue(analyzer.alternateBufferActive)
   }
 
-  func testAlternateBufferEnterFiresCallbackOnceOnTransition() {
-    var fireCount = 0
-    analyzer.onAlternateBufferEnter = { fireCount += 1 }
-
-    let enter: [UInt8] = [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]
-    analyzer.feed(enter[...])
-    XCTAssertEqual(fireCount, 1)
-
-    // A second enter while already in the alternate buffer must not re-fire.
-    analyzer.feed(enter[...])
-    XCTAssertEqual(fireCount, 1)
-
-    // Leaving and re-entering fires again.
-    let leave: [UInt8] = [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x6C]
-    analyzer.feed(leave[...])
-    analyzer.feed(enter[...])
-    XCTAssertEqual(fireCount, 2)
-  }
-
   func testAlternateBufferLeaveResetsToIdle() {
     // Enter alternate buffer first
     let enter: [UInt8] = [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]
@@ -151,6 +132,59 @@ final class PTYStreamAnalyzerTests: XCTestCase {
     wait(for: [exp], timeout: 0.5)
     XCTAssertFalse(analyzer.alternateBufferActive)
     XCTAssertEqual(analyzer.state, .idle)
+  }
+
+  // MARK: - Claude Ready
+
+  // Marker detection runs inside the debounced analyzeFrame (50ms after the
+  // last chunk), so onClaudeReady fires asynchronously on the main queue.
+  func testClaudeReadyFiresOnTUIMarker() {
+    let exp = expectation(description: "claude ready")
+    analyzer.onClaudeReady = { exp.fulfill() }
+    feedString("? for shortcuts")
+    wait(for: [exp], timeout: 0.5)
+  }
+
+  func testClaudeReadyFiresAtMostOnce() {
+    let first = expectation(description: "first ready")
+    let refire = expectation(description: "must not refire")
+    refire.isInverted = true
+    var fireCount = 0
+    analyzer.onClaudeReady = {
+      fireCount += 1
+      if fireCount == 1 { first.fulfill() } else { refire.fulfill() }
+    }
+    feedString("esc to interrupt")
+    wait(for: [first], timeout: 0.5)
+
+    // A second marker in a fresh debounce cycle must not re-fire.
+    feedString("? for shortcuts")
+    wait(for: [refire], timeout: 0.2)
+    XCTAssertEqual(fireCount, 1)
+  }
+
+  func testClaudeReadyFiresOnAlternateBufferEnter() {
+    var fireCount = 0
+    analyzer.onClaudeReady = { fireCount += 1 }
+    // CSI ? 1049 h — belt-and-suspenders ready signal if Claude ever takes
+    // over the alternate screen. Fired synchronously, not debounced.
+    let enter: [UInt8] = [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]
+    analyzer.feed(enter[...])
+    XCTAssertEqual(fireCount, 1)
+  }
+
+  func testResetReArmsClaudeReady() {
+    let first = expectation(description: "first ready")
+    analyzer.onClaudeReady = { first.fulfill() }
+    feedString("? for shortcuts")
+    wait(for: [first], timeout: 0.5)
+
+    analyzer.reset()
+
+    let second = expectation(description: "ready again after reset")
+    analyzer.onClaudeReady = { second.fulfill() }
+    feedString("? for shortcuts")
+    wait(for: [second], timeout: 0.5)
   }
 
   // MARK: - Reset
