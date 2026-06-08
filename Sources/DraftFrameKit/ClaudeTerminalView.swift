@@ -44,6 +44,8 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     if wasGuarded && terminal.buffer.yDisp != savedYDisp {
       scrollTo(row: savedYDisp)
     }
+    // New output may have added/changed/scrolled blockquotes; re-pin the buttons.
+    scheduleBlockButtonRefresh()
   }
 
   // MARK: - Sticky scroll guard
@@ -64,6 +66,8 @@ class ClaudeTerminalView: LocalProcessTerminalView {
 
   open override func scrolled(source: TerminalView, position: Double) {
     super.scrolled(source: source, position: position)
+    // Scrolling moves blockquotes to new rows; re-pin the copy buttons.
+    scheduleBlockButtonRefresh()
     if suppressGuardUpdates { return }
     stickyScrollGuardActive = position < Self.atBottomThreshold
   }
@@ -288,11 +292,18 @@ class ClaudeTerminalView: LocalProcessTerminalView {
         return event
       }
       installMouseMonitor()
+      scheduleBlockButtonRefresh()
     } else if window == nil, let monitor = keyMonitor {
       NSEvent.removeMonitor(monitor)
       keyMonitor = nil
       removeMouseMonitor()
     }
+  }
+
+  open override func layout() {
+    super.layout()
+    // A resize reflows the buffer and moves blockquotes; re-pin the buttons.
+    scheduleBlockButtonRefresh()
   }
 
   // Trackpad/wheel events are intentionally left to SwiftTerm's default
@@ -311,6 +322,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     pattern: #"(?:[\w.-]+/[\w.-]+)?#\d+"#)
 
   private var mouseMonitor: Any?
+  private var mouseMovedMonitor: Any?
 
   /// Cmd+click opens PR/issue refs and file paths. SwiftTerm declares `mouseUp`
   /// as `public` (not `open`), so we can't override it from this module; instead
@@ -358,6 +370,20 @@ class ClaudeTerminalView: LocalProcessTerminalView {
         token ?? "<none>")
       return nil
     }
+
+    // SwiftTerm already installs a `.mouseMoved` tracking area, so these events
+    // reach the window without extra setup. We watch them to reveal the copy
+    // button for the blockquote under the pointer, never consuming the event.
+    guard mouseMovedMonitor == nil else { return }
+    mouseMovedMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) {
+      [weak self] event in
+      guard let self = self, event.window === self.window, self.window?.isKeyWindow == true
+      else { return event }
+      let p = self.convert(event.locationInWindow, from: nil)
+      self.hoverPoint = self.bounds.contains(p) ? p : nil
+      self.applyHover()
+      return event
+    }
   }
 
   private func removeMouseMonitor() {
@@ -365,6 +391,12 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       NSEvent.removeMonitor(monitor)
       mouseMonitor = nil
     }
+    if let monitor = mouseMovedMonitor {
+      NSEvent.removeMonitor(monitor)
+      mouseMovedMonitor = nil
+    }
+    hoverPoint = nil
+    applyHover()
   }
 
   /// Map a click to the text of the terminal line under it and the column hit.
@@ -606,10 +638,165 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     return nil
   }
 
+  // MARK: - Blockquote copy buttons
+  //
+  // Claude renders markdown blockquotes as a left bar glyph (▎) on every quoted
+  // row — there's no clean way to select just that text. We scrape the visible
+  // buffer for those runs and position a copy-icon button at the top-right of
+  // each block, refreshed whenever the buffer changes (streaming) or scrolls; the
+  // button for the block under the pointer is revealed on hover. Scraping the
+  // screen — not the JSONL session log — keeps it correct regardless of scroll or
+  // how far the conversation has moved on (the JSONL only retains the single
+  // latest assistant message, which any newer reply overwrites).
+
+  /// A copy button carrying the dequoted text and on-screen rows of its block.
+  private final class BlockCopyButton: NSButton {
+    var blockText: String = ""
+    var blockRange: ClosedRange<Int>?
+  }
+
+  /// Reused pool of copy buttons, one per visible block. Positioned by refresh,
+  /// but revealed only for the block under the pointer (see `applyHover`).
+  private var copyButtons: [BlockCopyButton] = []
+  /// How many buttons are currently mapped to a visible block.
+  private var activeButtonCount = 0
+  /// Trailing-debounce token: only the latest scheduled refresh runs.
+  private var blockRefreshToken = 0
+  /// Last pointer location in view coords; decides which button to reveal.
+  private var hoverPoint: NSPoint?
+
+  private static let copyIcon = NSImage(
+    systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy"
+  )?.withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
+  private static let copiedIcon = NSImage(
+    systemSymbolName: "checkmark", accessibilityDescription: "Copied"
+  )?.withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+
+  /// Schedule a refresh of the blockquote copy buttons, debounced so it runs on
+  /// a *settled* buffer. Claude Code's TUI redraws by clearing then rewriting
+  /// cells, so a scan mid-redraw sees bars as NUL; waiting for a brief quiet
+  /// period avoids pinning buttons against a transient half-drawn frame.
+  func scheduleBlockButtonRefresh() {
+    blockRefreshToken &+= 1
+    let token = blockRefreshToken
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+      guard let self = self, self.blockRefreshToken == token else { return }
+      self.refreshBlockCopyButtons()
+    }
+  }
+
+  /// Rescan the visible buffer and position a (hidden) copy button at each
+  /// blockquote's top-right corner; `applyHover` then reveals the one under the
+  /// pointer. Reusing the pool keeps positions correct across stream/scroll.
+  private func refreshBlockCopyButtons() {
+    let term = getTerminal()
+    guard term.rows > 0, term.cols > 0, bounds.width > 0, bounds.height > 0 else { return }
+    let lines = (0..<term.rows).map { term.getLine(row: $0)?.translateToString(trimRight: true) }
+    let blocks = BlockquoteScanner.allBlocks(in: lines)
+
+    let cellHeight = bounds.height / CGFloat(term.rows)
+    let size = NSSize(width: 26, height: 20)
+    while copyButtons.count < blocks.count {
+      let btn = makeBlockCopyButton()
+      addSubview(btn)
+      copyButtons.append(btn)
+    }
+    activeButtonCount = blocks.count
+    for (i, button) in copyButtons.enumerated() {
+      guard i < blocks.count else {
+        button.blockRange = nil
+        button.isHidden = true
+        continue
+      }
+      button.blockText = blocks[i].text
+      button.blockRange = blocks[i].range
+      setBlockButtonIcon(button, Self.copyIcon, color: Theme.accent)
+      // View is bottom-origin: the top edge of row r is `height - r*cell`.
+      let topY = bounds.height - CGFloat(blocks[i].range.lowerBound) * cellHeight
+      button.frame = NSRect(
+        x: bounds.width - size.width - 8, y: topY - size.height,
+        width: size.width, height: size.height)
+    }
+    applyHover()
+  }
+
+  /// Reveal only the copy button whose block rows (or button frame) contain the
+  /// pointer; hide the rest. Cheap — pure visibility toggles, no buffer scan.
+  private func applyHover() {
+    let term = getTerminal()
+    let row: Int? = {
+      guard let p = hoverPoint, bounds.contains(p), term.rows > 0 else { return nil }
+      return Int((bounds.height - p.y) / (bounds.height / CGFloat(term.rows)))
+    }()
+    for (i, button) in copyButtons.enumerated() {
+      guard i < activeButtonCount, let range = button.blockRange else {
+        button.isHidden = true
+        continue
+      }
+      let over =
+        (row.map { range.contains($0) } ?? false)
+        || (hoverPoint.map { button.frame.contains($0) } ?? false)
+      button.isHidden = !over
+    }
+  }
+
+  private func makeBlockCopyButton() -> BlockCopyButton {
+    let btn = BlockCopyButton(
+      image: Self.copyIcon ?? NSImage(), target: self,
+      action: #selector(blockCopyButtonClicked(_:)))
+    btn.isBordered = false
+    btn.imagePosition = .imageOnly
+    btn.imageScaling = .scaleProportionallyDown
+    btn.wantsLayer = true
+    btn.bezelStyle = .regularSquare
+    btn.contentTintColor = Theme.accent
+    btn.layer?.backgroundColor = Theme.surface3.cgColor
+    btn.layer?.cornerRadius = 4
+    btn.isHidden = true
+    return btn
+  }
+
+  private func setBlockButtonIcon(_ button: NSButton, _ image: NSImage?, color: NSColor) {
+    button.image = image
+    button.contentTintColor = color
+  }
+
+  @objc private func blockCopyButtonClicked(_ sender: BlockCopyButton) {
+    guard !sender.blockText.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(sender.blockText, forType: .string)
+    setBlockButtonIcon(sender, Self.copiedIcon, color: Theme.green)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self, weak sender] in
+      guard let self = self, let sender = sender else { return }
+      self.setBlockButtonIcon(sender, Self.copyIcon, color: Theme.accent)
+    }
+  }
+
+  /// The rendered blockquote whose rows include `point` (for the right-click
+  /// menu). `point` is in this view's coordinate space.
+  private func blockUnderPoint(_ point: NSPoint) -> (rows: ClosedRange<Int>, text: String)? {
+    guard bounds.contains(point) else { return nil }
+    let term = getTerminal()
+    guard term.rows > 0, term.cols > 0 else { return nil }
+    let cellHeight = bounds.height / CGFloat(term.rows)
+    let approxRow = Int((bounds.height - point.y) / cellHeight)
+    let lines = (0..<term.rows).map { term.getLine(row: $0)?.translateToString(trimRight: true) }
+    guard let block = BlockquoteScanner.block(in: lines, at: approxRow) else { return nil }
+    return (block.range, block.text)
+  }
+
   // MARK: - Right-click context menu
 
   override func menu(for event: NSEvent) -> NSMenu? {
     let menu = NSMenu()
+    if let (_, text) = blockUnderPoint(convert(event.locationInWindow, from: nil)) {
+      let quoteItem = NSMenuItem(
+        title: "Copy quote block", action: #selector(copyQuoteBlock(_:)), keyEquivalent: "")
+      quoteItem.target = self
+      quoteItem.representedObject = text
+      menu.addItem(quoteItem)
+      menu.addItem(NSMenuItem.separator())
+    }
     let copyItem = NSMenuItem(
       title: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
     copyItem.target = self
@@ -624,6 +811,12 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     selectAllItem.target = self
     menu.addItem(selectAllItem)
     return menu
+  }
+
+  @objc private func copyQuoteBlock(_ sender: NSMenuItem) {
+    guard let text = sender.representedObject as? String else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
   }
 
   // MARK: - Drag and Drop
