@@ -753,25 +753,32 @@ final class DFSidebar: NSView {
     for file in changedFiles.prefix(50) {
       let statusIcon: String
       let statusColor: NSColor
+      let statusName: String
       switch file.status {
       case "M":
         statusIcon = "pencil.circle"
         statusColor = Theme.yellow
+        statusName = "Modified"
       case "A":
         statusIcon = "plus.circle"
         statusColor = Theme.green
+        statusName = "Added"
       case "D":
         statusIcon = "minus.circle"
         statusColor = Theme.red
+        statusName = "Deleted"
       case "?":
         statusIcon = "questionmark.circle"
         statusColor = Theme.text3
+        statusName = "Untracked"
       case "R":
         statusIcon = "arrow.right.circle"
         statusColor = Theme.cyan
+        statusName = "Renamed"
       default:
         statusIcon = "circle"
         statusColor = Theme.text3
+        statusName = "Changed"
       }
 
       let fullPath = (projectDir as NSString).appendingPathComponent(file.path)
@@ -780,6 +787,7 @@ final class DFSidebar: NSView {
         target: self, action: #selector(fileRowClicked(_:)))
       row.filePath = fullPath
       row.isDirectory = false
+      row.toolTip = statusName
       row.heightAnchor.constraint(equalToConstant: 24).isActive = true
 
       // Tint the icon with the status color

@@ -102,6 +102,7 @@ final class DFToolkitEditor: NSObject, NSTextFieldDelegate, NSWindowDelegate {
       systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove")
     deleteBtn.isBordered = false
     deleteBtn.contentTintColor = Theme.text3
+    deleteBtn.toolTip = "Remove command"
     deleteBtn.tag = index
     deleteBtn.translatesAutoresizingMaskIntoConstraints = false
     row.addSubview(deleteBtn)

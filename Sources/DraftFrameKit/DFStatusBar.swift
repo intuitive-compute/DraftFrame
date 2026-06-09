@@ -69,6 +69,7 @@ final class DFStatusBar: NSView {
       branchIcon.image = img
       branchIcon.contentTintColor = Theme.text3
     }
+    branchIcon.toolTip = "Current Git branch"
     branchIcon.translatesAutoresizingMaskIntoConstraints = false
     addSubview(branchIcon)
 
@@ -90,6 +91,7 @@ final class DFStatusBar: NSView {
       micIndicator.image = micImg
     }
     micIndicator.contentTintColor = Theme.green
+    micIndicator.toolTip = "Listening for voice input"
     micIndicator.translatesAutoresizingMaskIntoConstraints = false
     micIndicator.isHidden = true
     addSubview(micIndicator)

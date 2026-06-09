@@ -76,6 +76,7 @@ final class DFCodeEditor: NSView {
     closeBtn.isBordered = false
     closeBtn.font = Theme.mono(14, weight: .medium)
     closeBtn.contentTintColor = Theme.text3
+    closeBtn.toolTip = "Close inspector"
     closeBtn.translatesAutoresizingMaskIntoConstraints = false
     headerBar.addSubview(closeBtn)
 
@@ -126,6 +127,7 @@ final class DFCodeEditor: NSView {
     prevBtn.isBordered = false
     prevBtn.font = Theme.mono(10)
     prevBtn.contentTintColor = Theme.text2
+    prevBtn.toolTip = "Previous match"
     prevBtn.translatesAutoresizingMaskIntoConstraints = false
     searchBar.addSubview(prevBtn)
 
@@ -133,6 +135,7 @@ final class DFCodeEditor: NSView {
     nextBtn.isBordered = false
     nextBtn.font = Theme.mono(10)
     nextBtn.contentTintColor = Theme.text2
+    nextBtn.toolTip = "Next match"
     nextBtn.translatesAutoresizingMaskIntoConstraints = false
     searchBar.addSubview(nextBtn)
 
@@ -145,6 +148,7 @@ final class DFCodeEditor: NSView {
     closeSearchBtn.isBordered = false
     closeSearchBtn.font = Theme.mono(12, weight: .medium)
     closeSearchBtn.contentTintColor = Theme.text3
+    closeSearchBtn.toolTip = "Close search"
     closeSearchBtn.translatesAutoresizingMaskIntoConstraints = false
     searchBar.addSubview(closeSearchBtn)
 

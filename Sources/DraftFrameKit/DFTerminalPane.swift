@@ -92,6 +92,7 @@ final class DFTerminalPane: NSView {
     addBtn.isBordered = false
     addBtn.font = Theme.mono(14, weight: .medium)
     addBtn.contentTintColor = Theme.text3
+    addBtn.toolTip = "New session"
     tabBar.addSubview(addBtn)
 
     // Terminal container
@@ -254,6 +255,7 @@ final class DFTerminalPane: NSView {
       closeBtn.isBordered = false
       closeBtn.font = Theme.mono(10)
       closeBtn.contentTintColor = Theme.text3
+      closeBtn.toolTip = "Close tab"
       closeBtn.isHidden = !canClose
       container.addSubview(closeBtn)
 

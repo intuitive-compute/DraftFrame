@@ -752,6 +752,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     btn.contentTintColor = Theme.accent
     btn.layer?.backgroundColor = Theme.surface3.cgColor
     btn.layer?.cornerRadius = 4
+    btn.toolTip = "Copy quote"
     btn.isHidden = true
     return btn
   }
