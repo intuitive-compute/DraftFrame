@@ -42,7 +42,10 @@ enum BlockquoteScanner {
     var result: [(range: ClosedRange<Int>, text: String)] = []
     var i = 0
     while i < lines.count {
-      guard quoteContent(of: lines[i]) != nil else { i += 1; continue }
+      guard quoteContent(of: lines[i]) != nil else {
+        i += 1
+        continue
+      }
       var j = i
       while j + 1 < lines.count, quoteContent(of: lines[j + 1]) != nil { j += 1 }
 

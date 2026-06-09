@@ -133,7 +133,8 @@ final class BlockquoteScannerTests: XCTestCase {
     let block = BlockquoteScanner.block(in: lines, at: 0)
     XCTAssertEqual(
       block?.text, "quoted line one\nquoted line two",
-      "Bar glyph must survive translateToString and be stripped. Got: \(String(describing: block?.text))")
+      "Bar glyph must survive translateToString and be stripped. Got: \(String(describing: block?.text))"
+    )
   }
 
   private final class StubDelegate: TerminalDelegate {
