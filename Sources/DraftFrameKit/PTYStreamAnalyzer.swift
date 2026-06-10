@@ -25,15 +25,17 @@ final class PTYStreamAnalyzer {
   // Alternate buffer tracking (Claude's TUI uses alternate screen)
   private(set) var alternateBufferActive = false
 
-  // Frame text — reset on screen clear or frame boundary
-  private var frameText = ""
   private var frameTimer: DispatchWorkItem?
 
-  // Rolling recent text (last ~2000 chars of plaintext)
+  // Rolling recent text (last ~2000 chars of plaintext). Every char appended
+  // here is single-scalar ASCII, so `recentTextCount` stays an exact mirror
+  // of `recentText.count` without the O(n) grapheme walk per chunk.
   private var recentText = ""
+  private var recentTextCount = 0
   private let recentTextLimit = 2000
 
   func feed(_ bytes: ArraySlice<UInt8>) {
+    var appendedCount = 0
     for byte in bytes {
       if inEscape {
         processEscapeByte(byte)
@@ -43,28 +45,32 @@ final class PTYStreamAnalyzer {
       } else {
         // Regular printable character or control char
         if byte >= 0x20 && byte < 0x7F {
-          let char = Character(UnicodeScalar(byte))
-          frameText.append(char)
-          recentText.append(char)
+          recentText.append(Character(UnicodeScalar(byte)))
+          appendedCount += 1
         } else if byte == 0x0A {  // newline
-          frameText.append("\n")
           recentText.append("\n")
+          appendedCount += 1
         } else if byte == 0x0D {  // carriage return
           // ignore CR (we use LF for newlines)
         }
         // Other control chars (BEL, BS, TAB, etc.) — ignore for analysis
       }
     }
+    recentTextCount += appendedCount
 
     // Detect 1M context banner before the rolling buffer trims it away.
     // The banner is among the first bytes Claude Code prints, but TUI
     // animation can flood the buffer and push it out before analyzeFrame
     // (debounced 50ms) gets a chance to look.
-    detectContextWindowFromBanner()
+    if appendedCount > 0 {
+      detectContextWindowFromBanner(appendedCount: appendedCount)
+    }
 
-    // Trim recent text buffer
-    if recentText.count > recentTextLimit {
+    // Trim lazily at 2x the limit so the O(n) suffix copy is amortized
+    // across many chunks instead of paid on every one.
+    if recentTextCount > recentTextLimit * 2 {
       recentText = String(recentText.suffix(recentTextLimit))
+      recentTextCount = recentText.count
     }
 
     // Debounce frame analysis — run 50ms after last data chunk
@@ -146,26 +152,14 @@ final class PTYStreamAnalyzer {
     if paramStr == "?1049" {
       if finalByte == 0x68 {  // 'h'
         alternateBufferActive = true
-        frameText = ""  // fresh frame
         // Belt-and-suspenders: if a future Claude version ever does take over
         // the alternate screen, treat that as the ready signal too.
         fireClaudeReady()
       } else if finalByte == 0x6C {  // 'l'
         alternateBufferActive = false
-        frameText = ""
         // Claude exited — immediate state change
         updateState(.idle)
       }
-    }
-
-    // Detect screen clear: CSI 2 J
-    if paramStr == "2" && finalByte == 0x4A {  // 'J'
-      frameText = ""  // new frame
-    }
-
-    // Detect cursor home: CSI H (no params)
-    if paramStr.isEmpty && finalByte == 0x48 {  // 'H'
-      // Often precedes a full redraw, but don't clear yet
     }
   }
 
@@ -250,13 +244,19 @@ final class PTYStreamAnalyzer {
     onClaudeReady?()
   }
 
+  private static let oneMillionBanner = "(1M context)"
+
   /// Promote the cap to 1M if Claude Code's banner ever printed
   /// `(1M context)` in this session's output. We don't try to demote — TUI
   /// rendering recycles the buffer too aggressively to reliably observe the
   /// inverse, and a fresh DraftFrame session restarts the analyzer anyway.
-  private func detectContextWindowFromBanner() {
+  /// Scans only the newly appended tail (plus banner-length overlap for a
+  /// marker split across chunks) — the rest of the rolling buffer was
+  /// already scanned when its bytes arrived.
+  private func detectContextWindowFromBanner(appendedCount: Int) {
     guard lastContextWindow != 1_000_000 else { return }
-    if recentText.contains("(1M context)") {
+    let scanLength = appendedCount + Self.oneMillionBanner.count
+    if recentText.suffix(scanLength).contains(Self.oneMillionBanner) {
       lastContextWindow = 1_000_000
       onContextWindowChange?(1_000_000)
     }
@@ -269,8 +269,8 @@ final class PTYStreamAnalyzer {
     claudeReadyFired = false
     inEscape = false
     escapeBuffer = []
-    frameText = ""
     recentText = ""
+    recentTextCount = 0
     lastContextWindow = 0
   }
 }

@@ -628,13 +628,15 @@ final class DFSidebar: NSView {
     proc.environment = env
     let pipe = Pipe()
     proc.standardOutput = pipe
-    proc.standardError = Pipe()
+    proc.standardError = FileHandle.nullDevice
+    let data: Data
     do {
       try proc.run()
+      // Read to EOF before waiting — output past the 64KB pipe buffer
+      // would otherwise deadlock git against waitUntilExit().
+      data = pipe.fileHandleForReading.readDataToEndOfFile()
       proc.waitUntilExit()
     } catch { return [] }
-
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
     guard let output = String(data: data, encoding: .utf8) else { return [] }
 
     var worktrees: [WorktreeManager.Worktree] = []
@@ -814,15 +816,17 @@ final class DFSidebar: NSView {
     proc.environment = env
     let pipe = Pipe()
     proc.standardOutput = pipe
-    proc.standardError = Pipe()
+    proc.standardError = FileHandle.nullDevice
+    let data: Data
     do {
       try proc.run()
+      // Read to EOF before waiting — a repo with enough changed files to
+      // overflow the 64KB pipe buffer would otherwise hang the app here.
+      data = pipe.fileHandleForReading.readDataToEndOfFile()
       proc.waitUntilExit()
     } catch {
       return []
     }
-
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
     guard let output = String(data: data, encoding: .utf8) else { return [] }
 
     var files: [ChangedFile] = []

@@ -603,14 +603,15 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       .filter { !$0.key.hasPrefix("GIT_") }
     let pipe = Pipe()
     proc.standardOutput = pipe
-    proc.standardError = Pipe()
+    proc.standardError = FileHandle.nullDevice
+    let data: Data
     do {
       try proc.run()
+      // Read to EOF before waiting so a full pipe buffer can't deadlock us.
+      data = pipe.fileHandleForReading.readDataToEndOfFile()
       proc.waitUntilExit()
       guard proc.terminationStatus == 0 else { return nil }
     } catch { return nil }
-
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
     guard
       let raw = String(data: data, encoding: .utf8)?
         .trimmingCharacters(in: .whitespacesAndNewlines)

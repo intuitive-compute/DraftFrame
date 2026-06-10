@@ -20,9 +20,10 @@ final class SessionJSONLWatcher {
   }
 
   private static let pricing: [String: ModelPricing] = [
-    "opus": ModelPricing(inputPerMillion: 15, outputPerMillion: 75),
+    "fable": ModelPricing(inputPerMillion: 10, outputPerMillion: 50),
+    "opus": ModelPricing(inputPerMillion: 5, outputPerMillion: 25),
     "sonnet": ModelPricing(inputPerMillion: 3, outputPerMillion: 15),
-    "haiku": ModelPricing(inputPerMillion: 0.25, outputPerMillion: 1.25),
+    "haiku": ModelPricing(inputPerMillion: 1, outputPerMillion: 5),
   ]
 
   // MARK: - Public state
@@ -76,6 +77,10 @@ final class SessionJSONLWatcher {
   private var directoryHandle: Int32 = -1
   private var resolved = false
   private let workingDirectory: String
+  /// Last time we re-scanned the project directory for a newer JSONL.
+  /// Write events fire many times per second while Claude streams; without
+  /// this throttle each one would re-stat every file in the directory.
+  private var lastNewestScan = Date.distantPast
 
   // MARK: - Init
 
@@ -161,11 +166,6 @@ final class SessionJSONLWatcher {
   // MARK: - Directory watching (for when JSONL doesn't exist yet)
 
   private func watchDirectoryForNewFiles() {
-    // Build the expected directory path; create it if missing so we can watch it.
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let encoded = Self.encodePath(workingDirectory)
-    let dir = "\(home)/.claude/projects/\(encoded)"
-
     // Poll periodically until the file appears.
     let timer = DispatchSource.makeTimerSource(queue: watchQueue)
     timer.schedule(deadline: .now() + 2, repeating: 3.0)
@@ -273,8 +273,14 @@ final class SessionJSONLWatcher {
     // JSONL (the filename is the sessionId). If a newer one has appeared
     // since we attached, switch to it — otherwise we'd track a stale file
     // forever and miss every assistant turn after the user restarted.
-    if let newest = findLatestJSONL(), newest != watchedPath {
-      switchTo(path: newest)
+    // Throttled to every 2s; the 1.5s poll timer guarantees we still
+    // converge on a new file within ~3.5s even with no write events.
+    let now = Date()
+    if now.timeIntervalSince(lastNewestScan) >= 2.0 {
+      lastNewestScan = now
+      if let newest = findLatestJSONL(), newest != watchedPath {
+        switchTo(path: newest)
+      }
     }
 
     guard let path = watchedPath else { return }
@@ -312,7 +318,7 @@ final class SessionJSONLWatcher {
     for line in processable.split(separator: "\n", omittingEmptySubsequences: false) {
       let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !trimmed.isEmpty else { continue }
-      if parseAssistantLine(trimmed) || parseUserLine(trimmed) {
+      if parseLine(trimmed) {
         didUpdate = true
       }
     }
@@ -330,13 +336,23 @@ final class SessionJSONLWatcher {
     }
   }
 
-  /// Parse a single JSONL line. Returns true if it was an assistant message with usage.
-  private func parseAssistantLine(_ line: String) -> Bool {
-    guard let data = line.data(using: .utf8) else { return false }
-    guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-      return false
+  /// Parse a single JSONL line, decoding the JSON exactly once and
+  /// dispatching on the line's `type`. Returns true if any tracked state
+  /// advanced.
+  private func parseLine(_ line: String) -> Bool {
+    guard let data = line.data(using: .utf8),
+      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let type = obj["type"] as? String
+    else { return false }
+    switch type {
+    case "assistant": return parseAssistant(obj)
+    case "user": return parseUser(obj)
+    default: return false
     }
-    guard let type = obj["type"] as? String, type == "assistant" else { return false }
+  }
+
+  /// Handle an assistant line. Returns true if it carried usable usage data.
+  private func parseAssistant(_ obj: [String: Any]) -> Bool {
     guard let message = obj["message"] as? [String: Any] else { return false }
     guard let usage = message["usage"] as? [String: Any] else { return false }
 
@@ -356,10 +372,11 @@ final class SessionJSONLWatcher {
     if let model = message["model"] as? String {
       latestModel = Self.shortModelName(model)
       latestBareModel = model
-      // Mirror Claude Code's own B2() context-window logic so the cap is
-      // correct from the very first assistant turn. The JSONL never carries
-      // the `[1m]` suffix on its own, but `claude-opus-4-7` is always 1M
-      // regardless. /context and /model captures may upgrade this further.
+      // Derive the cap from the model id so it's correct from the very
+      // first assistant turn. The JSONL never carries the `[1m]` suffix on
+      // its own, but current 1M-window families (Fable 5, Opus 4.6+,
+      // Sonnet 4.6) are matched by id. /context and /model captures may
+      // upgrade this further.
       let modelCap = Self.contextWindowCap(forModelId: model)
       if modelCap > parsedMaxContextTokens || parsedMaxContextTokens == 0 {
         parsedMaxContextTokens = modelCap
@@ -399,11 +416,8 @@ final class SessionJSONLWatcher {
   /// `currentContextTokens` / `parsedMaxContextTokens`. These captures are
   /// the only place Claude Code records the active variant unambiguously
   /// (the JSONL `message.model` field never carries the `[1m]` suffix).
-  private func parseUserLine(_ line: String) -> Bool {
-    guard let data = line.data(using: .utf8),
-      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let type = obj["type"] as? String, type == "user",
-      let message = obj["message"] as? [String: Any],
+  private func parseUser(_ obj: [String: Any]) -> Bool {
+    guard let message = obj["message"] as? [String: Any],
       let content = message["content"] as? String,
       content.contains("<local-command-stdout>")
     else { return false }
@@ -489,26 +503,36 @@ final class SessionJSONLWatcher {
     return joined.isEmpty ? nil : joined
   }
 
-  /// Mirror of Claude Code's `B2(model)` from its bundle: derive the
-  /// context window cap from the model identifier alone. The JSONL never
-  /// carries the `[1m]` suffix on its own (Claude Code strips it before
-  /// writing), but `claude-opus-4-7` is always 1M regardless. We also
-  /// honour the suffix when present (e.g. via /context or /model output
-  /// flowing through `latestBareModel`).
+  /// Models whose context window is 1M tokens regardless of any `[1m]`
+  /// suffix (Fable 5, Opus 4.6+, Sonnet 4.6). Haiku and older families
+  /// stay at 200K.
+  private static let oneMillionContextModels: Set<String> = [
+    "claude-fable-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+  ]
+
+  /// Derive the context window cap from the model identifier alone. The
+  /// JSONL never carries the `[1m]` suffix on its own (Claude Code strips
+  /// it before writing), so current 1M-window families are matched by id.
+  /// We also honour the suffix when present (e.g. via /context or /model
+  /// output flowing through `latestBareModel`).
   static func contextWindowCap(forModelId model: String) -> Int {
     let lower = model.lowercased()
     if lower.contains("[1m]") { return 1_000_000 }
-    // Strip date suffixes like "-20251101" before family comparison
-    // (matches Claude Code's `fI_(H)` normalization).
+    // Strip date suffixes like "-20251101" before family comparison.
     let normalized = lower.replacingOccurrences(
       of: #"-\d{8}$"#, with: "", options: .regularExpression)
-    if normalized == "claude-opus-4-7" { return 1_000_000 }
+    if Self.oneMillionContextModels.contains(normalized) { return 1_000_000 }
     return 200_000
   }
 
   /// Convert full model identifier (e.g. "claude-opus-4-6") to short name for pricing lookup.
   static func shortModelName(_ model: String) -> String {
     let lower = model.lowercased()
+    if lower.contains("fable") { return "fable" }
     if lower.contains("opus") { return "opus" }
     if lower.contains("haiku") { return "haiku" }
     if lower.contains("sonnet") { return "sonnet" }

@@ -187,6 +187,44 @@ final class PTYStreamAnalyzerTests: XCTestCase {
     wait(for: [second], timeout: 0.5)
   }
 
+  // MARK: - Context Window Banner
+
+  func testBannerDetectedInSingleChunk() {
+    var detected = 0
+    analyzer.onContextWindowChange = { cap in
+      XCTAssertEqual(cap, 1_000_000)
+      detected += 1
+    }
+    feedString("Opus 4.7 (1M context) ready")
+    XCTAssertEqual(detected, 1)
+  }
+
+  func testBannerDetectedWhenSplitAcrossChunks() {
+    var detected = 0
+    analyzer.onContextWindowChange = { _ in detected += 1 }
+    feedString("Set model to Opus (1M co")
+    feedString("ntext) (default)")
+    XCTAssertEqual(detected, 1)
+  }
+
+  func testBannerFiresAtMostOnce() {
+    var detected = 0
+    analyzer.onContextWindowChange = { _ in detected += 1 }
+    feedString("(1M context)")
+    feedString("(1M context)")
+    XCTAssertEqual(detected, 1)
+  }
+
+  func testBannerStillDetectedAfterLargeFlood() {
+    // Banner arriving after enough output to have trimmed the rolling
+    // buffer must still fire — detection scans every chunk as it arrives.
+    var detected = 0
+    analyzer.onContextWindowChange = { _ in detected += 1 }
+    feedString(String(repeating: "x", count: 10_000))
+    feedString("(1M context)")
+    XCTAssertEqual(detected, 1)
+  }
+
   // MARK: - Reset
 
   func testResetClearsState() {

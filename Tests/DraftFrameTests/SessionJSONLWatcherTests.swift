@@ -26,6 +26,36 @@ final class SessionJSONLWatcherTests: XCTestCase {
     XCTAssertEqual(SessionJSONLWatcher.shortModelName("Claude-OPUS-4"), "opus")
   }
 
+  func testShortModelNameFable() {
+    XCTAssertEqual(SessionJSONLWatcher.shortModelName("claude-fable-5"), "fable")
+  }
+
+  // MARK: - contextWindowCap
+
+  func testContextWindowCapOneMillionFamilies() {
+    XCTAssertEqual(SessionJSONLWatcher.contextWindowCap(forModelId: "claude-fable-5"), 1_000_000)
+    XCTAssertEqual(SessionJSONLWatcher.contextWindowCap(forModelId: "claude-opus-4-8"), 1_000_000)
+    XCTAssertEqual(SessionJSONLWatcher.contextWindowCap(forModelId: "claude-opus-4-7"), 1_000_000)
+    XCTAssertEqual(SessionJSONLWatcher.contextWindowCap(forModelId: "claude-opus-4-6"), 1_000_000)
+    XCTAssertEqual(SessionJSONLWatcher.contextWindowCap(forModelId: "claude-sonnet-4-6"), 1_000_000)
+  }
+
+  func testContextWindowCapStripsDateSuffix() {
+    XCTAssertEqual(
+      SessionJSONLWatcher.contextWindowCap(forModelId: "claude-opus-4-8-20260301"), 1_000_000)
+  }
+
+  func testContextWindowCapDefaultsTo200K() {
+    XCTAssertEqual(
+      SessionJSONLWatcher.contextWindowCap(forModelId: "claude-haiku-4-5-20251001"), 200_000)
+    XCTAssertEqual(SessionJSONLWatcher.contextWindowCap(forModelId: "claude-sonnet-4-5"), 200_000)
+  }
+
+  func testContextWindowCapHonorsOneMSuffix() {
+    XCTAssertEqual(
+      SessionJSONLWatcher.contextWindowCap(forModelId: "claude-haiku-4-5[1m]"), 1_000_000)
+  }
+
   // MARK: - encodePath
 
   func testEncodePathBasic() {

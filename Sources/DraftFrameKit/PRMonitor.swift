@@ -444,11 +444,16 @@ final class PRMonitor {
 
     let out = Pipe()
     proc.standardOutput = out
-    proc.standardError = Pipe()
+    // Discard stderr at the kernel instead of attaching an undrained Pipe —
+    // a full stderr pipe buffer would block gh and deadlock the wait below.
+    proc.standardError = FileHandle.nullDevice
     do {
       try proc.run()
+      // Drain stdout to EOF *before* waiting. `gh pr view --json` with a
+      // large statusCheckRollup can exceed the 64KB pipe buffer; waiting
+      // first would deadlock (gh blocked writing, us blocked waiting).
+      let data = (try? out.fileHandleForReading.readToEnd()) ?? Data()
       proc.waitUntilExit()
-      let data = (try out.fileHandleForReading.readToEnd()) ?? Data()
       return String(data: data, encoding: .utf8) ?? ""
     } catch {
       return ""
