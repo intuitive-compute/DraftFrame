@@ -182,6 +182,8 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     let helpMenuItem = NSMenuItem()
     let helpMenu = NSMenu(title: "Help")
     helpMenu.addItem(withTitle: "About DraftFrame", action: #selector(showAbout), keyEquivalent: "")
+    helpMenu.addItem(
+      withTitle: "Keyboard Shortcuts", action: #selector(showKeyboardShortcuts), keyEquivalent: "")
     helpMenuItem.submenu = helpMenu
     mainMenu.addItem(helpMenuItem)
 
@@ -267,6 +269,10 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
   @objc private func checkForUpdates() {
     UpdateManager.shared.checkNow()
+  }
+
+  @objc private func showKeyboardShortcuts() {
+    DFShortcutsWindow.shared.show()
   }
 
   @objc private func showAbout() {
