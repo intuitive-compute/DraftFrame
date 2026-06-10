@@ -46,7 +46,7 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
   private let lastCheckKey = "DFLastUpdateCheck"
   private let skippedVersionKey = "DFSkippedVersion"
 
-  private var latestRelease: GitHubRelease?
+  private var downloadingAsset: GitHubRelease.Asset?
   private var downloadTask: URLSessionDownloadTask?
   private lazy var downloadSession: URLSession = {
     URLSession(configuration: .default, delegate: self, delegateQueue: .main)
@@ -69,7 +69,6 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
       guard let release = try? await fetchLatestRelease() else { return }
       await MainActor.run {
         if self.isUpdateAvailable(release) {
-          self.latestRelease = release
           self.showUpdateAlert(release)
         }
       }
@@ -82,7 +81,6 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
         let release = try await fetchLatestRelease()
         await MainActor.run {
           if self.isUpdateAvailable(release) {
-            self.latestRelease = release
             self.showUpdateAlert(release)
           } else {
             self.showUpToDateAlert()
@@ -143,14 +141,30 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
 
   // MARK: - Download
 
+  // Matches the architecture this binary was built for. An x86_64 build under
+  // Rosetta stays on x86_64 rather than being switched to arm64 mid-update.
+  private static var machineArch: String {
+    #if arch(arm64)
+      return "arm64"
+    #else
+      return "x86_64"
+    #endif
+  }
+
+  private func dmgAsset(in release: GitHubRelease) -> GitHubRelease.Asset? {
+    let dmgs = release.assets.filter { $0.name.hasSuffix(".dmg") }
+    return dmgs.first { $0.name.contains(Self.machineArch) } ?? dmgs.first
+  }
+
   private func downloadUpdate(_ release: GitHubRelease) {
-    guard let asset = release.assets.first(where: { $0.name.hasSuffix(".dmg") }),
+    guard let asset = dmgAsset(in: release),
       let url = URL(string: asset.browserDownloadUrl)
     else {
       showErrorAlert("No DMG found in this release.")
       return
     }
 
+    downloadingAsset = asset
     showDownloadProgress()
     let task = downloadSession.downloadTask(with: url)
     downloadTask = task
@@ -176,9 +190,8 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
   ) {
     dismissDownloadProgress()
 
-    guard let release = latestRelease,
-      let asset = release.assets.first(where: { $0.name.hasSuffix(".dmg") })
-    else { return }
+    guard let asset = downloadingAsset else { return }
+    downloadingAsset = nil
 
     let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
     let dest = downloads.appendingPathComponent(asset.name)
