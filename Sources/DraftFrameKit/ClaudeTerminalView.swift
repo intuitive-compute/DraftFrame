@@ -262,7 +262,12 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     super.viewDidMoveToWindow()
     if window != nil && keyMonitor == nil {
       keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-        guard let self = self, self.window?.firstResponder === self else { return event }
+        // Match on event.window too — a hidden quick terminal keeps its
+        // first-responder status, and without this check its monitor would
+        // swallow keystrokes typed into other windows.
+        guard let self = self, event.window === self.window,
+          self.window?.firstResponder === self
+        else { return event }
         // A PTY input keypress releases the sticky scroll guard and snaps
         // the viewport to the bottom. SwiftTerm's `send()` already calls
         // `ensureCaretIsVisible`, but that's a no-op when the user has only

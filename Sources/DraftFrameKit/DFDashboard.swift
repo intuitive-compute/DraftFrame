@@ -273,7 +273,7 @@ final class DashboardCard: NSView {
     // informative instead of duplicating it.
     let branchLabel = NSTextField(labelWithString: session.name)
     branchLabel.font = Theme.mono(10)
-    branchLabel.textColor = Theme.text3
+    branchLabel.textColor = Theme.text2
     branchLabel.lineBreakMode = .byTruncatingTail
     branchLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(branchLabel)
@@ -281,21 +281,21 @@ final class DashboardCard: NSView {
     // Model
     let modelLabel = NSTextField(labelWithString: "Model: \(session.model)")
     modelLabel.font = Theme.mono(10)
-    modelLabel.textColor = Theme.text3
+    modelLabel.textColor = Theme.text2
     modelLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(modelLabel)
 
     // Cost & Tokens
     let costLabel = NSTextField(labelWithString: String(format: "Cost: $%.2f", session.cost))
     costLabel.font = Theme.mono(11)
-    costLabel.textColor = Theme.text2
+    costLabel.textColor = Theme.text1
     costLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(costLabel)
 
     let tokenStr = formatTokens(session.tokensIn)
     let tokensLabel = NSTextField(labelWithString: "Tokens: \(tokenStr)")
     tokensLabel.font = Theme.mono(10)
-    tokensLabel.textColor = Theme.text3
+    tokensLabel.textColor = Theme.text2
     tokensLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(tokensLabel)
 
@@ -415,8 +415,8 @@ final class DashboardCard: NSView {
   }
 
   private func prHeaderColor() -> NSColor {
-    guard PRMonitor.effectivePath(for: session) != nil else { return Theme.text3 }
-    guard let status = PRMonitor.shared.status(for: session.id) else { return Theme.text3 }
+    guard PRMonitor.effectivePath(for: session) != nil else { return Theme.text2 }
+    guard let status = PRMonitor.shared.status(for: session.id) else { return Theme.text2 }
     return status.displayColor
   }
 
@@ -425,6 +425,10 @@ final class DashboardCard: NSView {
     btn.translatesAutoresizingMaskIntoConstraints = false
     btn.font = Theme.mono(10)
     btn.contentTintColor = Theme.text2
+    // Checkbox titles ignore contentTintColor; color them explicitly
+    btn.attributedTitle = NSAttributedString(
+      string: title,
+      attributes: [.font: Theme.mono(10), .foregroundColor: Theme.text2])
     return btn
   }
 
@@ -551,7 +555,7 @@ final class SummaryCard: NSView {
 
     let timestamp = NSTextField(labelWithString: formatTimestamp())
     timestamp.font = Theme.mono(10)
-    timestamp.textColor = Theme.text3
+    timestamp.textColor = Theme.text2
     timestamp.translatesAutoresizingMaskIntoConstraints = false
     addSubview(timestamp)
 
