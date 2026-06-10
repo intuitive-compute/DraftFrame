@@ -402,16 +402,28 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   /// Map a click to the text of the terminal line under it and the column hit.
   private func lineAndColumn(at event: NSEvent) -> (text: String, col: Int)? {
     // Convert window coordinates to view coordinates, then to a grid column.
-    let localPoint = convert(event.locationInWindow, from: nil)
+    lineAndColumn(atLocal: convert(event.locationInWindow, from: nil))
+  }
+
+  func lineAndColumn(atLocal localPoint: CGPoint) -> (text: String, col: Int)? {
     guard bounds.contains(localPoint) else { return nil }
 
     let term = getTerminal()
     guard term.rows > 0, term.cols > 0 else { return nil }
 
-    // Derive cell dimensions from the view bounds and terminal grid size.
-    let cellWidth = bounds.width / CGFloat(term.cols)
-    let cellHeight = bounds.height / CGFloat(term.rows)
-    let col = Int(localPoint.x / cellWidth)
+    // Recover SwiftTerm's exact cell dimensions from getOptimalFrameSize():
+    // height is cellHeight * rows; width additionally includes the legacy
+    // scroller. Deriving cells from `bounds` instead (as this used to)
+    // overestimates them by the view's leftover padding, drifting up to a
+    // full row/column by the bottom-right of the screen, so clicks there
+    // resolved against the wrong line and were swallowed.
+    let optimal = getOptimalFrameSize()
+    let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+    let cellWidth = (optimal.width - scrollerWidth) / CGFloat(term.cols)
+    let cellHeight = optimal.height / CGFloat(term.rows)
+    guard cellWidth > 0, cellHeight > 0 else { return nil }
+
+    let col = min(max(0, Int(localPoint.x / cellWidth)), term.cols - 1)
     let row = Int((bounds.height - localPoint.y) / cellHeight)
     guard row >= 0, row < term.rows else { return nil }
     guard let line = term.getLine(row: row) else { return nil }
