@@ -22,6 +22,34 @@ struct Watchdog: Identifiable {
   var sessionID: UUID?  // nil = watch all sessions
   var trigger: WatchdogTrigger
   var response: WatchdogResponse
+
+  /// Human-readable "what this does" line, used as the sidebar row tooltip.
+  var summary: String {
+    let action: String
+    switch response {
+    case .notify:
+      action = "Sends a macOS notification"
+    case .autoAccept:
+      action = "Types \"y\" to accept the pending prompt"
+    case .sendText(let text):
+      action = "Sends \"\(text)\" to the session"
+    case .runCommand(let command):
+      action = "Runs `\(command)` and sends the output to the session"
+    }
+
+    let condition: String
+    switch trigger {
+    case .needsAttention:
+      condition = "when a session needs attention"
+    case .idleAfterWork:
+      condition = "when a session finishes working"
+    case .periodic(let seconds):
+      condition = "every \(seconds) seconds"
+    }
+
+    let scope = sessionID == nil ? "" : " Watches a single session."
+    return "\(action) \(condition).\(scope)"
+  }
 }
 
 // MARK: - WatchdogManager

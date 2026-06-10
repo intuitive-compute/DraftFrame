@@ -77,6 +77,12 @@ final class SessionJSONLWatcher {
   private var directoryHandle: Int32 = -1
   private var resolved = false
   private let workingDirectory: String
+  /// Usage-bearing messages already counted toward the totals. Claude Code
+  /// writes one JSONL line per content block of a single API response, each
+  /// repeating the same `message.id` and an identical `usage` block — so a
+  /// text + tool_use turn appears two or three times. Keyed by
+  /// "messageId|requestId" so usage is accumulated once per response.
+  private var countedMessages: Set<String> = []
   /// Last time we re-scanned the project directory for a newer JSONL.
   /// Write events fire many times per second while Claude streams; without
   /// this throttle each one would re-stat every file in the directory.
@@ -338,8 +344,8 @@ final class SessionJSONLWatcher {
 
   /// Parse a single JSONL line, decoding the JSON exactly once and
   /// dispatching on the line's `type`. Returns true if any tracked state
-  /// advanced.
-  private func parseLine(_ line: String) -> Bool {
+  /// advanced. Internal for testing.
+  func parseLine(_ line: String) -> Bool {
     guard let data = line.data(using: .utf8),
       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let type = obj["type"] as? String
@@ -394,6 +400,17 @@ final class SessionJSONLWatcher {
     {
       latestAssistantText = text
       latestAssistantAt = Date()
+    }
+
+    // Accumulate usage once per API response, not once per JSONL line —
+    // multi-block responses repeat the same usage on every line (see
+    // `countedMessages`). Lines without a message id can't be deduped, so
+    // they are counted unconditionally.
+    if let messageID = message["id"] as? String {
+      let key = messageID + "|" + ((obj["requestId"] as? String) ?? "")
+      if !countedMessages.insert(key).inserted {
+        return true
+      }
     }
 
     // Accumulate tokens (report total input = regular + cache tokens)

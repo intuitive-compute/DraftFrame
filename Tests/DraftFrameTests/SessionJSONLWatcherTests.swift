@@ -110,4 +110,91 @@ final class SessionJSONLWatcherTests: XCTestCase {
     XCTAssertNil(SessionJSONLWatcher.extractText(from: 42))
     XCTAssertNil(SessionJSONLWatcher.extractText(from: nil))
   }
+
+  // MARK: - Usage dedup
+
+  private func makeWatcher() -> SessionJSONLWatcher {
+    // Point at a directory with no ~/.claude/projects mirror so the watcher
+    // never attaches to a real file; we feed lines via parseLine directly.
+    SessionJSONLWatcher(workingDirectory: "/nonexistent/\(UUID().uuidString)") { _, _, _, _, _, _ in
+    }
+  }
+
+  private func assistantLine(
+    messageID: String, requestID: String = "req_1", inputTokens: Int = 100, outputTokens: Int = 10
+  ) -> String {
+    return """
+      {"type":"assistant","requestId":"\(requestID)","message":{"id":"\(messageID)",\
+      "model":"claude-sonnet-4-6","usage":{"input_tokens":\(inputTokens),\
+      "output_tokens":\(outputTokens),"cache_creation_input_tokens":0,\
+      "cache_read_input_tokens":0}}}
+      """
+  }
+
+  func testUsageCountedOncePerMessage() {
+    let watcher = makeWatcher()
+    // One API response written as three lines (text + tool_use blocks share
+    // the message id and an identical usage block).
+    XCTAssertTrue(watcher.parseLine(assistantLine(messageID: "msg_a")))
+    XCTAssertTrue(watcher.parseLine(assistantLine(messageID: "msg_a")))
+    XCTAssertTrue(watcher.parseLine(assistantLine(messageID: "msg_a")))
+
+    XCTAssertEqual(watcher.totalTokensIn, 100)
+    XCTAssertEqual(watcher.totalTokensOut, 10)
+    // Sonnet: 100 in * $3/M + 10 out * $15/M
+    let expected = 100 * 3.0 / 1_000_000 + 10 * 15.0 / 1_000_000
+    XCTAssertEqual(watcher.totalCost, expected, accuracy: 1e-12)
+  }
+
+  func testDistinctMessagesBothCounted() {
+    let watcher = makeWatcher()
+    XCTAssertTrue(watcher.parseLine(assistantLine(messageID: "msg_a")))
+    XCTAssertTrue(watcher.parseLine(assistantLine(messageID: "msg_b", requestID: "req_2")))
+
+    XCTAssertEqual(watcher.totalTokensIn, 200)
+    XCTAssertEqual(watcher.totalTokensOut, 20)
+  }
+
+  func testSameMessageIDDifferentRequestCountedSeparately() {
+    // A retried request re-sends with a new requestId; treat it as billable.
+    let watcher = makeWatcher()
+    XCTAssertTrue(watcher.parseLine(assistantLine(messageID: "msg_a", requestID: "req_1")))
+    XCTAssertTrue(watcher.parseLine(assistantLine(messageID: "msg_a", requestID: "req_2")))
+
+    XCTAssertEqual(watcher.totalTokensIn, 200)
+  }
+
+  func testMissingMessageIDStillCounted() {
+    let watcher = makeWatcher()
+    let line = """
+      {"type":"assistant","message":{"model":"claude-sonnet-4-6",\
+      "usage":{"input_tokens":50,"output_tokens":5}}}
+      """
+    XCTAssertTrue(watcher.parseLine(line))
+    XCTAssertTrue(watcher.parseLine(line))
+    // No id to dedupe on — both lines accumulate (pre-existing behavior).
+    XCTAssertEqual(watcher.totalTokensIn, 100)
+  }
+
+  func testDuplicateLineStillUpdatesContextAndText() {
+    let watcher = makeWatcher()
+    let first = """
+      {"type":"assistant","requestId":"req_1","message":{"id":"msg_a",\
+      "model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"t1","name":"Bash"}],\
+      "usage":{"input_tokens":100,"output_tokens":10,"cache_creation_input_tokens":0,\
+      "cache_read_input_tokens":0}}}
+      """
+    let second = """
+      {"type":"assistant","requestId":"req_1","message":{"id":"msg_a",\
+      "model":"claude-sonnet-4-6","content":[{"type":"text","text":"done"}],\
+      "usage":{"input_tokens":100,"output_tokens":10,"cache_creation_input_tokens":0,\
+      "cache_read_input_tokens":0}}}
+      """
+    XCTAssertTrue(watcher.parseLine(first))
+    XCTAssertTrue(watcher.parseLine(second))
+
+    // Usage counted once, but the text block on the duplicate line is kept.
+    XCTAssertEqual(watcher.totalTokensIn, 100)
+    XCTAssertEqual(watcher.latestAssistantText, "done")
+  }
 }

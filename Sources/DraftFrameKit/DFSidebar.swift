@@ -1047,6 +1047,7 @@ final class DFSidebar: NSView {
         icon: statusIcon, text: wd.name, detail: detail,
         target: self, action: #selector(watchdogRowClicked(_:)))
       row.watchdogIndex = i
+      row.toolTip = wd.summary
 
       // Right-click context menu
       let menu = NSMenu()
@@ -1094,10 +1095,19 @@ final class DFSidebar: NSView {
     guard let path = activePRConfigPath() else { return }
     let config = PRMonitor.shared.config(for: path)
 
-    let specs: [(key: PRActionKey, title: String, icon: String, on: Bool)] = [
-      (.autoFix, "Auto-fix CI", "wand.and.stars", config.autoFix),
-      (.autoMerge, "Auto-merge PR", "arrow.triangle.merge", config.autoMerge),
-      (.autoArchive, "Auto-archive PR", "archivebox", config.autoArchive),
+    let specs: [(key: PRActionKey, title: String, icon: String, on: Bool, tooltip: String)] = [
+      (
+        .autoFix, "Auto-fix CI", "wand.and.stars", config.autoFix,
+        "Asks Claude to investigate and fix failing CI checks when this project's PR starts failing."
+      ),
+      (
+        .autoMerge, "Auto-merge PR", "arrow.triangle.merge", config.autoMerge,
+        "Queues a squash merge (`gh pr merge --squash --auto`) when the PR's checks pass."
+      ),
+      (
+        .autoArchive, "Auto-archive PR", "archivebox", config.autoArchive,
+        "Closes the session and removes its worktree after the PR is merged or closed."
+      ),
     ]
 
     for spec in specs {
@@ -1106,6 +1116,7 @@ final class DFSidebar: NSView {
         text: spec.title, detail: spec.on ? "on" : "off",
         target: self, action: #selector(togglePRActionFromRow(_:)))
       row.prActionKey = spec.key
+      row.toolTip = spec.tooltip
       row.heightAnchor.constraint(equalToConstant: 28).isActive = true
       watchdogStack.addArrangedSubview(row)
     }
@@ -1436,7 +1447,10 @@ final class ClickableRow: NSView {
 
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
-    for area in trackingAreas { removeTrackingArea(area) }
+    // Only remove our own tracking areas — AppKit installs its own on this
+    // view to drive `toolTip` hover detection, and removing those kills
+    // tooltips for the row.
+    for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
     addTrackingArea(
       NSTrackingArea(
         rect: bounds,
