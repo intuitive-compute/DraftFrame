@@ -336,14 +336,37 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   /// `requestOpenLink` feeds the raw matched text to `NSWorkspace.open`, which
   /// fails with Finder error -50 for schemeless file paths. Returning `nil`
   /// consumes the click; returning the event lets SwiftTerm handle web links.
+  /// Window location of the last left mouse-down, used to tell a stationary
+  /// click (open PR ref) apart from a drag-selection ending over a ref.
+  private var mouseDownLocation: NSPoint?
+
   private func installMouseMonitor() {
     guard mouseMonitor == nil else { return }
-    mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+    mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) {
+      [weak self] event in
       guard let self = self,
-        event.modifierFlags.contains(.command),
         event.window === self.window,
         self.window?.isKeyWindow == true
       else { return event }
+
+      if event.type == .leftMouseDown {
+        self.mouseDownLocation = event.locationInWindow
+        return event
+      }
+
+      // PR refs open on a plain click — no cmd needed. Restricted to a
+      // stationary single click so drag-selections and double-click word
+      // selection over a ref still behave normally.
+      if !event.modifierFlags.contains(.command) {
+        guard event.clickCount == 1,
+          let down = self.mouseDownLocation,
+          hypot(event.locationInWindow.x - down.x, event.locationInWindow.y - down.y) < 4,
+          let (text, col) = self.lineAndColumn(at: event),
+          let url = self.prURL(in: text, col: col)
+        else { return event }
+        NSWorkspace.shared.open(url)
+        return nil
+      }
 
       // bounds-checked: returns nil when the click isn't on this view.
       guard let (text, col) = self.lineAndColumn(at: event) else { return event }
@@ -387,9 +410,58 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       let p = self.convert(event.locationInWindow, from: nil)
       self.hoverPoint = self.bounds.contains(p) ? p : nil
       self.applyHover()
+      self.updateLinkHover(at: self.hoverPoint)
       return event
     }
   }
+
+  // MARK: - Link hover cursor
+
+  /// True while the pointer rests on a cmd+clickable target (PR ref, file
+  /// path, or web link) — switches the cursor to a pointing hand.
+  private var linkHoverActive = false
+
+  /// Cell key (column + line text) of the last hover hit-test, so the
+  /// regex and disk lookups don't rerun for every pixel of pointer travel
+  /// within the same cell.
+  private var lastLinkHoverKey: String?
+
+  private func updateLinkHover(at localPoint: NSPoint?) {
+    let wasActive = linkHoverActive
+    if let p = localPoint, let (text, col) = lineAndColumn(atLocal: p) {
+      let key = "\(col)|\(text)"
+      if key != lastLinkHoverKey {
+        lastLinkHoverKey = key
+        linkHoverActive = isClickableTarget(in: text, col: col)
+      }
+    } else {
+      lastLinkHoverKey = nil
+      linkHoverActive = false
+    }
+    // SwiftTerm's resetCursorRects isn't open, so the cursor is set
+    // imperatively: re-assert the hand every move while active (AppKit
+    // re-applies the iBeam cursor rect at tracking boundaries), and
+    // restore the iBeam once on the way out.
+    if linkHoverActive {
+      NSCursor.pointingHand.set()
+    } else if wasActive {
+      NSCursor.iBeam.set()
+    }
+  }
+
+  /// Mirrors the cmd+click hit-testing, but only for the token directly
+  /// under the pointer — no nearest-token forgiveness, so the hand cursor
+  /// doesn't appear over whitespace elsewhere on a line containing a path.
+  private func isClickableTarget(in text: String, col: Int) -> Bool {
+    if prURL(in: text, col: col) != nil { return true }
+    guard let token = tokenAtClick(in: text, col: col) else { return false }
+    if Self.hasOpenableScheme(token) { return true }
+    let cwd = sessionWorkingDirectory()
+    return Self.pathCandidates(from: token).contains {
+      Self.resolveExistingFile($0.path, cwd: cwd) != nil
+    }
+  }
+
 
   private func removeMouseMonitor() {
     if let monitor = mouseMonitor {
@@ -402,6 +474,8 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     }
     hoverPoint = nil
     applyHover()
+    lastLinkHoverKey = nil
+    linkHoverActive = false
   }
 
   /// Map a click to the text of the terminal line under it and the column hit.
