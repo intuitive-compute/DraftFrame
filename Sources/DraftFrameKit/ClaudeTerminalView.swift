@@ -462,7 +462,6 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     }
   }
 
-
   private func removeMouseMonitor() {
     if let monitor = mouseMonitor {
       NSEvent.removeMonitor(monitor)

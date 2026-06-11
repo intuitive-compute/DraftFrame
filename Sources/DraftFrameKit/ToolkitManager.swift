@@ -282,4 +282,3 @@ final class ToolkitManager {
 extension Notification.Name {
   static let toolkitDidChange = Notification.Name("DFToolkitDidChange")
 }
-
