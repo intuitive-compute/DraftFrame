@@ -92,6 +92,10 @@ final class DFSidebar: NSView {
       self, selector: #selector(refreshWatchdogs),
       name: .prStatusDidChange, object: nil
     )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(toolkitRunStateChanged),
+      name: .toolkitRunStateDidChange, object: nil
+    )
   }
 
   @available(*, unavailable)
@@ -885,8 +889,9 @@ final class DFSidebar: NSView {
 
     let commands = ToolkitManager.shared.commands
     for (i, cmd) in commands.enumerated() {
+      let isRunning = ToolkitRunManager.shared.isRunning(key: ToolkitRun.key(for: cmd))
       let row = makeClickableRow(
-        icon: cmd.icon, text: cmd.name, detail: nil,
+        icon: cmd.icon, text: cmd.name, detail: isRunning ? "running" : nil,
         target: self, action: #selector(toolkitCommandClicked(_:)))
       row.toolkitIndex = i
       row.heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -927,108 +932,33 @@ final class DFSidebar: NSView {
     guard idx >= 0, idx < commands.count else { return }
     let cmd = commands[idx]
 
-    // Run in active session's worktree directory
-    let dir = SessionManager.shared.activeSession?.worktreePath
-
-    // Close any existing popover
     outputPopover?.close()
 
-    // Build the popover content
+    // Reattach to an in-flight run (or a finished one whose result hasn't
+    // been seen yet) instead of starting a duplicate. Runs live in
+    // ToolkitRunManager, so dismissing the transient popover loses nothing.
+    let run: ToolkitRun
+    if let existing = ToolkitRunManager.shared.latestRun(forKey: ToolkitRun.key(for: cmd)),
+      existing.isRunning || !existing.resultSeen
+    {
+      run = existing
+    } else {
+      let dir = SessionManager.shared.activeSession?.worktreePath
+      run = ToolkitRunManager.shared.start(cmd, inDirectory: dir)
+    }
+
     let popover = NSPopover()
     popover.behavior = .transient
-    let vc = NSViewController()
-    let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
-    container.wantsLayer = true
-    container.layer?.backgroundColor = Theme.surface2.cgColor
-
-    // Status line at top
-    let statusLabel = NSTextField(labelWithString: "Running...")
-    statusLabel.font = Theme.mono(11, weight: .medium)
-    statusLabel.textColor = Theme.yellow
-    statusLabel.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(statusLabel)
-
-    let cmdLabel = NSTextField(labelWithString: cmd.command)
-    cmdLabel.font = Theme.mono(10)
-    cmdLabel.textColor = Theme.text3
-    cmdLabel.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(cmdLabel)
-
-    // Separator
-    let sep = NSView()
-    sep.wantsLayer = true
-    sep.layer?.backgroundColor = Theme.surface3.cgColor
-    sep.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(sep)
-
-    // Scrollable text view for output
-    let scrollView = NSScrollView()
-    scrollView.translatesAutoresizingMaskIntoConstraints = false
-    scrollView.hasVerticalScroller = true
-    scrollView.hasHorizontalScroller = false
-    scrollView.drawsBackground = false
-    scrollView.borderType = .noBorder
-    scrollView.autohidesScrollers = true
-    container.addSubview(scrollView)
-
-    let textView = NSTextView()
-    textView.isEditable = false
-    textView.isSelectable = true
-    textView.drawsBackground = true
-    textView.backgroundColor = Theme.surface2
-    textView.textColor = Theme.text1
-    textView.font = Theme.mono(11)
-    textView.isVerticallyResizable = true
-    textView.isHorizontallyResizable = false
-    textView.textContainer?.widthTracksTextView = true
-    textView.textContainer?.containerSize = NSSize(
-      width: 0, height: CGFloat.greatestFiniteMagnitude)
-    textView.autoresizingMask = [.width]
-    scrollView.documentView = textView
-
-    NSLayoutConstraint.activate([
-      statusLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-      statusLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-
-      cmdLabel.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
-      cmdLabel.leadingAnchor.constraint(equalTo: statusLabel.trailingAnchor, constant: 8),
-      cmdLabel.trailingAnchor.constraint(
-        lessThanOrEqualTo: container.trailingAnchor, constant: -12),
-
-      sep.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
-      sep.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-      sep.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-      sep.heightAnchor.constraint(equalToConstant: 1),
-
-      scrollView.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 4),
-      scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-      scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-      scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
-    ])
-
-    vc.view = container
-    popover.contentViewController = vc
+    popover.contentViewController = ToolkitRunViewController(run: run)
     popover.contentSize = NSSize(width: 400, height: 300)
     let senderView = sender as? NSView ?? self
     popover.show(relativeTo: senderView.bounds, of: senderView, preferredEdge: .maxX)
     self.outputPopover = popover
+  }
 
-    ToolkitManager.shared.runCommand(cmd, inDirectory: dir) { output, exitCode in
-      // Update status line
-      if exitCode == 0 {
-        statusLabel.stringValue = "Done (exit 0)"
-        statusLabel.textColor = Theme.green
-      } else {
-        statusLabel.stringValue = "Failed (exit \(exitCode))"
-        statusLabel.textColor = Theme.red
-      }
-
-      // Set output text
-      textView.string = output
-
-      // Auto-scroll to bottom
-      textView.scrollRangeToVisible(NSRange(location: textView.string.count, length: 0))
-    }
+  /// Update toolkit rows' "running" indicators on run start/finish.
+  @objc private func toolkitRunStateChanged() {
+    refreshToolkit()
   }
 
   // MARK: - Watchdogs
