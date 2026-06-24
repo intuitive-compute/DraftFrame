@@ -424,11 +424,11 @@ final class DashboardCard: NSView {
     let btn = NSButton(checkboxWithTitle: title, target: self, action: action)
     btn.translatesAutoresizingMaskIntoConstraints = false
     btn.font = Theme.mono(10)
-    btn.contentTintColor = Theme.text2
+    btn.contentTintColor = Theme.text1
     // Checkbox titles ignore contentTintColor; color them explicitly
     btn.attributedTitle = NSAttributedString(
       string: title,
-      attributes: [.font: Theme.mono(10), .foregroundColor: Theme.text2])
+      attributes: [.font: Theme.mono(10), .foregroundColor: Theme.text1])
     return btn
   }
 
