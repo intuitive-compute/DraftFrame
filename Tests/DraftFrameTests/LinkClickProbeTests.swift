@@ -76,4 +76,19 @@ final class LinkClickTests: XCTestCase {
     let match = term.linkMatch(at: .buffer(Position(col: 20, row: 0)), mode: .explicitAndImplicit)
     XCTAssertEqual(match?.text, "https://github.com/intuitive-compute/DraftFrame")
   }
+
+  /// Cmd+click now opens literal URLs directly rather than deferring to
+  /// SwiftTerm's hover-gated handler, so the token cleaner must recover the
+  /// real URL from the wrappers and prose punctuation around it.
+  func testCleanedURLToken() {
+    let url = "https://github.com/intuitive-compute/DraftFrame"
+    XCTAssertEqual(ClaudeTerminalView.cleanedURLToken(url), url)
+    XCTAssertEqual(ClaudeTerminalView.cleanedURLToken("(\(url))"), url)
+    XCTAssertEqual(ClaudeTerminalView.cleanedURLToken("\(url)."), url)
+    XCTAssertEqual(ClaudeTerminalView.cleanedURLToken("<\(url)>,"), url)
+    // A close-paren whose opener is part of the URL is preserved.
+    let paren = "https://en.wikipedia.org/wiki/Foo_(bar)"
+    XCTAssertEqual(ClaudeTerminalView.cleanedURLToken(paren), paren)
+    XCTAssertNil(ClaudeTerminalView.cleanedURLToken("(((("))
+  }
 }
