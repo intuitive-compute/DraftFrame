@@ -5,6 +5,10 @@ final class DFSidebar: NSView {
 
   private let worktreeStack = NSStackView()
   private let filesStack = NSStackView()
+
+  /// Ordered snapshot of the CHANGES rows, mirroring `filesStack`. Passed to
+  /// the diff overlay so Up/Down can step through the same list.
+  private var changedFileRefs: [DFDiffOverlay.DiffFileRef] = []
   private let toolkitStack = NSStackView()
   private let watchdogStack = NSStackView()
   private var outputPopover: NSPopover?
@@ -743,11 +747,17 @@ final class DFSidebar: NSView {
       filesStack.removeArrangedSubview(v)
       v.removeFromSuperview()
     }
+    changedFileRefs = []
 
-    guard let projectDir = SessionManager.shared.projectDir else { return }
+    // Scope the changes list to the directory of the session the user is
+    // viewing: its worktree when it has one, otherwise the project root.
+    guard
+      let worktreeDir = SessionManager.shared.activeSession?.worktreePath
+        ?? SessionManager.shared.projectDir
+    else { return }
 
     // Run git status to get changed files
-    let changedFiles = gitChangedFiles(in: projectDir)
+    let changedFiles = gitChangedFiles(in: worktreeDir)
 
     if changedFiles.isEmpty {
       let emptyLabel = label("No changes", size: 11, color: Theme.text3)
@@ -787,12 +797,19 @@ final class DFSidebar: NSView {
         statusName = "Changed"
       }
 
-      let fullPath = (projectDir as NSString).appendingPathComponent(file.path)
+      // Renames arrive as "old -> new"; the new path is what we diff and open.
+      let relativePath = file.path.components(separatedBy: " -> ").last ?? file.path
+      let fullPath = (worktreeDir as NSString).appendingPathComponent(relativePath)
       let row = makeClickableRow(
         icon: statusIcon, text: file.path, detail: nil,
         target: self, action: #selector(fileRowClicked(_:)))
       row.filePath = fullPath
       row.isDirectory = false
+      row.diffIndex = changedFileRefs.count
+      changedFileRefs.append(
+        DFDiffOverlay.DiffFileRef(
+          relativePath: relativePath, worktreeDir: worktreeDir, status: file.status,
+          displayPath: relativePath))
       row.toolTip = statusName
       row.heightAnchor.constraint(equalToConstant: 24).isActive = true
 
@@ -860,23 +877,20 @@ final class DFSidebar: NSView {
   }
 
   @objc private func fileRowClicked(_ sender: AnyObject) {
-    guard let row = sender as? ClickableRow, let path = row.filePath else { return }
+    guard let row = sender as? ClickableRow else { return }
 
     if row.isDirectory {
       // Could expand directory in future; for now, no-op
       return
     }
 
-    // Open file in editor (auto-show editor)
+    // Open the diff for this file in the session overlay (dismissible with Esc,
+    // navigable with Up/Down across the whole CHANGES list).
+    let index = row.diffIndex
+    guard changedFileRefs.indices.contains(index) else { return }
     NotificationCenter.default.post(
-      name: .openFileInEditor,
-      object: nil,
-      userInfo: ["path": path]
-    )
-    // Also tell window controller to show editor
-    NotificationCenter.default.post(
-      name: .toggleEditorPane, object: nil,
-      userInfo: ["show": true])
+      name: .showFileDiff, object: nil,
+      userInfo: ["files": changedFileRefs, "index": index])
   }
 
   // MARK: - Toolkit
@@ -1344,6 +1358,10 @@ final class ClickableRow: NSView {
   var filePath: String?
   var isDirectory: Bool = false
   var prActionKey: PRActionKey?
+
+  /// Index of this CHANGES row within the sidebar's `changedFileRefs`, used to
+  /// open the diff overlay at the right file.
+  var diffIndex: Int = 0
 
   init(target: AnyObject?, action: Selector?) {
     self.target = target
