@@ -65,6 +65,23 @@ final class DFSidebar: NSView {
   }
   private var lastContentSnapshot: WorktreesContentSnapshot?
 
+  /// Comparable snapshot of the rendered CHANGES rows. `refreshFiles()` is
+  /// driven by `.sessionsDidChange`, which fires repeatedly while an agent
+  /// works; we use this to rebuild the rows only when the actual changed-file
+  /// set differs, instead of tearing the stack down on every notification.
+  private struct FilesContentSnapshot: Equatable {
+    let worktreeDir: String?
+    let files: [ChangedFile]
+  }
+  private var lastFilesSnapshot: FilesContentSnapshot?
+
+  /// Recursively watches the active session's scoped directory so the CHANGES
+  /// list updates live on any file edit, including ones made outside the app.
+  /// Recreated whenever the scoped directory changes; `watchedFilesDir` tracks
+  /// the path it's currently rooted at so we don't tear it down needlessly.
+  private var filesWatcher: DirectoryWatcher?
+  private var watchedFilesDir: String?
+
   /// Per-project view references so collapse/expand can animate `isHidden`
   /// on existing rows instead of tearing the stack down and rebuilding.
   private var projectChevronViews: [String: NSImageView] = [:]
@@ -280,11 +297,20 @@ final class DFSidebar: NSView {
     refreshFiles()
     refreshToolkit()
     refreshWatchdogs()
+    updateFilesWatcher()
 
-    // Refresh file list when project directory changes
+    // Rebuild the CHANGES list (and re-root the file watcher) when the user
+    // switches sessions, since that changes the scoped directory.
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(activeSessionChanged),
+      name: .activeSessionDidChange, object: nil
+    )
+    // Belt-and-braces fallback: also refresh whenever an agent advances (and
+    // on the ~1.5s status polls), in case FSEvents misses a change or hasn't
+    // started yet. The snapshot guard in refreshFiles() keeps no-ops cheap.
     NotificationCenter.default.addObserver(
       self, selector: #selector(refreshFiles),
-      name: .activeSessionDidChange, object: nil
+      name: .sessionsDidChange, object: nil
     )
 
     // Auto-refresh toolkit when config file changes
@@ -742,22 +768,53 @@ final class DFSidebar: NSView {
 
   // MARK: - Files
 
+  @objc private func activeSessionChanged() {
+    updateFilesWatcher()
+    refreshFiles()
+  }
+
+  /// (Re)root the recursive file watcher at the active session's scoped
+  /// directory. No-op when the directory is unchanged so we don't tear down a
+  /// healthy FSEvents stream on every session-state notification.
+  private func updateFilesWatcher() {
+    let dir =
+      SessionManager.shared.activeSession?.worktreePath
+      ?? SessionManager.shared.projectDir
+    guard dir != watchedFilesDir else { return }
+    watchedFilesDir = dir
+
+    // Drop the old stream before starting a new one.
+    filesWatcher = nil
+    guard let dir = dir else { return }
+    filesWatcher = DirectoryWatcher(path: dir) { [weak self] in
+      self?.refreshFiles()
+    }
+  }
+
   @objc private func refreshFiles() {
+    // Scope the changes list to the directory of the session the user is
+    // viewing: its worktree when it has one, otherwise the project root.
+    let worktreeDir =
+      SessionManager.shared.activeSession?.worktreePath
+      ?? SessionManager.shared.projectDir
+
+    // Run git status to get changed files for the active scope.
+    let changedFiles = worktreeDir.map { gitChangedFiles(in: $0) } ?? []
+
+    // `.sessionsDidChange` lands here repeatedly while an agent works; skip the
+    // teardown/rebuild (and the hover/click disruption it causes) unless the
+    // changed-file set actually differs from what's already rendered.
+    let snapshot = FilesContentSnapshot(worktreeDir: worktreeDir, files: changedFiles)
+    guard snapshot != lastFilesSnapshot else { return }
+    lastFilesSnapshot = snapshot
+
     for v in filesStack.arrangedSubviews {
       filesStack.removeArrangedSubview(v)
       v.removeFromSuperview()
     }
     changedFileRefs = []
 
-    // Scope the changes list to the directory of the session the user is
-    // viewing: its worktree when it has one, otherwise the project root.
-    guard
-      let worktreeDir = SessionManager.shared.activeSession?.worktreePath
-        ?? SessionManager.shared.projectDir
-    else { return }
-
-    // Run git status to get changed files
-    let changedFiles = gitChangedFiles(in: worktreeDir)
+    guard let worktreeDir = worktreeDir else { return }
 
     if changedFiles.isEmpty {
       let emptyLabel = label("No changes", size: 11, color: Theme.text3)
@@ -822,7 +879,7 @@ final class DFSidebar: NSView {
     }
   }
 
-  private struct ChangedFile {
+  private struct ChangedFile: Equatable {
     let status: String  // M, A, D, ?, R, etc.
     let path: String
   }
