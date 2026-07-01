@@ -85,9 +85,16 @@ final class Session {
   var name: String
   var state: SessionState
   var model: String
+  /// Cost/tokens for the current claude run, matching Claude Code's `/usage`
+  /// "Session" total. A tab can span many runs; these reset per run.
   var cost: Double
   var tokensIn: Int
   var tokensOut: Int
+  /// Cumulative cost/tokens across every claude run in this tab. Surfaced
+  /// alongside the per-run figure (e.g. in the cost label's tooltip).
+  var lifetimeCost: Double = 0
+  var lifetimeTokensIn: Int = 0
+  var lifetimeTokensOut: Int = 0
   /// Tokens fed to the model on the most recent assistant turn.
   /// Reflects the live context window usage, not a cumulative sum.
   var contextTokens: Int
@@ -155,11 +162,16 @@ final class Session {
   /// Start monitoring the JSONL file for the given working directory.
   func startJSONLWatcher(directory: String) {
     jsonlWatcher = SessionJSONLWatcher(workingDirectory: directory) {
-      [weak self] cost, tokensIn, tokensOut, model, contextTokens, maxContextTokens in
+      [weak self]
+      cost, tokensIn, tokensOut, model, contextTokens, maxContextTokens,
+      lifetimeCost, lifetimeTokensIn, lifetimeTokensOut in
       guard let self = self else { return }
       self.cost = cost
       self.tokensIn = tokensIn
       self.tokensOut = tokensOut
+      self.lifetimeCost = lifetimeCost
+      self.lifetimeTokensIn = lifetimeTokensIn
+      self.lifetimeTokensOut = lifetimeTokensOut
       self.model = model
       self.contextTokens = contextTokens
       // 0 means "no JSONL signal yet" — leave the value the PTY banner set.
@@ -192,6 +204,12 @@ final class SessionManager {
 
   var totalCost: Double {
     sessions.reduce(0) { $0 + $1.cost }
+  }
+
+  /// Cumulative cost across every session's full run history this app
+  /// session, summing each session's lifetime figure.
+  var lifetimeTotalCost: Double {
+    sessions.reduce(0) { $0 + $1.lifetimeCost }
   }
 
   var totalTokensIn: Int {

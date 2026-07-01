@@ -285,10 +285,14 @@ final class DashboardCard: NSView {
     modelLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(modelLabel)
 
-    // Cost & Tokens
+    // Cost & Tokens. Shown figure is the current run (matches /usage); the
+    // tooltip surfaces this tab's lifetime spend across all runs.
     let costLabel = NSTextField(labelWithString: String(format: "Cost: $%.2f", session.cost))
     costLabel.font = Theme.mono(11)
     costLabel.textColor = Theme.text1
+    costLabel.toolTip = String(
+      format: "This run: $%.2f (matches /usage)\nThis tab, all runs: $%.2f",
+      session.cost, session.lifetimeCost)
     costLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(costLabel)
 

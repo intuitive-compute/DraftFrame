@@ -34,12 +34,25 @@ final class SessionJSONLWatcher {
     _ tokensOut: Int,
     _ model: String,
     _ contextTokens: Int,
-    _ maxContextTokens: Int
+    _ maxContextTokens: Int,
+    _ lifetimeCost: Double,
+    _ lifetimeTokensIn: Int,
+    _ lifetimeTokensOut: Int
   ) -> Void
 
+  /// Cost/tokens for the CURRENT claude run only (the session file we're
+  /// watching now). Reset when we switch to a newer session file, so these
+  /// mirror Claude Code's own `/usage` "Session" total. A DraftFrame tab can
+  /// outlive many `claude` runs; without this reset the figures would balloon
+  /// past `/usage`. See `lifetime*` for the cumulative figure across runs.
   private(set) var totalCost: Double = 0
   private(set) var totalTokensIn: Int = 0
   private(set) var totalTokensOut: Int = 0
+  /// Cumulative cost/tokens across every run watched in this working
+  /// directory. Never reset on a session switch.
+  private(set) var lifetimeCost: Double = 0
+  private(set) var lifetimeTokensIn: Int = 0
+  private(set) var lifetimeTokensOut: Int = 0
   private(set) var latestModel: String = "sonnet"
   /// Tokens fed to the model on the most recent assistant turn
   /// (input + cache_creation + cache_read). Snapshot, not a sum.
@@ -132,9 +145,16 @@ final class SessionJSONLWatcher {
     startWatching(path: jsonlPath)
   }
 
-  /// Encode a directory path the way Claude Code does: replace `/` with `-`, prepend `-`.
+  /// Encode a directory path the way Claude Code names its project folders:
+  /// every character that isn't an ASCII letter or digit is replaced with `-`.
+  /// So `/` and `.` both map to `-`, and `/.claude/` becomes `--claude-`.
+  /// Matching this exactly is what lets us find the transcript for worktree
+  /// sessions, which live under a dotted path like
+  /// `.../.claude/worktrees/<name>`. A naive `/`-only replacement yields
+  /// `-.claude-`, so `claudeProjectDir()` never resolves and cost/tokens stay
+  /// at zero for every worktree session.
   static func encodePath(_ path: String) -> String {
-    return "-" + path.dropFirst().replacingOccurrences(of: "/", with: "-")
+    return String(path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
   }
 
   private func claudeProjectDir() -> String? {
@@ -242,6 +262,14 @@ final class SessionJSONLWatcher {
     watchedPath = path
     fileOffset = 0
     lineBuffer = ""
+    // A new session file is a new claude run: zero the current-run totals so
+    // the card mirrors `/usage`'s per-session figure. Lifetime totals persist.
+    // `countedMessages` is intentionally kept: the new file's message ids
+    // won't collide with the old file's, and keeping the set preserves correct
+    // lifetime dedup.
+    totalCost = 0
+    totalTokensIn = 0
+    totalTokensOut = 0
 
     let fd = open(path, O_EVTONLY)
     guard fd >= 0 else { return }
@@ -336,8 +364,11 @@ final class SessionJSONLWatcher {
       let model = latestModel
       let ctx = currentContextTokens
       let maxCtx = parsedMaxContextTokens
+      let lifeCost = lifetimeCost
+      let lifeIn = lifetimeTokensIn
+      let lifeOut = lifetimeTokensOut
       DispatchQueue.main.async { [weak self] in
-        self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx)
+        self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
       }
     }
   }
@@ -413,9 +444,14 @@ final class SessionJSONLWatcher {
       }
     }
 
-    // Accumulate tokens (report total input = regular + cache tokens)
-    totalTokensIn += inputTokens + cacheCreationTokens + cacheReadTokens
+    // Accumulate tokens (report total input = regular + cache tokens). The
+    // current-run and lifetime totals advance together; only the run totals
+    // get zeroed when we switch to a newer session file.
+    let turnTokensIn = inputTokens + cacheCreationTokens + cacheReadTokens
+    totalTokensIn += turnTokensIn
     totalTokensOut += outputTokens
+    lifetimeTokensIn += turnTokensIn
+    lifetimeTokensOut += outputTokens
 
     // Compute cost with cache-aware pricing
     let pricing = Self.pricing[latestModel] ?? Self.pricing["sonnet"]!
@@ -423,7 +459,9 @@ final class SessionJSONLWatcher {
     let cacheCreateCost = Double(cacheCreationTokens) * pricing.cacheCreationPerToken
     let cacheReadCost = Double(cacheReadTokens) * pricing.cacheReadPerToken
     let outputCost = Double(outputTokens) * pricing.outputPerToken
-    totalCost += inputCost + cacheCreateCost + cacheReadCost + outputCost
+    let turnCost = inputCost + cacheCreateCost + cacheReadCost + outputCost
+    totalCost += turnCost
+    lifetimeCost += turnCost
 
     return true
   }
