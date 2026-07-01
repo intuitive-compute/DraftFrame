@@ -503,6 +503,14 @@ final class DFSidebar: NSView {
           openItem.target = self
           openItem.representedObject = wt
           wtMenu.addItem(openItem)
+          let branchItem = NSMenuItem(
+            title: "New Worktree from Here", action: #selector(addWorktreeFromWorktree(_:)),
+            keyEquivalent: "")
+          branchItem.target = self
+          // Carry the source worktree alongside the project's repo root so the
+          // action can base the new worktree's branch off this worktree.
+          branchItem.representedObject = WorktreeBranchRequest(source: wt, repoRoot: project.path)
+          wtMenu.addItem(branchItem)
           if !isBase {
             wtMenu.addItem(NSMenuItem.separator())
             let rmItem = NSMenuItem(
@@ -755,6 +763,46 @@ final class DFSidebar: NSView {
       do {
         let path = try WorktreeManager.shared.createWorktree(
           repoRoot: project.path, name: name)
+        SessionManager.shared.createSession(name: name, worktreePath: path)
+        self.refreshWorktrees()
+      } catch {
+        let errAlert = NSAlert()
+        errAlert.messageText = "Worktree Error"
+        errAlert.informativeText = error.localizedDescription
+        errAlert.runModal()
+      }
+    }
+  }
+
+  @objc private func addWorktreeFromWorktree(_ sender: NSMenuItem) {
+    guard let req = sender.representedObject as? WorktreeBranchRequest else { return }
+    let source = req.source
+    // Base the new branch off the source worktree's branch, or its HEAD commit
+    // when the worktree is in a detached state.
+    let base = source.branch.isEmpty ? source.head : source.branch
+    guard !base.isEmpty else { return }
+    let sourceName =
+      source.branch.isEmpty ? (source.path as NSString).lastPathComponent : source.branch
+
+    let alert = NSAlert()
+    alert.messageText = "New Worktree from \(sourceName)"
+    alert.informativeText = "Enter a name for the new worktree branch based on \(sourceName):"
+    alert.addButton(withTitle: "Create")
+    alert.addButton(withTitle: "Cancel")
+
+    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+    input.placeholderString = "feature-name"
+    alert.accessoryView = input
+
+    guard let win = window else { return }
+    alert.beginSheetModal(for: win) { response in
+      guard response == .alertFirstButtonReturn else { return }
+      let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !name.isEmpty else { return }
+
+      do {
+        let path = try WorktreeManager.shared.createWorktree(
+          repoRoot: req.repoRoot, name: name, baseBranch: base)
         SessionManager.shared.createSession(name: name, worktreePath: path)
         self.refreshWorktrees()
       } catch {
@@ -1469,5 +1517,12 @@ final class ClickableRow: NSView {
 /// both the worktree to remove and which project's repo it belongs to.
 private struct WorktreeRemovalRequest {
   let worktree: WorktreeManager.Worktree
+  let repoRoot: String
+}
+
+/// Payload stored on a "New Worktree from Here" menu item so the action handler
+/// knows which worktree to branch from and which project's repo it belongs to.
+private struct WorktreeBranchRequest {
+  let source: WorktreeManager.Worktree
   let repoRoot: String
 }
