@@ -62,7 +62,7 @@ enum SessionState: String {
     switch self {
     case .generating: return Theme.green
     case .thinking: return Theme.yellow
-    case .userInput: return Theme.accent
+    case .userInput: return Theme.cyan
     case .needsAttention: return Theme.red
     case .idle: return Theme.cyan
     }
@@ -72,7 +72,7 @@ enum SessionState: String {
     switch self {
     case .generating: return "Generating"
     case .thinking: return "Thinking"
-    case .userInput: return "Input"
+    case .userInput: return "Idle"
     case .needsAttention: return "Attention"
     case .idle: return "Idle"
     }
