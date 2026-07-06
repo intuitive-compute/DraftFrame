@@ -204,6 +204,8 @@ final class SessionCard: NSView {
   private let isActive: Bool
   private var glowLayer: CALayer?
   private var mouseDownPoint: NSPoint?
+  private var prPill: NSTextField?
+  private var prURL: URL?
 
   init(session: Session, isActive: Bool, index: Int) {
     self.session = session
@@ -262,7 +264,7 @@ final class SessionCard: NSView {
     buildCard()
 
     // Click to switch
-    let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
+    let click = NSClickGestureRecognizer(target: self, action: #selector(clicked(_:)))
     addGestureRecognizer(click)
 
     // Double-click to rename
@@ -277,7 +279,15 @@ final class SessionCard: NSView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
-  @objc private func clicked() {
+  @objc private func clicked(_ recognizer: NSClickGestureRecognizer) {
+    // The card-level click gesture consumes the mouseUp before the pill's own
+    // handlers can see it, so pill clicks have to be routed from here.
+    if let pill = prPill, let url = prURL,
+      pill.frame.contains(recognizer.location(in: self))
+    {
+      NSWorkspace.shared.open(url)
+      return
+    }
     SessionManager.shared.switchTo(index: index)
   }
 
@@ -388,6 +398,8 @@ final class SessionCard: NSView {
       let label = makePRPill(status: status)
       label.translatesAutoresizingMaskIntoConstraints = false
       addSubview(label)
+      self.prPill = label
+      self.prURL = URL(string: status.url)
       return label
     }
 
@@ -467,7 +479,7 @@ final class SessionCard: NSView {
   }
 
   private func makePRPill(status: PRStatus) -> NSTextField {
-    let field = NSTextField(labelWithString: status.displayText)
+    let field = PRLinkPill(labelWithString: status.displayText)
     field.font = Theme.mono(9, weight: .medium)
     field.textColor = status.displayColor
     field.toolTip = status.url
@@ -515,6 +527,18 @@ final class SessionCard: NSView {
     img.addRepresentation(rep)
     return img
   }
+}
+
+/// PR status pill that reads as a link. Click handling lives in the card's
+/// gesture handler (the card's click recognizer consumes the mouseUp before
+/// this view would see it); this subclass just supplies the link cursor and
+/// keeps a pill click from doubling as a card drag start.
+private final class PRLinkPill: NSTextField {
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .pointingHand)
+  }
+
+  override func mouseDown(with event: NSEvent) {}
 }
 
 extension SessionCard: NSDraggingSource {
