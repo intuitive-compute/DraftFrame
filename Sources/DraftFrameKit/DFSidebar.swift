@@ -75,6 +75,17 @@ final class DFSidebar: NSView {
   }
   private var lastFilesSnapshot: FilesContentSnapshot?
 
+  /// Runs `git status` off the main thread; a cold or busy repo can take >1s
+  /// to answer, which beachballs the app if spawned from the main queue.
+  private let gitStatusQueue = DispatchQueue(
+    label: "com.draftframe.sidebar.git-status", qos: .userInitiated)
+
+  /// True while a `git status` is in flight. Further `refreshFiles()` calls
+  /// set `filesRefreshQueued` so at most one spawn runs at a time and bursts
+  /// of watcher/notification pings collapse into a single trailing re-check.
+  private var filesRefreshInFlight = false
+  private var filesRefreshQueued = false
+
   /// Recursively watches the active session's scoped directory so the CHANGES
   /// list updates live on any file edit, including ones made outside the app.
   /// Recreated whenever the scoped directory changes; `watchedFilesDir` tracks
@@ -846,9 +857,39 @@ final class DFSidebar: NSView {
       SessionManager.shared.activeSession?.worktreePath
       ?? SessionManager.shared.projectDir
 
-    // Run git status to get changed files for the active scope.
-    let changedFiles = worktreeDir.map { gitChangedFiles(in: $0) } ?? []
+    if filesRefreshInFlight {
+      filesRefreshQueued = true
+      return
+    }
+    filesRefreshInFlight = true
 
+    gitStatusQueue.async { [weak self] in
+      let changedFiles = worktreeDir.map { Self.gitChangedFiles(in: $0) } ?? []
+      DispatchQueue.main.async {
+        guard let self = self else { return }
+        self.filesRefreshInFlight = false
+
+        // The active scope can change while git runs (session switch); the
+        // result belongs to the old scope, so drop it and re-check.
+        let currentDir =
+          SessionManager.shared.activeSession?.worktreePath
+          ?? SessionManager.shared.projectDir
+        guard currentDir == worktreeDir else {
+          self.filesRefreshQueued = false
+          self.refreshFiles()
+          return
+        }
+
+        if self.filesRefreshQueued {
+          self.filesRefreshQueued = false
+          self.refreshFiles()
+        }
+        self.applyChangedFiles(changedFiles, worktreeDir: worktreeDir)
+      }
+    }
+  }
+
+  private func applyChangedFiles(_ changedFiles: [ChangedFile], worktreeDir: String?) {
     // `.sessionsDidChange` lands here repeatedly while an agent works; skip the
     // teardown/rebuild (and the hover/click disruption it causes) unless the
     // changed-file set actually differs from what's already rendered.
@@ -932,7 +973,7 @@ final class DFSidebar: NSView {
     let path: String
   }
 
-  private func gitChangedFiles(in dir: String) -> [ChangedFile] {
+  private static func gitChangedFiles(in dir: String) -> [ChangedFile] {
     let env = ProcessInfo.processInfo.environment
       .filter { !$0.key.hasPrefix("GIT_") }
 

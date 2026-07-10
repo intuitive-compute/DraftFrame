@@ -30,18 +30,34 @@ final class DirectoryWatcher {
       release: nil,
       copyDescription: nil)
 
-    let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+    let callback: FSEventStreamCallback = { _, info, _, eventPaths, _, _ in
       guard let info = info else { return }
       let watcher = Unmanaged<DirectoryWatcher>.fromOpaque(info).takeUnretainedValue()
-      // We don't inspect which paths changed — just re-check from the main
-      // thread. The caller's snapshot guard turns no-op events into cheap
-      // git-status checks.
+
+      // Object-database churn (commits, fetches writing .git/objects/*) never
+      // changes `git status` output; skip it so agent activity doesn't spawn
+      // pointless status runs. Status-relevant files (index, HEAD,
+      // packed-refs) live at the .git root or under .git/refs, whose
+      // directory-granular events still pass. Fail open if the cast fails.
+      let paths = Unmanaged<NSArray>.fromOpaque(eventPaths).takeUnretainedValue() as? [String]
+      if let paths = paths, !paths.isEmpty,
+        paths.allSatisfy({ $0.contains("/.git/objects") })
+      {
+        return
+      }
+
+      // We don't otherwise inspect which paths changed — just re-check from
+      // the main thread. The caller's snapshot guard turns no-op events into
+      // cheap git-status checks.
       DispatchQueue.main.async { watcher.onChange() }
     }
 
     // NoDefer delivers the first event of a burst immediately (then coalesces
     // the rest), so the first edit shows up without waiting out the latency.
-    let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagNoDefer)
+    // UseCFTypes makes `eventPaths` a CFArray of CFStrings for the filter
+    // above.
+    let flags = FSEventStreamCreateFlags(
+      kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagUseCFTypes)
 
     guard
       let stream = FSEventStreamCreate(
