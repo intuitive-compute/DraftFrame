@@ -30,10 +30,6 @@ final class DFSessionBar: NSView {
       self, selector: #selector(sessionsChanged),
       name: .prStatusDidChange, object: nil
     )
-    NotificationCenter.default.addObserver(
-      self, selector: #selector(sessionsChanged),
-      name: .mainBranchCIStatusDidChange, object: nil
-    )
   }
 
   @available(*, unavailable)
@@ -403,19 +399,6 @@ final class SessionCard: NSView {
       return label
     }
 
-    // Main-branch CI pill (only if the repo has Actions runs on its
-    // default branch), e.g. "main passing".
-    let ciStatus = MainBranchCIMonitor.shared.status(for: session)
-    let ciPill: NSTextField? = ciStatus.map { status in
-      let label = NSTextField(labelWithString: status.displayText)
-      label.font = Theme.mono(9, weight: .medium)
-      label.textColor = status.displayColor
-      label.toolTip = status.tooltip
-      label.translatesAutoresizingMaskIntoConstraints = false
-      addSubview(label)
-      return label
-    }
-
     let cardHeight: CGFloat = contextLabel == nil ? 56 : 72
 
     var constraints: [NSLayoutConstraint] = [
@@ -450,30 +433,11 @@ final class SessionCard: NSView {
         cl.topAnchor.constraint(equalTo: dot.bottomAnchor, constant: 5),
       ])
     }
-    // Right side of the dot row: CI pill at the trailing edge, PR pill to
-    // its left when both are present.
-    if let pill = ciPill {
+    if let pill = prPill {
       constraints.append(contentsOf: [
         pill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
         pill.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
       ])
-    }
-    if let pill = prPill {
-      let trailing =
-        ciPill.map { pill.trailingAnchor.constraint(equalTo: $0.leadingAnchor, constant: -8) }
-        ?? pill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10)
-      constraints.append(contentsOf: [
-        trailing,
-        pill.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
-      ])
-    }
-    // Keep the model label from running under the pills on narrow cards.
-    if let leftmostPill = prPill ?? ciPill {
-      modelLabel.lineBreakMode = .byTruncatingTail
-      modelLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-      constraints.append(
-        modelLabel.trailingAnchor.constraint(
-          lessThanOrEqualTo: leftmostPill.leadingAnchor, constant: -8))
     }
     NSLayoutConstraint.activate(constraints)
   }

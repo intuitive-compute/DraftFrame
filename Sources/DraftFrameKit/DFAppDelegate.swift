@@ -34,7 +34,6 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     // Touch singletons so they begin observing session changes.
     _ = WatchdogManager.shared
     _ = PRMonitor.shared
-    _ = MainBranchCIMonitor.shared
 
     buildMenuBar()
 
