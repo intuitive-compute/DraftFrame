@@ -5,6 +5,10 @@ final class DFSidebar: NSView {
 
   private let worktreeStack = NSStackView()
   private let filesStack = NSStackView()
+
+  /// Ordered snapshot of the CHANGES rows, mirroring `filesStack`. Passed to
+  /// the diff overlay so Up/Down can step through the same list.
+  private var changedFileRefs: [DFDiffOverlay.DiffFileRef] = []
   private let toolkitStack = NSStackView()
   private let watchdogStack = NSStackView()
   private var outputPopover: NSPopover?
@@ -60,6 +64,23 @@ final class DFSidebar: NSView {
     let isBare: Bool
   }
   private var lastContentSnapshot: WorktreesContentSnapshot?
+
+  /// Comparable snapshot of the rendered CHANGES rows. `refreshFiles()` is
+  /// driven by `.sessionsDidChange`, which fires repeatedly while an agent
+  /// works; we use this to rebuild the rows only when the actual changed-file
+  /// set differs, instead of tearing the stack down on every notification.
+  private struct FilesContentSnapshot: Equatable {
+    let worktreeDir: String?
+    let files: [ChangedFile]
+  }
+  private var lastFilesSnapshot: FilesContentSnapshot?
+
+  /// Recursively watches the active session's scoped directory so the CHANGES
+  /// list updates live on any file edit, including ones made outside the app.
+  /// Recreated whenever the scoped directory changes; `watchedFilesDir` tracks
+  /// the path it's currently rooted at so we don't tear it down needlessly.
+  private var filesWatcher: DirectoryWatcher?
+  private var watchedFilesDir: String?
 
   /// Per-project view references so collapse/expand can animate `isHidden`
   /// on existing rows instead of tearing the stack down and rebuilding.
@@ -276,11 +297,20 @@ final class DFSidebar: NSView {
     refreshFiles()
     refreshToolkit()
     refreshWatchdogs()
+    updateFilesWatcher()
 
-    // Refresh file list when project directory changes
+    // Rebuild the CHANGES list (and re-root the file watcher) when the user
+    // switches sessions, since that changes the scoped directory.
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(activeSessionChanged),
+      name: .activeSessionDidChange, object: nil
+    )
+    // Belt-and-braces fallback: also refresh whenever an agent advances (and
+    // on the ~1.5s status polls), in case FSEvents misses a change or hasn't
+    // started yet. The snapshot guard in refreshFiles() keeps no-ops cheap.
     NotificationCenter.default.addObserver(
       self, selector: #selector(refreshFiles),
-      name: .activeSessionDidChange, object: nil
+      name: .sessionsDidChange, object: nil
     )
 
     // Auto-refresh toolkit when config file changes
@@ -473,6 +503,14 @@ final class DFSidebar: NSView {
           openItem.target = self
           openItem.representedObject = wt
           wtMenu.addItem(openItem)
+          let branchItem = NSMenuItem(
+            title: "New Worktree from Here", action: #selector(addWorktreeFromWorktree(_:)),
+            keyEquivalent: "")
+          branchItem.target = self
+          // Carry the source worktree alongside the project's repo root so the
+          // action can base the new worktree's branch off this worktree.
+          branchItem.representedObject = WorktreeBranchRequest(source: wt, repoRoot: project.path)
+          wtMenu.addItem(branchItem)
           if !isBase {
             wtMenu.addItem(NSMenuItem.separator())
             let rmItem = NSMenuItem(
@@ -736,18 +774,95 @@ final class DFSidebar: NSView {
     }
   }
 
+  @objc private func addWorktreeFromWorktree(_ sender: NSMenuItem) {
+    guard let req = sender.representedObject as? WorktreeBranchRequest else { return }
+    let source = req.source
+    // Base the new branch off the source worktree's branch, or its HEAD commit
+    // when the worktree is in a detached state.
+    let base = source.branch.isEmpty ? source.head : source.branch
+    guard !base.isEmpty else { return }
+    let sourceName =
+      source.branch.isEmpty ? (source.path as NSString).lastPathComponent : source.branch
+
+    let alert = NSAlert()
+    alert.messageText = "New Worktree from \(sourceName)"
+    alert.informativeText = "Enter a name for the new worktree branch based on \(sourceName):"
+    alert.addButton(withTitle: "Create")
+    alert.addButton(withTitle: "Cancel")
+
+    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+    input.placeholderString = "feature-name"
+    alert.accessoryView = input
+
+    guard let win = window else { return }
+    alert.beginSheetModal(for: win) { response in
+      guard response == .alertFirstButtonReturn else { return }
+      let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !name.isEmpty else { return }
+
+      do {
+        let path = try WorktreeManager.shared.createWorktree(
+          repoRoot: req.repoRoot, name: name, baseBranch: base)
+        SessionManager.shared.createSession(name: name, worktreePath: path)
+        self.refreshWorktrees()
+      } catch {
+        let errAlert = NSAlert()
+        errAlert.messageText = "Worktree Error"
+        errAlert.informativeText = error.localizedDescription
+        errAlert.runModal()
+      }
+    }
+  }
+
   // MARK: - Files
 
+  @objc private func activeSessionChanged() {
+    updateFilesWatcher()
+    refreshFiles()
+  }
+
+  /// (Re)root the recursive file watcher at the active session's scoped
+  /// directory. No-op when the directory is unchanged so we don't tear down a
+  /// healthy FSEvents stream on every session-state notification.
+  private func updateFilesWatcher() {
+    let dir =
+      SessionManager.shared.activeSession?.worktreePath
+      ?? SessionManager.shared.projectDir
+    guard dir != watchedFilesDir else { return }
+    watchedFilesDir = dir
+
+    // Drop the old stream before starting a new one.
+    filesWatcher = nil
+    guard let dir = dir else { return }
+    filesWatcher = DirectoryWatcher(path: dir) { [weak self] in
+      self?.refreshFiles()
+    }
+  }
+
   @objc private func refreshFiles() {
+    // Scope the changes list to the directory of the session the user is
+    // viewing: its worktree when it has one, otherwise the project root.
+    let worktreeDir =
+      SessionManager.shared.activeSession?.worktreePath
+      ?? SessionManager.shared.projectDir
+
+    // Run git status to get changed files for the active scope.
+    let changedFiles = worktreeDir.map { gitChangedFiles(in: $0) } ?? []
+
+    // `.sessionsDidChange` lands here repeatedly while an agent works; skip the
+    // teardown/rebuild (and the hover/click disruption it causes) unless the
+    // changed-file set actually differs from what's already rendered.
+    let snapshot = FilesContentSnapshot(worktreeDir: worktreeDir, files: changedFiles)
+    guard snapshot != lastFilesSnapshot else { return }
+    lastFilesSnapshot = snapshot
+
     for v in filesStack.arrangedSubviews {
       filesStack.removeArrangedSubview(v)
       v.removeFromSuperview()
     }
+    changedFileRefs = []
 
-    guard let projectDir = SessionManager.shared.projectDir else { return }
-
-    // Run git status to get changed files
-    let changedFiles = gitChangedFiles(in: projectDir)
+    guard let worktreeDir = worktreeDir else { return }
 
     if changedFiles.isEmpty {
       let emptyLabel = label("No changes", size: 11, color: Theme.text3)
@@ -787,12 +902,19 @@ final class DFSidebar: NSView {
         statusName = "Changed"
       }
 
-      let fullPath = (projectDir as NSString).appendingPathComponent(file.path)
+      // Renames arrive as "old -> new"; the new path is what we diff and open.
+      let relativePath = file.path.components(separatedBy: " -> ").last ?? file.path
+      let fullPath = (worktreeDir as NSString).appendingPathComponent(relativePath)
       let row = makeClickableRow(
         icon: statusIcon, text: file.path, detail: nil,
         target: self, action: #selector(fileRowClicked(_:)))
       row.filePath = fullPath
       row.isDirectory = false
+      row.diffIndex = changedFileRefs.count
+      changedFileRefs.append(
+        DFDiffOverlay.DiffFileRef(
+          relativePath: relativePath, worktreeDir: worktreeDir, status: file.status,
+          displayPath: relativePath))
       row.toolTip = statusName
       row.heightAnchor.constraint(equalToConstant: 24).isActive = true
 
@@ -805,7 +927,7 @@ final class DFSidebar: NSView {
     }
   }
 
-  private struct ChangedFile {
+  private struct ChangedFile: Equatable {
     let status: String  // M, A, D, ?, R, etc.
     let path: String
   }
@@ -860,23 +982,20 @@ final class DFSidebar: NSView {
   }
 
   @objc private func fileRowClicked(_ sender: AnyObject) {
-    guard let row = sender as? ClickableRow, let path = row.filePath else { return }
+    guard let row = sender as? ClickableRow else { return }
 
     if row.isDirectory {
       // Could expand directory in future; for now, no-op
       return
     }
 
-    // Open file in editor (auto-show editor)
+    // Open the diff for this file in the session overlay (dismissible with Esc,
+    // navigable with Up/Down across the whole CHANGES list).
+    let index = row.diffIndex
+    guard changedFileRefs.indices.contains(index) else { return }
     NotificationCenter.default.post(
-      name: .openFileInEditor,
-      object: nil,
-      userInfo: ["path": path]
-    )
-    // Also tell window controller to show editor
-    NotificationCenter.default.post(
-      name: .toggleEditorPane, object: nil,
-      userInfo: ["show": true])
+      name: .showFileDiff, object: nil,
+      userInfo: ["files": changedFileRefs, "index": index])
   }
 
   // MARK: - Toolkit
@@ -1345,6 +1464,10 @@ final class ClickableRow: NSView {
   var isDirectory: Bool = false
   var prActionKey: PRActionKey?
 
+  /// Index of this CHANGES row within the sidebar's `changedFileRefs`, used to
+  /// open the diff overlay at the right file.
+  var diffIndex: Int = 0
+
   init(target: AnyObject?, action: Selector?) {
     self.target = target
     self.action = action
@@ -1394,5 +1517,12 @@ final class ClickableRow: NSView {
 /// both the worktree to remove and which project's repo it belongs to.
 private struct WorktreeRemovalRequest {
   let worktree: WorktreeManager.Worktree
+  let repoRoot: String
+}
+
+/// Payload stored on a "New Worktree from Here" menu item so the action handler
+/// knows which worktree to branch from and which project's repo it belongs to.
+private struct WorktreeBranchRequest {
+  let source: WorktreeManager.Worktree
   let repoRoot: String
 }

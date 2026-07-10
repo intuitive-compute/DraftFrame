@@ -6,15 +6,22 @@ import SwiftTerm
 final class DFTerminalPane: NSView {
 
   private let tabBar = NSView()
+  /// Horizontally scrolling container for the tab stack. Clips and scrolls the
+  /// tabs instead of letting them push out the window's minimum width.
+  private let tabScroll = NSScrollView()
   private let tabStack = NSStackView()
   private let terminalContainer = NSView()
   /// Each entry is the container view for a tab (holds name button + close button).
   private var tabViews: [NSView] = []
 
+  /// Largest width a single tab is allowed to occupy; longer session names
+  /// truncate with a tail ellipsis so one long branch name can't dominate.
+  private static let maxTabWidth: CGFloat = 180
+
   /// Adjustable so the window controller can shift the tab row right when the
   /// sidebar is collapsed (clears the macOS traffic lights). The terminal
   /// container below stays full-width.
-  private var tabStackLeadingConstraint: NSLayoutConstraint?
+  private var tabScrollLeadingConstraint: NSLayoutConstraint?
 
   /// Per-session loading overlays, present only while a freshly created
   /// session's Claude TUI is starting up. Keyed by session id.
@@ -79,12 +86,25 @@ final class DFTerminalPane: NSView {
     tabBorder.translatesAutoresizingMaskIntoConstraints = false
     tabBar.addSubview(tabBorder)
 
-    // Scrollable tab stack
+    // Horizontally scrolling tab strip. Wrapping the stack in a scroll view
+    // keeps the tab row from forcing the window wider than its content: the
+    // strip clips and scrolls as tabs accumulate instead of raising the
+    // window's minimum width to the sum of all tab widths.
+    tabScroll.translatesAutoresizingMaskIntoConstraints = false
+    tabScroll.hasHorizontalScroller = false
+    tabScroll.hasVerticalScroller = false
+    tabScroll.autohidesScrollers = true
+    tabScroll.drawsBackground = false
+    tabScroll.borderType = .noBorder
+    tabScroll.scrollerStyle = .overlay
+    tabScroll.verticalScrollElasticity = .none
+    tabBar.addSubview(tabScroll)
+
     tabStack.orientation = .horizontal
     tabStack.spacing = 0
     tabStack.alignment = .centerY
     tabStack.translatesAutoresizingMaskIntoConstraints = false
-    tabBar.addSubview(tabStack)
+    tabScroll.documentView = tabStack
 
     // New tab "+" button
     let addBtn = NSButton(title: "+", target: self, action: #selector(addTabClicked))
@@ -101,9 +121,10 @@ final class DFTerminalPane: NSView {
     terminalContainer.translatesAutoresizingMaskIntoConstraints = false
     addSubview(terminalContainer)
 
-    let tabStackLeading = tabStack.leadingAnchor.constraint(
+    let tabScrollLeading = tabScroll.leadingAnchor.constraint(
       equalTo: tabBar.leadingAnchor, constant: 4)
-    tabStackLeadingConstraint = tabStackLeading
+    tabScrollLeadingConstraint = tabScrollLeading
+    let clip = tabScroll.contentView
 
     NSLayoutConstraint.activate([
       tabBar.topAnchor.constraint(equalTo: topAnchor),
@@ -116,9 +137,16 @@ final class DFTerminalPane: NSView {
       tabBorder.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor),
       tabBorder.heightAnchor.constraint(equalToConstant: 1),
 
-      tabStackLeading,
-      tabStack.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
-      tabStack.trailingAnchor.constraint(lessThanOrEqualTo: addBtn.leadingAnchor, constant: -4),
+      tabScrollLeading,
+      tabScroll.topAnchor.constraint(equalTo: tabBar.topAnchor),
+      tabScroll.bottomAnchor.constraint(equalTo: tabBorder.topAnchor),
+      tabScroll.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -4),
+
+      // The stack is the scroll view's document view: pinned vertically and at
+      // the leading edge, free to extend (and scroll) horizontally.
+      tabStack.topAnchor.constraint(equalTo: clip.topAnchor),
+      tabStack.bottomAnchor.constraint(equalTo: clip.bottomAnchor),
+      tabStack.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
 
       addBtn.trailingAnchor.constraint(equalTo: tabBar.trailingAnchor, constant: -8),
       addBtn.centerYAnchor.constraint(equalTo: tabBar.centerYAnchor),
@@ -134,7 +162,7 @@ final class DFTerminalPane: NSView {
   /// Shifts the tab row right by `inset` from the pane's leading edge.
   /// Used to clear the macOS traffic lights when the sidebar is collapsed.
   func setLeadingTabInset(_ inset: CGFloat) {
-    tabStackLeadingConstraint?.constant = inset
+    tabScrollLeadingConstraint?.constant = inset
   }
 
   // MARK: - Tab Management
@@ -233,12 +261,19 @@ final class DFTerminalPane: NSView {
       } else {
         nameColor = isActive ? Theme.text1 : Theme.text3
       }
+      let para = NSMutableParagraphStyle()
+      para.lineBreakMode = .byTruncatingTail
       let attrs: [NSAttributedString.Key: Any] = [
         .font: Theme.mono(11, weight: isActive ? .medium : .regular),
         .foregroundColor: nameColor,
+        .paragraphStyle: para,
       ]
       nameBtn.attributedTitle = NSAttributedString(
         string: " \(session.displayName) ", attributes: attrs)
+      nameBtn.cell?.lineBreakMode = .byTruncatingTail
+      nameBtn.cell?.truncatesLastVisibleLine = true
+      // Let the name truncate rather than widen the tab past its cap.
+      nameBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
       container.addSubview(nameBtn)
 
       // Double-click gesture on name button for rename
@@ -261,6 +296,7 @@ final class DFTerminalPane: NSView {
 
       NSLayoutConstraint.activate([
         container.heightAnchor.constraint(equalToConstant: 24),
+        container.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxTabWidth),
 
         tabDot.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
         tabDot.centerYAnchor.constraint(equalTo: container.centerYAnchor),
@@ -283,6 +319,20 @@ final class DFTerminalPane: NSView {
     }
 
     showActiveTerminal()
+    scrollActiveTabIntoView()
+  }
+
+  /// Keep the active tab visible within the scrolling strip — switching to a
+  /// tab that's scrolled off-screen reveals it rather than leaving it hidden.
+  private func scrollActiveTabIntoView() {
+    let idx = SessionManager.shared.activeSessionIndex
+    guard idx >= 0, idx < tabViews.count else { return }
+    let target = tabViews[idx]
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.tabScroll.layoutSubtreeIfNeeded()
+      target.scrollToVisible(target.bounds)
+    }
   }
 
   // MARK: - Startup loading overlay

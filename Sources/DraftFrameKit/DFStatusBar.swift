@@ -151,8 +151,12 @@ final class DFStatusBar: NSView {
     let outStr = formatTokens(totalOut)
     tokensLabel.stringValue = "\(inStr)\u{2193} \(outStr)\u{2191}"
 
-    // Aggregate cost
+    // Aggregate cost: sum of each session's current run (matches /usage).
+    // Tooltip reveals the lifetime total across all runs this app session.
     costLabel.stringValue = String(format: "$%.2f", mgr.totalCost)
+    costLabel.toolTip = String(
+      format: "Current runs: $%.2f\nAll runs this app session: $%.2f",
+      mgr.totalCost, mgr.lifetimeTotalCost)
 
     // Session count
     if let countLabel = viewWithIdentifier("sessionCount") {

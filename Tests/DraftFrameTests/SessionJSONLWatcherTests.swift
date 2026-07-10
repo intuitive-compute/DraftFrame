@@ -68,6 +68,17 @@ final class SessionJSONLWatcherTests: XCTestCase {
     XCTAssertEqual(encoded, "-Users-jwatters-code-draftframe")
   }
 
+  func testEncodePathReplacesDotsLikeClaudeCode() {
+    // Worktree sessions live under `.../.claude/worktrees/<name>`. Claude Code
+    // maps every non-alphanumeric character to `-`, so `/.claude` becomes
+    // `--claude` (a double dash). A `/`-only encoding would yield `-.claude`
+    // and the watcher would never find the transcript.
+    let encoded = SessionJSONLWatcher.encodePath(
+      "/Users/joseph/calm/calm-mosaic/.claude/worktrees/focus-area-agent")
+    XCTAssertEqual(
+      encoded, "-Users-joseph-calm-calm-mosaic--claude-worktrees-focus-area-agent")
+  }
+
   // MARK: - extractText
 
   func testExtractTextFromPlainString() {
@@ -116,7 +127,8 @@ final class SessionJSONLWatcherTests: XCTestCase {
   private func makeWatcher() -> SessionJSONLWatcher {
     // Point at a directory with no ~/.claude/projects mirror so the watcher
     // never attaches to a real file; we feed lines via parseLine directly.
-    SessionJSONLWatcher(workingDirectory: "/nonexistent/\(UUID().uuidString)") { _, _, _, _, _, _ in
+    SessionJSONLWatcher(workingDirectory: "/nonexistent/\(UUID().uuidString)") {
+      _, _, _, _, _, _, _, _, _ in
     }
   }
 
@@ -144,6 +156,10 @@ final class SessionJSONLWatcherTests: XCTestCase {
     // Sonnet: 100 in * $3/M + 10 out * $15/M
     let expected = 100 * 3.0 / 1_000_000 + 10 * 15.0 / 1_000_000
     XCTAssertEqual(watcher.totalCost, expected, accuracy: 1e-12)
+    // With no session switch, the lifetime totals track the current run.
+    XCTAssertEqual(watcher.lifetimeTokensIn, 100)
+    XCTAssertEqual(watcher.lifetimeTokensOut, 10)
+    XCTAssertEqual(watcher.lifetimeCost, expected, accuracy: 1e-12)
   }
 
   func testDistinctMessagesBothCounted() {

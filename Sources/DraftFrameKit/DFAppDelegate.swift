@@ -3,6 +3,13 @@ import AppKit
 public final class DFAppDelegate: NSObject, NSApplicationDelegate {
   var windowController: DFWindowController?
 
+  /// How long after the first ⌘Q a second press still counts as confirming the
+  /// quit. The confirmation HUD stays up for exactly this long.
+  private static let quitConfirmWindow: TimeInterval = 2.0
+  /// When the most recent unconfirmed ⌘Q happened, or nil if there's no pending
+  /// quit request (none yet, or the window already lapsed).
+  private var lastQuitRequest: Date?
+
   override public init() {
     super.init()
   }
@@ -47,6 +54,21 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
   public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     true
+  }
+
+  /// Quit handler for ⌘Q and the Quit menu item. Requires two presses within
+  /// `quitConfirmWindow`: the first shows a hint, the second actually quits.
+  /// Other quit paths (closing the window, an update relaunch) skip this and go
+  /// straight through `applicationShouldTerminate`.
+  @objc private func requestQuit() {
+    if let last = lastQuitRequest, Date().timeIntervalSince(last) < Self.quitConfirmWindow {
+      lastQuitRequest = nil
+      QuitConfirmationHUD.shared.hide()
+      NSApp.terminate(nil)
+      return
+    }
+    lastQuitRequest = Date()
+    QuitConfirmationHUD.shared.show(duration: Self.quitConfirmWindow)
   }
 
   public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -100,9 +122,10 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Check for Updates\u{2026}", action: #selector(checkForUpdates),
       keyEquivalent: "")
     appMenu.addItem(NSMenuItem.separator())
-    appMenu.addItem(
-      withTitle: "Quit DraftFrame", action: #selector(NSApplication.terminate(_:)),
-      keyEquivalent: "q")
+    let quitItem = NSMenuItem(
+      title: "Quit DraftFrame", action: #selector(requestQuit), keyEquivalent: "q")
+    quitItem.target = self
+    appMenu.addItem(quitItem)
     appMenuItem.submenu = appMenu
     mainMenu.addItem(appMenuItem)
 

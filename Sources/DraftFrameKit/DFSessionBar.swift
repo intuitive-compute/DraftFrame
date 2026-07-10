@@ -349,10 +349,14 @@ final class SessionCard: NSView {
     modelLabel.textColor = Theme.text3
     modelLabel.translatesAutoresizingMaskIntoConstraints = false
 
-    // Cost
+    // Cost. The label shows the current run (matches Claude Code's /usage);
+    // the tooltip also reveals this tab's lifetime spend across all runs.
     let costLabel = NSTextField(labelWithString: String(format: "$%.2f", session.cost))
     costLabel.font = Theme.mono(11)
     costLabel.textColor = Theme.text2
+    costLabel.toolTip = String(
+      format: "This run: $%.2f (matches /usage)\nThis tab, all runs: $%.2f",
+      session.cost, session.lifetimeCost)
     costLabel.translatesAutoresizingMaskIntoConstraints = false
 
     // Context window usage (e.g. "42.1K / 200K"). Hidden until the JSONL

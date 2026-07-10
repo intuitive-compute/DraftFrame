@@ -8,6 +8,7 @@ final class DFWindowController: NSWindowController {
   let sessionBar = DFSessionBar()
   let statusBar = DFStatusBar()
   let dashboard = DFDashboard()
+  let diffOverlay = DFDiffOverlay()
 
   private var editorVisible = false
 
@@ -72,6 +73,11 @@ final class DFWindowController: NSWindowController {
     dashboard.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(dashboard)
 
+    // Per-file diff overlay, layered above the dashboard so a clicked file's
+    // diff always lands on top.
+    diffOverlay.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(diffOverlay)
+
     NSLayoutConstraint.activate([
       vStack.topAnchor.constraint(equalTo: contentView.topAnchor),
       vStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -85,6 +91,12 @@ final class DFWindowController: NSWindowController {
       dashboard.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
       dashboard.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
       dashboard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+
+      // Diff overlay fills the entire content area
+      diffOverlay.topAnchor.constraint(equalTo: contentView.topAnchor),
+      diffOverlay.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      diffOverlay.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+      diffOverlay.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
     ])
 
     // Sidebar width is user-resizable (persisted). Editor and session bar stay
@@ -120,6 +132,21 @@ final class DFWindowController: NSWindowController {
       self, selector: #selector(handleToggleEditor),
       name: .toggleEditorPane, object: nil
     )
+
+    // Listen for a CHANGES file click to show its diff overlay.
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(handleShowFileDiff(_:)),
+      name: .showFileDiff, object: nil
+    )
+  }
+
+  @objc private func handleShowFileDiff(_ notification: Notification) {
+    guard
+      let info = notification.userInfo,
+      let files = info["files"] as? [DFDiffOverlay.DiffFileRef],
+      let index = info["index"] as? Int
+    else { return }
+    diffOverlay.show(files: files, index: index)
   }
 
   // MARK: - NSSplitViewDelegate

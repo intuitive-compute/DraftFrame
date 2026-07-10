@@ -386,11 +386,23 @@ class ClaudeTerminalView: LocalProcessTerminalView {
         EditorOpener.open(path: target.path, line: target.line, column: target.col)
         return nil
       }
-      // Defer only tokens with a scheme NSWorkspace can open (SwiftTerm handles
-      // those correctly); consume anything else so SwiftTerm's default handler
-      // never feeds a schemeless string to NSWorkspace.open and triggers -50.
+      // Open literal web links ourselves instead of deferring to SwiftTerm.
+      // SwiftTerm only opens an implicit (non-OSC-8) URL when its own hover
+      // highlight range lines up with the click, so cmd+click on a plain URL
+      // fired only intermittently — and not at all once the line scrolled into
+      // scrollback. We already have the rendered line text, so we resolve and
+      // open the URL deterministically.
+      if let url = self.webURL(in: text, col: col) {
+        NSLog("[ClaudeTerminalView] cmd+click opening web link: %@", url.absoluteString)
+        NSWorkspace.shared.open(url)
+        return nil
+      }
+      // Token carries a scheme but we couldn't parse a URL out of it — let
+      // SwiftTerm try (it may be an OSC-8 explicit link whose visible text we
+      // can't read). Consume anything else so SwiftTerm's default handler never
+      // feeds a schemeless string to NSWorkspace.open and triggers -50.
       if let token = token, Self.hasOpenableScheme(token) {
-        NSLog("[ClaudeTerminalView] cmd+click deferring web link to SwiftTerm: %@", token)
+        NSLog("[ClaudeTerminalView] cmd+click deferring link to SwiftTerm: %@", token)
         return event
       }
       NSLog(
@@ -509,6 +521,18 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     return (line.translateToString(trimRight: true), col)
   }
 
+  /// Return a web/file URL if a scheme-carrying token (http, https, ftp, ssh,
+  /// file, mailto) sits under `col`. Resolving these from the rendered line is
+  /// deterministic, unlike deferring to SwiftTerm's hover-gated link handling.
+  private func webURL(in text: String, col: Int) -> URL? {
+    guard let token = tokenAtClick(in: text, col: col),
+      Self.hasOpenableScheme(token),
+      let cleaned = Self.cleanedURLToken(token),
+      let url = URL(string: cleaned)
+    else { return nil }
+    return url
+  }
+
   /// Return a GitHub URL if a PR/issue ref sits under `col` in `text`.
   private func prURL(in text: String, col: Int) -> URL? {
     let nsText = text as NSString
@@ -597,6 +621,30 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       .lowercased()
     return ["http://", "https://", "ftp://", "ftps://", "ssh://", "file://", "mailto:"]
       .contains { trimmed.hasPrefix($0) }
+  }
+
+  /// Strip the wrappers and trailing prose punctuation around a matched URL
+  /// token so `(https://x)` or `https://x.` resolve to the real target. A
+  /// trailing close-bracket is kept when its opener is inside the token, so
+  /// URLs like `…/Foo_(bar)` survive.
+  static func cleanedURLToken(_ raw: String) -> String? {
+    var token = Substring(raw)
+    let openers: Set<Character> = ["\"", "'", "`", "(", "[", "{", "<"]
+    let closerToOpener: [Character: Character] = [
+      ")": "(", "]": "[", "}": "{", "\"": "\"", "'": "'", "`": "`", ">": "<",
+    ]
+    while let first = token.first, openers.contains(first) { token = token.dropFirst() }
+    while let last = token.last {
+      if ".,;:!?".contains(last) {
+        token = token.dropLast()
+      } else if let opener = closerToOpener[last] {
+        if token.dropLast().contains(opener) { break }  // balanced — part of the URL
+        token = token.dropLast()
+      } else {
+        break
+      }
+    }
+    return token.isEmpty ? nil : String(token)
   }
 
   /// Progressive interpretations of a clicked token: strip surrounding wrappers,
