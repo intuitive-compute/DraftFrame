@@ -103,7 +103,10 @@ final class Session {
   /// `launchModelId` is the model the session's CLI is launched with
   /// (empty = the CLI default); it seeds the card's model label until the
   /// agent's transcript confirms or corrects it.
-  init(name: String, worktreePath: String? = nil, agent: AgentKind = .claude, launchModelId: String = "") {
+  init(
+    name: String, worktreePath: String? = nil, agent: AgentKind = .claude,
+    launchModelId: String = ""
+  ) {
     self.id = UUID()
     self.name = name
     self.agent = agent

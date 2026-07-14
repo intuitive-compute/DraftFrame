@@ -55,7 +55,8 @@ final class CodexUsageWatcherTests: XCTestCase {
 
     // gpt-5.5: $5/M input, $0.50/M cached input, $30/M output.
     // 600k non-cached * 5 + 400k cached * 0.5 + 100k out * 30 (per 1M).
-    let expected = 600_000 * 5.0 / 1_000_000 + 400_000 * 0.5 / 1_000_000
+    let expected =
+      600_000 * 5.0 / 1_000_000 + 400_000 * 0.5 / 1_000_000
       + 100_000 * 30.0 / 1_000_000
     XCTAssertEqual(watcher.totalCost, expected, accuracy: 1e-9)
   }
@@ -196,7 +197,8 @@ final class CodexUsageWatcherTests: XCTestCase {
 
     // A newer rollout for a DIFFERENT cwd must not be picked up.
     let other = dayDir + "/rollout-2026-07-07T11-00-00-other.jsonl"
-    try (metaLine(cwd: "/somewhere/else") + "\n" + tokenCountLine(input: 9, cached: 0, output: 9)
+    try
+      (metaLine(cwd: "/somewhere/else") + "\n" + tokenCountLine(input: 9, cached: 0, output: 9)
       + "\n")
       .write(toFile: other, atomically: true, encoding: .utf8)
 

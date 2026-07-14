@@ -59,7 +59,8 @@ final class CodexUsageWatcher: UsageWatcher {
       ModelPricing(inputPerMillion: 0.2, cachedInputPerMillion: 0.02, outputPerMillion: 1.25)
     ),
     (
-      "gpt-5.4", ModelPricing(inputPerMillion: 2.5, cachedInputPerMillion: 0.25, outputPerMillion: 15)
+      "gpt-5.4",
+      ModelPricing(inputPerMillion: 2.5, cachedInputPerMillion: 0.25, outputPerMillion: 15)
     ),
     (
       "gpt-5.3",
@@ -86,7 +87,8 @@ final class CodexUsageWatcher: UsageWatcher {
       ModelPricing(inputPerMillion: 0.05, cachedInputPerMillion: 0.005, outputPerMillion: 0.4)
     ),
     (
-      "gpt-5", ModelPricing(inputPerMillion: 1.25, cachedInputPerMillion: 0.125, outputPerMillion: 10)
+      "gpt-5",
+      ModelPricing(inputPerMillion: 1.25, cachedInputPerMillion: 0.125, outputPerMillion: 10)
     ),
   ]
 
