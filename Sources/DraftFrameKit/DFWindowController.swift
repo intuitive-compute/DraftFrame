@@ -264,7 +264,7 @@ final class DFWindowController: NSWindowController {
   func promptOpenProject() {
     let panel = NSOpenPanel()
     panel.title = "Open Project"
-    panel.message = "Choose a directory to open with Claude Code"
+    panel.message = "Choose a project directory to open"
     panel.canChooseFiles = false
     panel.canChooseDirectories = true
     panel.allowsMultipleSelection = false

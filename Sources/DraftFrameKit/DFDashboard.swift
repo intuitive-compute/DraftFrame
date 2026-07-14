@@ -602,14 +602,14 @@ final class SummaryCard: NSView {
   }
 
   private func previewText() -> String {
-    if let text = session.jsonlWatcher?.latestAssistantText, !text.isEmpty {
+    if let text = session.usageWatcher?.latestAssistantText, !text.isEmpty {
       return text
     }
     return "No assistant response yet for this session."
   }
 
   private func formatTimestamp() -> String {
-    guard let date = session.jsonlWatcher?.latestAssistantAt else { return "" }
+    guard let date = session.usageWatcher?.latestAssistantAt else { return "" }
     let interval = Date().timeIntervalSince(date)
     if interval < 60 { return "just now" }
     if interval < 3600 { return "\(Int(interval / 60))m ago" }

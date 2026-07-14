@@ -77,29 +77,14 @@ final class SessionJSONLWatcher {
   // MARK: - Private
 
   private let onUpdate: UpdateCallback
-  private var watcherFD: Int32 = -1
-  private var dispatchSource: DispatchSourceFileSystemObject?
-  private var fileOffset: UInt64 = 0
-  /// Holds the tail of the last read when it didn't end on a newline — JSONL
-  /// writes can land mid-line and we'd otherwise drop the partial.
-  private var lineBuffer: String = ""
-  private var pollTimer: DispatchSourceTimer?
-  private let watchQueue = DispatchQueue(label: "com.draftframe.jsonl-watcher", qos: .utility)
-  private var watchedPath: String?
-  private var directorySource: DispatchSourceFileSystemObject?
-  private var directoryHandle: Int32 = -1
-  private var resolved = false
   private let workingDirectory: String
+  private var tailer: JSONLTailer?
   /// Usage-bearing messages already counted toward the totals. Claude Code
   /// writes one JSONL line per content block of a single API response, each
   /// repeating the same `message.id` and an identical `usage` block — so a
   /// text + tool_use turn appears two or three times. Keyed by
   /// "messageId|requestId" so usage is accumulated once per response.
   private var countedMessages: Set<String> = []
-  /// Last time we re-scanned the project directory for a newer JSONL.
-  /// Write events fire many times per second while Claude streams; without
-  /// this throttle each one would re-stat every file in the directory.
-  private var lastNewestScan = Date.distantPast
 
   // MARK: - Init
 
@@ -109,7 +94,11 @@ final class SessionJSONLWatcher {
   init(workingDirectory: String, onUpdate: @escaping UpdateCallback) {
     self.workingDirectory = workingDirectory
     self.onUpdate = onUpdate
-    resolveAndWatch()
+    tailer = JSONLTailer(
+      findLatest: { [weak self] in self?.findLatestJSONL() },
+      onSwitch: { [weak self] in self?.resetRunTotals() },
+      onLines: { [weak self] lines in self?.process(lines) }
+    )
   }
 
   deinit {
@@ -119,31 +108,10 @@ final class SessionJSONLWatcher {
   // MARK: - Public
 
   func stop() {
-    // `cancel()` is async and the source's cancel handler owns `close(fd)`.
-    // Closing the fd here too would free its number for reuse before the
-    // handler runs, so the handler would later close an unrelated fd and
-    // trip libdispatch's EV_VANISHED guard.
-    dispatchSource?.cancel()
-    dispatchSource = nil
-    watcherFD = -1
-    directorySource?.cancel()
-    directorySource = nil
-    directoryHandle = -1
-    pollTimer?.cancel()
-    pollTimer = nil
+    tailer?.stop()
   }
 
   // MARK: - Resolution
-
-  private func resolveAndWatch() {
-    guard let jsonlPath = findLatestJSONL() else {
-      // The JSONL file may not exist yet (Claude hasn't started).
-      // Watch the directory for new files.
-      watchDirectoryForNewFiles()
-      return
-    }
-    startWatching(path: jsonlPath)
-  }
 
   /// Encode a directory path the way Claude Code names its project folders:
   /// every character that isn't an ASCII letter or digit is replaced with `-`.
@@ -189,172 +157,23 @@ final class SessionJSONLWatcher {
     return newest
   }
 
-  // MARK: - Directory watching (for when JSONL doesn't exist yet)
+  // MARK: - Line processing
 
-  private func watchDirectoryForNewFiles() {
-    // Poll periodically until the file appears.
-    let timer = DispatchSource.makeTimerSource(queue: watchQueue)
-    timer.schedule(deadline: .now() + 2, repeating: 3.0)
-    timer.setEventHandler { [weak self] in
-      guard let self = self, !self.resolved else {
-        self?.pollTimer?.cancel()
-        return
-      }
-      if let path = self.findLatestJSONL() {
-        self.resolved = true
-        self.pollTimer?.cancel()
-        self.pollTimer = nil
-        self.startWatching(path: path)
-      }
-    }
-    timer.resume()
-    pollTimer = timer
-  }
-
-  // MARK: - File watching
-
-  private func startWatching(path: String) {
-    resolved = true
-    watchedPath = path
-
-    // Process whatever's already in the file.
-    processNewData()
-
-    // Watch for writes via DispatchSource. We only use the FD for kqueue
-    // event delivery — actual reads always go through a fresh file handle
-    // because macOS Foundation's `FileHandle` caches stat info in ways
-    // that miss appends made by another process.
-    let fd = open(path, O_EVTONLY)
-    guard fd >= 0 else {
-      // No event source — polling alone will keep us in sync.
-      schedulePollTimer()
-      return
-    }
-    watcherFD = fd
-    let source = DispatchSource.makeFileSystemObjectSource(
-      fileDescriptor: fd,
-      eventMask: [.write, .extend],
-      queue: watchQueue
-    )
-    source.setEventHandler { [weak self] in
-      self?.processNewData()
-    }
-    source.setCancelHandler { [weak self] in
-      if let self = self, self.watcherFD == fd { self.watcherFD = -1 }
-      close(fd)
-    }
-    source.resume()
-    dispatchSource = source
-
-    schedulePollTimer()
-  }
-
-  /// Re-attach to a newly-appeared JSONL (e.g. user restarted `claude`).
-  /// Resets the read offset and the partial-line buffer so we begin
-  /// streaming the new file from byte 0.
-  private func switchTo(path: String) {
-    // Let the old source's cancel handler close its fd. The fd stays open
-    // until the handler runs, so the `open()` below is guaranteed a fresh
-    // number — closing it synchronously here would race that reuse.
-    dispatchSource?.cancel()
-    dispatchSource = nil
-    watcherFD = -1
-    watchedPath = path
-    fileOffset = 0
-    lineBuffer = ""
-    // A new session file is a new claude run: zero the current-run totals so
-    // the card mirrors `/usage`'s per-session figure. Lifetime totals persist.
-    // `countedMessages` is intentionally kept: the new file's message ids
-    // won't collide with the old file's, and keeping the set preserves correct
-    // lifetime dedup.
+  /// A new session file is a new claude run: zero the current-run totals so
+  /// the card mirrors `/usage`'s per-session figure. Lifetime totals persist.
+  /// `countedMessages` is intentionally kept: the new file's message ids
+  /// won't collide with the old file's, and keeping the set preserves correct
+  /// lifetime dedup.
+  private func resetRunTotals() {
     totalCost = 0
     totalTokensIn = 0
     totalTokensOut = 0
-
-    let fd = open(path, O_EVTONLY)
-    guard fd >= 0 else { return }
-    watcherFD = fd
-    let source = DispatchSource.makeFileSystemObjectSource(
-      fileDescriptor: fd,
-      eventMask: [.write, .extend],
-      queue: watchQueue
-    )
-    source.setEventHandler { [weak self] in
-      self?.processNewData()
-    }
-    source.setCancelHandler { [weak self] in
-      if let self = self, self.watcherFD == fd { self.watcherFD = -1 }
-      close(fd)
-    }
-    source.resume()
-    dispatchSource = source
   }
 
-  private func schedulePollTimer() {
-    // Poll periodically as a belt-and-braces fallback — some FSes don't
-    // reliably deliver vnode events for every append.
-    let timer = DispatchSource.makeTimerSource(queue: watchQueue)
-    timer.schedule(deadline: .now() + 1.5, repeating: 1.5)
-    timer.setEventHandler { [weak self] in
-      self?.processNewData()
-    }
-    timer.resume()
-    pollTimer = timer
-  }
-
-  private func processNewData() {
-    // Each new `claude` invocation in this project writes a different
-    // JSONL (the filename is the sessionId). If a newer one has appeared
-    // since we attached, switch to it — otherwise we'd track a stale file
-    // forever and miss every assistant turn after the user restarted.
-    // Throttled to every 2s; the 1.5s poll timer guarantees we still
-    // converge on a new file within ~3.5s even with no write events.
-    let now = Date()
-    if now.timeIntervalSince(lastNewestScan) >= 2.0 {
-      lastNewestScan = now
-      if let newest = findLatestJSONL(), newest != watchedPath {
-        switchTo(path: newest)
-      }
-    }
-
-    guard let path = watchedPath else { return }
-
-    // Re-open on every read. A long-lived FileHandle on macOS misses
-    // appends made by another process even after `seek(toFileOffset:)`,
-    // because `readDataToEndOfFile()` consults a stale cached file size.
-    guard let fh = FileHandle(forReadingAtPath: path) else { return }
-    defer { try? fh.close() }
-
-    do {
-      try fh.seek(toOffset: fileOffset)
-    } catch {
-      return
-    }
-    let data = fh.readDataToEndOfFile()
-    guard !data.isEmpty else { return }
-    fileOffset += UInt64(data.count)
-
-    guard let text = String(data: data, encoding: .utf8) else { return }
-    // Prepend any partial line carried over from a previous read.
-    let combined = lineBuffer + text
-    let lastNewline = combined.lastIndex(of: "\n")
-    let processable: Substring
-    if let nl = lastNewline {
-      processable = combined[..<nl]
-      lineBuffer = String(combined[combined.index(after: nl)...])
-    } else {
-      // No newline yet — entire chunk is partial; buffer it for next read.
-      lineBuffer = combined
-      return
-    }
-
+  private func process(_ lines: [String]) {
     var didUpdate = false
-    for line in processable.split(separator: "\n", omittingEmptySubsequences: false) {
-      let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !trimmed.isEmpty else { continue }
-      if parseLine(trimmed) {
-        didUpdate = true
-      }
+    for line in lines where parseLine(line) {
+      didUpdate = true
     }
 
     if didUpdate {

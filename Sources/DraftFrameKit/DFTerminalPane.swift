@@ -356,7 +356,7 @@ final class DFTerminalPane: NSView {
   /// Claude's TUI takes over the screen. Input is blocked until then so
   /// keystrokes can't interleave with the `cd && clear && claude` bootstrap.
   private func beginLoading(for session: Session) {
-    let overlay = TerminalLoadingOverlay(message: "Starting Claude…")
+    let overlay = TerminalLoadingOverlay(message: "Starting \(session.agent.displayName)…")
     overlay.translatesAutoresizingMaskIntoConstraints = false
     let load = LoadState(overlay: overlay)
     loads[session.id] = load

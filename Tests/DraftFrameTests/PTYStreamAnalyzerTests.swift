@@ -225,6 +225,110 @@ final class PTYStreamAnalyzerTests: XCTestCase {
     XCTAssertEqual(detected, 1)
   }
 
+  // MARK: - Codex Markers
+
+  func testCodexIdleFooterAfterWorkingReturnsToUserInput() {
+    // Codex repaints "? for shortcuts" over its working row when a turn
+    // ends; the stale working marker can still sit in the rolling buffer,
+    // so the most recently painted marker must win.
+    analyzer.agent = .codex
+    let genExp = expectation(description: "generating")
+    analyzer.onStateChange = { state in
+      if state == .generating { genExp.fulfill() }
+    }
+    feedString("Working (3s • esc to interrupt)")
+    wait(for: [genExp], timeout: 0.5)
+
+    let idleExp = expectation(description: "user input")
+    analyzer.onStateChange = { state in
+      if state == .userInput { idleExp.fulfill() }
+    }
+    feedString("  ? for shortcuts")
+    wait(for: [idleExp], timeout: 0.5)
+    XCTAssertEqual(analyzer.state, .userInput)
+  }
+
+  func testCodexWorkingAfterIdleFooterReturnsToGenerating() {
+    analyzer.agent = .codex
+    let idleExp = expectation(description: "user input")
+    analyzer.onStateChange = { state in
+      if state == .userInput { idleExp.fulfill() }
+    }
+    feedString("? for shortcuts")
+    wait(for: [idleExp], timeout: 0.5)
+
+    let genExp = expectation(description: "generating")
+    analyzer.onStateChange = { state in
+      if state == .generating { genExp.fulfill() }
+    }
+    feedString("Working (0s • esc to interrupt)")
+    wait(for: [genExp], timeout: 0.5)
+    XCTAssertEqual(analyzer.state, .generating)
+  }
+
+  func testCodexApprovalPromptNeedsAttention() {
+    analyzer.agent = .codex
+    let exp = expectation(description: "needs attention")
+    analyzer.onStateChange = { state in
+      if state == .needsAttention { exp.fulfill() }
+    }
+    feedString("Yes, proceed   No, and tell Codex what to do differently")
+    wait(for: [exp], timeout: 0.5)
+    XCTAssertEqual(analyzer.state, .needsAttention)
+  }
+
+  // MARK: - Model Banner
+
+  func testModelBannerDetected() {
+    analyzer.agent = .codex
+    let exp = expectation(description: "model detected")
+    analyzer.onModelDetected = { model in
+      XCTAssertEqual(model, "gpt-5.6-sol")
+      exp.fulfill()
+    }
+    feedString("model:     gpt-5.6-sol    /model to change")
+    wait(for: [exp], timeout: 0.5)
+  }
+
+  func testModelBannerDoesNotRefireForSameModel() {
+    analyzer.agent = .codex
+    let first = expectation(description: "first detection")
+    let refire = expectation(description: "must not refire")
+    refire.isInverted = true
+    var count = 0
+    analyzer.onModelDetected = { _ in
+      count += 1
+      if count == 1 { first.fulfill() } else { refire.fulfill() }
+    }
+    feedString("model: gpt-5.6-sol")
+    wait(for: [first], timeout: 0.5)
+    feedString("model: gpt-5.6-sol")
+    wait(for: [refire], timeout: 0.2)
+  }
+
+  func testModelBannerRefiresOnModelChange() {
+    analyzer.agent = .codex
+    var models: [String] = []
+    let first = expectation(description: "first model")
+    analyzer.onModelDetected = { model in
+      models.append(model)
+      first.fulfill()
+    }
+    feedString("model: gpt-5.5")
+    // Frame analysis is debounced, so let the first banner land before the
+    // second replaces it in the analysis window.
+    wait(for: [first], timeout: 0.5)
+
+    let second = expectation(description: "second model")
+    analyzer.onModelDetected = { model in
+      models.append(model)
+      second.fulfill()
+    }
+    feedString(String(repeating: " ", count: 600) + "model: gpt-5.6-sol")
+    wait(for: [second], timeout: 0.5)
+    XCTAssertEqual(models, ["gpt-5.5", "gpt-5.6-sol"])
+  }
+
   // MARK: - Reset
 
   func testResetClearsState() {
