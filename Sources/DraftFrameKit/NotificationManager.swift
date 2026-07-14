@@ -71,10 +71,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
           )
         }
 
-        // Transition from non-idle to .userInput (Claude finished)
+        // Transition from non-idle to .userInput (the agent finished)
         if current == .userInput && previous != .idle {
           sendNotification(
-            title: "Claude finished",
+            title: "\(session.agent.displayName) finished",
             body: "\(session.name) is waiting for input",
             identifier: "finished-\(session.id.uuidString)"
           )

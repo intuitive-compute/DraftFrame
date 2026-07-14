@@ -270,6 +270,10 @@ final class SessionCard: NSView {
 
     // On macOS, single-click fires alongside double-click; the session
     // switch is idempotent so this is acceptable behavior.
+
+    // Right-click context menu. Built after buildCard so the PR pill's URL
+    // is known.
+    menu = makeContextMenu()
   }
 
   @available(*, unavailable)
@@ -285,6 +289,47 @@ final class SessionCard: NSView {
       return
     }
     SessionManager.shared.switchTo(index: index)
+  }
+
+  private func makeContextMenu() -> NSMenu {
+    let menu = NSMenu()
+    func add(_ title: String, _ action: Selector) {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = self
+      menu.addItem(item)
+    }
+    add("Rename Session…", #selector(doubleClicked))
+    add("Restart Session", #selector(restartFromMenu))
+    if prURL != nil || session.worktreePath != nil {
+      menu.addItem(NSMenuItem.separator())
+      if prURL != nil {
+        add("Open Pull Request", #selector(openPRFromMenu))
+      }
+      if session.worktreePath != nil {
+        add("Copy Worktree Path", #selector(copyWorktreePathFromMenu))
+      }
+    }
+    menu.addItem(NSMenuItem.separator())
+    add("Close Session", #selector(closeFromMenu))
+    return menu
+  }
+
+  @objc private func restartFromMenu() {
+    SessionManager.shared.restartSession(id: session.id)
+  }
+
+  @objc private func closeFromMenu() {
+    SessionManager.shared.closeSession(id: session.id)
+  }
+
+  @objc private func openPRFromMenu() {
+    if let url = prURL { NSWorkspace.shared.open(url) }
+  }
+
+  @objc private func copyWorktreePathFromMenu() {
+    guard let path = session.worktreePath else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(path, forType: .string)
   }
 
   @objc private func doubleClicked() {

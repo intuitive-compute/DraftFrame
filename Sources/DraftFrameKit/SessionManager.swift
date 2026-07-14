@@ -5,52 +5,9 @@ import SwiftTerm
 extension Notification.Name {
   static let sessionsDidChange = Notification.Name("DFSessionsDidChange")
   static let activeSessionDidChange = Notification.Name("DFActiveSessionDidChange")
-  static let modelPreferenceDidChange = Notification.Name("DFModelPreferenceDidChange")
 }
 
-/// Which Claude model new sessions should launch with. Passed via `claude --model`.
-///
-/// Raw values are full model names (e.g. `claude-opus-4-8`). The CLI also accepts
-/// aliases like `opus`/`sonnet`/`haiku` that always resolve to the latest model of
-/// that family — switch an entry's raw value to one of those if you'd rather it
-/// auto-track new releases instead of pinning to a version.
-enum ClaudeModel: String, CaseIterable {
-  case `default` = ""
-  case opus48 = "claude-opus-4-8"
-  case opus47 = "claude-opus-4-7"
-  case opus46 = "claude-opus-4-6"
-  case sonnet46 = "claude-sonnet-4-6"
-  case haiku45 = "claude-haiku-4-5"
-
-  var displayName: String {
-    switch self {
-    case .default: return "Default"
-    case .opus48: return "Opus 4.8"
-    case .opus47: return "Opus 4.7"
-    case .opus46: return "Opus 4.6"
-    case .sonnet46: return "Sonnet 4.6"
-    case .haiku45: return "Haiku 4.5"
-    }
-  }
-}
-
-/// Persisted preference for which model to launch `claude` with.
-enum ModelPreference {
-  private static let key = "DFClaudeModel"
-
-  static var current: ClaudeModel {
-    get {
-      let raw = UserDefaults.standard.string(forKey: key) ?? ""
-      return ClaudeModel(rawValue: raw) ?? .default
-    }
-    set {
-      UserDefaults.standard.set(newValue.rawValue, forKey: key)
-      NotificationCenter.default.post(name: .modelPreferenceDidChange, object: nil)
-    }
-  }
-}
-
-/// State of a Claude Code session, detected from terminal output.
+/// State of an agent session, detected from its status file or terminal output.
 enum SessionState: String {
   case generating
   case thinking
@@ -83,6 +40,8 @@ enum SessionState: String {
 final class Session {
   let id: UUID
   var name: String
+  /// Which agent CLI this session runs (Claude Code or Codex).
+  let agent: AgentKind
   var state: SessionState
   var model: String
   /// Cost/tokens for the current claude run, matching Claude Code's `/usage`
@@ -132,17 +91,24 @@ final class Session {
   /// PTY parsing was racy with the TUI redraw loop.
   let ptyAnalyzer = PTYStreamAnalyzer()
 
-  /// Watches the Claude Code JSONL log for cost/token updates.
-  var jsonlWatcher: SessionJSONLWatcher?
+  /// Watches the agent's transcript (Claude Code project JSONL or Codex
+  /// rollout JSONL) for cost/token updates.
+  var usageWatcher: UsageWatcher?
 
   /// Watches `~/.claude/sessions/<pid>.json` for authoritative session state.
+  /// Claude sessions only — Codex has no equivalent, so its state comes from
+  /// the PTY stream analyzer instead.
   var statusWatcher: SessionStatusWatcher?
 
-  init(name: String, worktreePath: String? = nil) {
+  /// `launchModelId` is the model the session's CLI is launched with
+  /// (empty = the CLI default); it seeds the card's model label until the
+  /// agent's transcript confirms or corrects it.
+  init(name: String, worktreePath: String? = nil, agent: AgentKind = .claude, launchModelId: String = "") {
     self.id = UUID()
     self.name = name
+    self.agent = agent
     self.state = .idle
-    self.model = "sonnet"
+    self.model = agent.initialCardModel(forLaunchModelId: launchModelId)
     self.cost = 0.0
     self.tokensIn = 0
     self.tokensOut = 0
@@ -150,6 +116,7 @@ final class Session {
     self.maxContextTokens = 200_000
     self.worktreePath = worktreePath
 
+    ptyAnalyzer.agent = agent
     ptyAnalyzer.onContextWindowChange = { [weak self] maxTokens in
       guard let self = self else { return }
       self.maxContextTokens = maxTokens
@@ -159,9 +126,10 @@ final class Session {
     }
   }
 
-  /// Start monitoring the JSONL file for the given working directory.
-  func startJSONLWatcher(directory: String) {
-    jsonlWatcher = SessionJSONLWatcher(workingDirectory: directory) {
+  /// Start monitoring the agent's transcript (cost/tokens) and status for
+  /// the given working directory.
+  func startWatchers(directory: String) {
+    let applyUsage: SessionJSONLWatcher.UpdateCallback = {
       [weak self]
       cost, tokensIn, tokensOut, model, contextTokens, maxContextTokens,
       lifetimeCost, lifetimeTokensIn, lifetimeTokensOut in
@@ -172,7 +140,11 @@ final class Session {
       self.lifetimeCost = lifetimeCost
       self.lifetimeTokensIn = lifetimeTokensIn
       self.lifetimeTokensOut = lifetimeTokensOut
-      self.model = model
+      // Empty means the transcript hasn't named the model yet — keep what
+      // the launch preference or startup banner already put on the card.
+      if !model.isEmpty {
+        self.model = model
+      }
       self.contextTokens = contextTokens
       // 0 means "no JSONL signal yet" — leave the value the PTY banner set.
       if maxContextTokens > 0 {
@@ -181,11 +153,54 @@ final class Session {
       NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
     }
 
-    statusWatcher = SessionStatusWatcher(cwd: directory) { [weak self] newState in
+    let applyState: (SessionState) -> Void = { [weak self] newState in
       guard let self = self else { return }
       self.state = newState
       NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
     }
+
+    switch agent {
+    case .claude:
+      usageWatcher = SessionJSONLWatcher(workingDirectory: directory, onUpdate: applyUsage)
+      statusWatcher = SessionStatusWatcher(cwd: directory, onUpdate: applyState)
+    case .codex:
+      // Codex writes no per-pid status file. Working/idle comes from the
+      // rollout's persisted turn lifecycle events; the PTY stream covers
+      // only what the rollout can't see — approval prompts (never
+      // persisted), process exit, and the startup banner's model line.
+      usageWatcher = CodexUsageWatcher(
+        workingDirectory: directory,
+        onTurnState: applyState,
+        onUpdate: applyUsage)
+      ptyAnalyzer.onStateChange = { [weak self] newState in
+        guard let self = self else { return }
+        switch newState {
+        case .needsAttention, .idle:
+          break
+        case .generating, .thinking:
+          // Only to clear an answered approval prompt — the turn events
+          // own the regular working/idle transitions.
+          guard self.state == .needsAttention else { return }
+        case .userInput:
+          return
+        }
+        applyState(newState)
+      }
+      ptyAnalyzer.onModelDetected = { [weak self] model in
+        guard let self = self, self.model != model else { return }
+        self.model = model
+        NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+      }
+    }
+  }
+
+  /// Stop every watcher `startWatchers` installed. Counterpart kept next to
+  /// it so the set of per-agent watchers is owned in one place.
+  func stopWatchers() {
+    usageWatcher?.stop()
+    statusWatcher?.stop()
+    ptyAnalyzer.onStateChange = nil
+    ptyAnalyzer.onModelDetected = nil
   }
 }
 
@@ -239,32 +254,39 @@ final class SessionManager {
     return "/bin/zsh"
   }
 
-  /// Find an absolute path to the `claude` binary. Falls back to the bare
-  /// name "claude" so the shell's own PATH lookup is used as a last resort.
-  static func resolveClaudePath(augmentedPath: String) -> String {
+  /// Resolved binary path per agent. Install locations don't move during an
+  /// app run, and a cache miss can cost a synchronous login-shell spawn on
+  /// the main thread — restoring N sessions would otherwise pay it N times.
+  private static var resolvedAgentPaths: [AgentKind: String] = [:]
+
+  /// Find an absolute path to the agent's CLI binary. Falls back to the bare
+  /// binary name so the shell's own PATH lookup is used as a last resort.
+  static func resolveAgentPath(agent: AgentKind, augmentedPath: String) -> String {
+    if let cached = resolvedAgentPaths[agent] { return cached }
+    let resolved = uncachedResolveAgentPath(agent: agent, augmentedPath: augmentedPath)
+    resolvedAgentPaths[agent] = resolved
+    return resolved
+  }
+
+  private static func uncachedResolveAgentPath(agent: AgentKind, augmentedPath: String) -> String {
     let fm = FileManager.default
+    let binary = agent.binaryName
 
     // 1) Search the caller-provided PATH first.
     for dir in augmentedPath.split(separator: ":").map(String.init) {
-      let candidate = (dir as NSString).appendingPathComponent("claude")
+      let candidate = (dir as NSString).appendingPathComponent(binary)
       if fm.isExecutableFile(atPath: candidate) { return candidate }
     }
 
     // 2) Check common install locations the GUI-launched app PATH misses.
-    let common = [
-      "/opt/homebrew/bin/claude",
-      "/usr/local/bin/claude",
-      (NSHomeDirectory() as NSString).appendingPathComponent(".claude/local/claude"),
-      (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/claude"),
-    ]
-    for candidate in common where fm.isExecutableFile(atPath: candidate) {
+    for candidate in agent.fallbackBinaryPaths where fm.isExecutableFile(atPath: candidate) {
       return candidate
     }
 
     // 3) Ask an interactive login shell to resolve it. This picks up any
     // PATH the user configures in .zprofile/.zshrc even if we don't know
     // about the install location.
-    if let resolved = runLoginShellCommand("command -v claude"),
+    if let resolved = runLoginShellCommand("command -v \(binary)"),
       !resolved.isEmpty,
       fm.isExecutableFile(atPath: resolved)
     {
@@ -272,7 +294,7 @@ final class SessionManager {
     }
 
     // 4) Give up and let the shell try its own PATH.
-    return "claude"
+    return binary
   }
 
   /// Synchronously runs `command` inside a login zsh and returns its trimmed
@@ -295,13 +317,23 @@ final class SessionManager {
     }
   }
 
-  /// Create a new session and return it.
+  /// Create a new session and return it. `agent` defaults to the persisted
+  /// agent preference; pass one explicitly to restore or restart a session
+  /// with the agent it originally launched with.
   @discardableResult
-  func createSession(name: String? = nil, command: String? = nil, worktreePath: String? = nil)
+  func createSession(
+    name: String? = nil, command: String? = nil, worktreePath: String? = nil,
+    agent: AgentKind? = nil
+  )
     -> Session
   {
+    let agent = agent ?? AgentPreference.current
+    // Read the model preference once so the card label and the launched CLI
+    // can't disagree.
+    let modelId = agent.preferredModelId
     let sessionName = name ?? "session-\(sessions.count + 1)"
-    let session = Session(name: sessionName, worktreePath: worktreePath)
+    let session = Session(
+      name: sessionName, worktreePath: worktreePath, agent: agent, launchModelId: modelId)
 
     // Create the terminal view (ClaudeTerminalView intercepts PTY data).
     // Use a zero frame — autolayout will resize to the real visible area
@@ -360,16 +392,14 @@ final class SessionManager {
     }
     let env: [String] = envDict.map { "\($0.key)=\($0.value)" }
 
-    // Resolve the `claude` command to an absolute path so we don't depend
+    // Resolve the agent command to an absolute path so we don't depend
     // on the spawned login shell re-sourcing PATH correctly.
-    let claudeBin = SessionManager.resolveClaudePath(augmentedPath: composedPath)
-    let model = ModelPreference.current
-    let claudeCmd =
-      model == .default ? claudeBin : "\(claudeBin) --model \(model.rawValue)"
+    let agentBin = SessionManager.resolveAgentPath(agent: agent, augmentedPath: composedPath)
+    let agentCmd = agent.launchCommand(binPath: agentBin, modelId: modelId)
 
-    // Start JSONL watcher for cost/token tracking.
+    // Start transcript/status watchers for cost/token/state tracking.
     let watchDir = worktreePath ?? projectDir ?? FileManager.default.currentDirectoryPath
-    session.startJSONLWatcher(directory: watchDir)
+    session.startWatchers(directory: watchDir)
 
     // Register and broadcast the session first. The notification synchronously
     // drives DFTerminalPane to parent `tv` in its terminal container with the
@@ -399,13 +429,13 @@ final class SessionManager {
     }
 
     // The PTY's initial winsize now matches the visible area, so the shell
-    // (and `claude` once it launches) wrap at the same column count we render.
-    // The kernel buffers the bytes until the shell calls read(), so we don't
-    // need a delay before sending.
+    // (and the agent once it launches) wrap at the same column count we
+    // render. The kernel buffers the bytes until the shell calls read(), so
+    // we don't need a delay before sending.
     if let wtPath = worktreePath {
-      tv.send(txt: "cd \(wtPath) && clear && \(claudeCmd)\r")
+      tv.send(txt: "cd \(wtPath) && clear && \(agentCmd)\r")
     } else {
-      tv.send(txt: "clear && \(claudeCmd)\r")
+      tv.send(txt: "clear && \(agentCmd)\r")
     }
 
     return session
@@ -421,8 +451,7 @@ final class SessionManager {
   /// Close session at index.
   func closeSession(at index: Int) {
     guard index >= 0, index < sessions.count else { return }
-    sessions[index].jsonlWatcher?.stop()
-    sessions[index].statusWatcher?.stop()
+    sessions[index].stopWatchers()
     sessions.remove(at: index)
 
     if sessions.isEmpty {
@@ -464,12 +493,12 @@ final class SessionManager {
     }
   }
 
-  /// Restart session by ID — closes and re-creates.
+  /// Restart session by ID — closes and re-creates with the same agent.
   func restartSession(id: UUID) {
     guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
     let old = sessions[idx]
     closeSession(at: idx)
-    createSession(name: old.name, worktreePath: old.worktreePath)
+    createSession(name: old.name, worktreePath: old.worktreePath, agent: old.agent)
   }
 
   /// Get the current git branch for the active session's directory.

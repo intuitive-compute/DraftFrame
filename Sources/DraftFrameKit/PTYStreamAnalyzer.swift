@@ -1,9 +1,14 @@
 import Foundation
 
-/// Analyzes raw PTY byte stream in real-time to detect Claude Code session state.
+/// Analyzes raw PTY byte stream in real-time to detect agent session state.
 /// Strips ANSI escape sequences and tracks alternate buffer mode, frame boundaries,
 /// and content patterns.
 final class PTYStreamAnalyzer {
+
+  /// Which agent's TUI this stream carries. Selects the marker set used for
+  /// state classification and banner detection, so one agent's markers can
+  /// never misclassify the other's session.
+  var agent: AgentKind = .claude
 
   var onStateChange: ((SessionState) -> Void)?
   var onContextWindowChange: ((Int) -> Void)?
@@ -14,6 +19,12 @@ final class PTYStreamAnalyzer {
   var onClaudeReady: (() -> Void)?
   /// Guards `onClaudeReady` so it fires at most once per (re)start.
   private var claudeReadyFired = false
+  /// Fired when the TUI reveals the active model. Codex prints
+  /// "model:   gpt-5.6-sol   /model to change" in its startup banner —
+  /// the only model signal available before the first turn is written to
+  /// the rollout. Fires only when `agent == .codex`.
+  var onModelDetected: ((String) -> Void)?
+  private var lastDetectedModel: String?
 
   private(set) var state: SessionState = .idle
   private var lastContextWindow: Int = 0
@@ -175,44 +186,91 @@ final class PTYStreamAnalyzer {
     let recentLower = String(recentText.suffix(500)).lowercased()
 
     detectClaudeReady(recentLower)
+    detectModelBanner(recentLower)
 
-    let newState: SessionState
+    guard let newState = classify(recentLower) else {
+      // Can't determine — keep current state
+      return
+    }
+    updateState(newState)
+  }
 
+  /// Map the recent plaintext to a session state, or nil when no marker is
+  /// decisive. Each agent's TUI gets its own marker set.
+  private func classify(_ recentLower: String) -> SessionState? {
+    switch agent {
+    case .claude: return classifyClaude(recentLower)
+    case .codex: return classifyCodex(recentLower)
+    }
+  }
+
+  private func classifyClaude(_ recentLower: String) -> SessionState? {
     // Permission prompts — highest priority
     if recentLower.contains("allow") && recentLower.contains("deny") {
-      newState = .needsAttention
-    } else if recentLower.contains("[y/n]") || recentLower.contains("(y/n)") {
-      newState = .needsAttention
-    } else if recentLower.contains("do you want to proceed") {
-      newState = .needsAttention
+      return .needsAttention
     }
+    if recentLower.contains("[y/n]") || recentLower.contains("(y/n)") {
+      return .needsAttention
+    }
+    if recentLower.contains("do you want to proceed") {
+      return .needsAttention
+    }
+
     // "esc to interrupt" = Claude is actively working RIGHT NOW
-    else if recentLower.contains("esc to interrupt") || recentLower.contains("esc to cancel") {
-      if recentLower.contains("thinking") {
-        newState = .thinking
-      } else {
-        newState = .generating
-      }
+    if recentLower.contains("esc to interrupt") || recentLower.contains("esc to cancel") {
+      return recentLower.contains("thinking") ? .thinking : .generating
     }
+
     // Claude's prompt marker — waiting for user
     // Use the very recent text (last ~100 chars) to detect the active prompt
-    else if String(recentText.suffix(100)).contains("/effort")
+    if String(recentText.suffix(100)).contains("/effort")
       || String(recentText.suffix(50)).contains("> ")
     {
       // Claude is showing its UI but not working — at the input prompt
       // "/effort" appears in Claude's bottom bar, ">" is the prompt
-      newState = .userInput
-    }
-    // Shell prompt — Claude not running
-    else if recentLower.hasSuffix("$ ") || recentLower.hasSuffix("% ") || recentLower.contains("❯")
-    {
-      newState = .idle
-    } else {
-      // Can't determine — keep current state
-      return
+      return .userInput
     }
 
-    updateState(newState)
+    return shellPromptState(recentLower)
+  }
+
+  private func classifyCodex(_ recentLower: String) -> SessionState? {
+    // Codex's approval overlay — its options are full sentences ("Yes,
+    // proceed", "No, and tell Codex what to do differently"), not y/n.
+    if recentLower.contains("yes, proceed")
+      || recentLower.contains("tell codex what to do differently")
+    {
+      return .needsAttention
+    }
+
+    // "esc to interrupt" = Codex is actively working RIGHT NOW. Codex
+    // repaints its idle footer ("? for shortcuts") over the working row when
+    // a turn ends, and both markers can linger in the rolling buffer — so
+    // whichever painted most recently decides.
+    let workingIdx = [
+      recentLower.range(of: "esc to interrupt", options: .backwards),
+      recentLower.range(of: "esc to cancel", options: .backwards),
+    ].compactMap { $0?.lowerBound }.max()
+    let idleFooterIdx =
+      recentLower.range(of: "? for shortcuts", options: .backwards)?.lowerBound
+
+    if let working = workingIdx, idleFooterIdx == nil || idleFooterIdx! < working {
+      return recentLower.contains("thinking") ? .thinking : .generating
+    }
+    if idleFooterIdx != nil {
+      // The idle footer outlived the working row — at the input prompt.
+      return .userInput
+    }
+
+    return shellPromptState(recentLower)
+  }
+
+  /// Shell prompt — no agent running.
+  private func shellPromptState(_ recentLower: String) -> SessionState? {
+    if recentLower.hasSuffix("$ ") || recentLower.hasSuffix("% ") || recentLower.contains("❯") {
+      return .idle
+    }
+    return nil
   }
 
   private func updateState(_ newState: SessionState) {
@@ -244,6 +302,30 @@ final class PTYStreamAnalyzer {
     onClaudeReady?()
   }
 
+  // Lazy capture with a boundary lookahead: TUI repaints can butt two
+  // paints of the banner together with no separator once cursor-movement
+  // sequences are stripped ("…-solmodel: gpt-…"), and a greedy capture
+  // would run across the seam.
+  private static let modelBannerRegex = try! NSRegularExpression(
+    pattern: #"model:\s+([a-z0-9][a-z0-9._-]*?)(?=[\s/]|$)"#)
+
+  /// Pull the model id out of a "model: <id>" banner line. Takes the last
+  /// match in the window (freshest paint) and re-fires only on change.
+  /// Codex-only: Claude never prints this banner, and this runs on every
+  /// analyzed frame, so skip the regex when nobody is listening.
+  private func detectModelBanner(_ recentLower: String) {
+    guard agent == .codex, onModelDetected != nil else { return }
+    guard recentLower.contains("model:") else { return }
+    let ns = recentLower as NSString
+    let matches = Self.modelBannerRegex.matches(
+      in: recentLower, range: NSRange(location: 0, length: ns.length))
+    guard let match = matches.last else { return }
+    let model = ns.substring(with: match.range(at: 1))
+    guard model != lastDetectedModel else { return }
+    lastDetectedModel = model
+    onModelDetected?(model)
+  }
+
   private static let oneMillionBanner = "(1M context)"
 
   /// Promote the cap to 1M if Claude Code's banner ever printed
@@ -267,6 +349,7 @@ final class PTYStreamAnalyzer {
     state = .idle
     alternateBufferActive = false
     claudeReadyFired = false
+    lastDetectedModel = nil
     inEscape = false
     escapeBuffer = []
     recentText = ""

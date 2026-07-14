@@ -15,6 +15,9 @@ final class SessionPersistence {
   struct SavedSession: Codable {
     let name: String
     let worktreePath: String?
+    /// AgentKind raw value. Optional so files written before agent support
+    /// still decode; those sessions were always Claude.
+    let agent: String?
   }
 
   struct SessionsFile: Codable {
@@ -32,7 +35,9 @@ final class SessionPersistence {
     let projectDir = SessionManager.shared.projectDir ?? FileManager.default.currentDirectoryPath
 
     let saved = sessions.map { session in
-      SavedSession(name: session.name, worktreePath: session.worktreePath)
+      SavedSession(
+        name: session.name, worktreePath: session.worktreePath,
+        agent: session.agent.rawValue)
     }
 
     let file = SessionsFile(projectDir: projectDir, sessions: saved)
@@ -77,7 +82,9 @@ final class SessionPersistence {
         wtPath = nil
       }
 
-      SessionManager.shared.createSession(name: entry.name, worktreePath: wtPath ?? projectDir)
+      let agent = entry.agent.flatMap(AgentKind.init(rawValue:)) ?? .claude
+      SessionManager.shared.createSession(
+        name: entry.name, worktreePath: wtPath ?? projectDir, agent: agent)
     }
 
     // Clear the saved file after restoring

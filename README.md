@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-<p align="center">A multi-session terminal for <a href="https://claude.ai/claude-code">Claude Code</a>. Run parallel Claude sessions with git worktree isolation, live status tracking, and a built-in toolkit.</p>
+<p align="center">A multi-session terminal for <a href="https://claude.ai/claude-code">Claude Code</a> and <a href="https://developers.openai.com/codex/cli">OpenAI Codex</a>. Run parallel agent sessions with git worktree isolation, live status tracking, and a built-in toolkit.</p>
 
 <p align="center">Built by <a href="https://intuitivecompute.com">Intuitive Compute</a></p>
 
@@ -20,11 +20,11 @@ Grab the latest DMG from [GitHub Releases](https://github.com/intuitive-compute/
 ## Features
 
 - **Multi-tab terminal** — SwiftTerm-based terminal with full ANSI color support
-- **Parallel Claude sessions** — Run multiple Claude Code instances side by side
+- **Parallel agent sessions** — Run multiple Claude Code or Codex instances side by side (Session → Agent for New Sessions)
 - **Git worktree isolation** — Each session gets its own worktree branch
 - **Live session status** — Real-time detection of thinking/generating/idle/needs-attention states via PTY stream analysis
 - **Session cards** — Visual dashboard showing each session's status, model, and cost
-- **Cost tracking** — Reads Claude's JSONL session files for real token/cost data
+- **Cost tracking** — Reads the agent's JSONL session files (Claude transcripts, Codex rollouts) for real token/cost data
 - **Project management** — Persistent project list with expandable worktree trees
 - **Changed files** — Git diff view showing modified/added/deleted files
 - **Watchdogs** — Semi-autonomous monitors that auto-respond to session events
@@ -39,7 +39,7 @@ Grab the latest DMG from [GitHub Releases](https://github.com/intuitive-compute/
 
 - macOS 14.0+
 - Swift 5.9+
-- [Claude Code](https://claude.ai/claude-code) installed
+- [Claude Code](https://claude.ai/claude-code) and/or [Codex CLI](https://developers.openai.com/codex/cli) installed
 
 ## Build & Run
 

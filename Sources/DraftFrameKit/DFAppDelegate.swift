@@ -10,6 +10,10 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
   /// quit request (none yet, or the window already lapsed).
   private var lastQuitRequest: Date?
 
+  /// "Model for New Sessions" submenu — repopulated when the agent
+  /// preference changes, since each agent offers its own model list.
+  private var modelMenu: NSMenu?
+
   override public init() {
     super.init()
   }
@@ -78,7 +82,7 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     // Close all sessions cleanly
     let sessions = SessionManager.shared.sessions
     for i in (0..<sessions.count).reversed() {
-      sessions[i].jsonlWatcher?.stop()
+      sessions[i].stopWatchers()
     }
 
     // Check if there are draftframe-managed worktrees to clean up.
@@ -184,18 +188,27 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Restart Session", action: #selector(menuRestartSession), keyEquivalent: "")
     sessionMenu.addItem(NSMenuItem.separator())
 
-    // Model submenu — chooses which Claude model new sessions launch with.
-    let modelItem = NSMenuItem(title: "Model for New Sessions", action: nil, keyEquivalent: "")
-    let modelMenu = NSMenu(title: "Model for New Sessions")
-    let current = ModelPreference.current
-    for model in ClaudeModel.allCases {
+    // Agent submenu — chooses which agent CLI new sessions launch.
+    let agentItem = NSMenuItem(title: "Agent for New Sessions", action: nil, keyEquivalent: "")
+    let agentMenu = NSMenu(title: "Agent for New Sessions")
+    let currentAgent = AgentPreference.current
+    for agent in AgentKind.allCases {
       let item = NSMenuItem(
-        title: model.displayName, action: #selector(menuSelectModel(_:)), keyEquivalent: "")
-      item.representedObject = model.rawValue
-      item.state = (model == current) ? .on : .off
-      modelMenu.addItem(item)
+        title: agent.displayName, action: #selector(menuSelectAgent(_:)), keyEquivalent: "")
+      item.representedObject = agent.rawValue
+      item.state = (agent == currentAgent) ? .on : .off
+      agentMenu.addItem(item)
     }
-    modelItem.submenu = modelMenu
+    agentItem.submenu = agentMenu
+    sessionMenu.addItem(agentItem)
+
+    // Model submenu — chooses which model new sessions launch with. The
+    // entries come from the selected agent, so picking an agent repopulates it.
+    let modelItem = NSMenuItem(title: "Model for New Sessions", action: nil, keyEquivalent: "")
+    let menu = NSMenu(title: "Model for New Sessions")
+    modelItem.submenu = menu
+    modelMenu = menu
+    populateModelMenu()
     sessionMenu.addItem(modelItem)
 
     sessionMenuItem.submenu = sessionMenu
@@ -257,16 +270,40 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     SessionManager.shared.restartSession(id: session.id)
   }
 
-  @objc private func menuSelectModel(_ sender: NSMenuItem) {
+  /// Fill the model submenu with the current agent's models, checking the
+  /// persisted choice for that agent.
+  private func populateModelMenu() {
+    guard let menu = modelMenu else { return }
+    menu.removeAllItems()
+    let agent = AgentPreference.current
+    let currentId = agent.preferredModelId
+    for model in agent.models {
+      let item = NSMenuItem(
+        title: model.displayName, action: #selector(menuSelectModel(_:)), keyEquivalent: "")
+      item.representedObject = model.id
+      item.state = (model.id == currentId) ? .on : .off
+      menu.addItem(item)
+    }
+  }
+
+  @objc private func menuSelectAgent(_ sender: NSMenuItem) {
     guard let raw = sender.representedObject as? String,
-      let model = ClaudeModel(rawValue: raw)
+      let agent = AgentKind(rawValue: raw)
     else { return }
-    ModelPreference.current = model
+    AgentPreference.current = agent
     if let parent = sender.menu {
       for item in parent.items {
         item.state = (item === sender) ? .on : .off
       }
     }
+    populateModelMenu()
+  }
+
+  @objc private func menuSelectModel(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    AgentPreference.current.preferredModelId = id
+    // Rebuilding derives the checkmark from the persisted choice.
+    populateModelMenu()
   }
 
   private func findAppIcon() -> String? {
@@ -303,8 +340,8 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     alert.messageText = "DraftFrame"
     alert.informativeText =
       "Version \(UpdateManager.currentVersion)\n\n"
-      + "A multi-session terminal for Claude Code.\n\n"
-      + "Manage parallel Claude sessions with worktree isolation, live status tracking, and a built-in toolkit."
+      + "A multi-session terminal for Claude Code and Codex.\n\n"
+      + "Manage parallel agent sessions with worktree isolation, live status tracking, and a built-in toolkit."
     alert.alertStyle = .informational
     alert.addButton(withTitle: "OK")
     alert.runModal()
