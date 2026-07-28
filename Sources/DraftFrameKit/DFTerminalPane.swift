@@ -5,7 +5,32 @@ import SwiftTerm
 /// Each tab is a separate session managed by SessionManager.
 final class DFTerminalPane: NSView {
 
-  private let tabBar = NSView()
+  /// The tab strip sits inside the window's titlebar band (the window uses
+  /// `.fullSizeContentView`). AppKit treats that band as a window-drag region
+  /// except over views that refuse `mouseDownCanMoveWindow`; borderless
+  /// buttons don't refuse it (they're non-opaque), so without this override
+  /// clicks on the tabs start a window drag instead of reaching the buttons.
+  private final class TabBarView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+  }
+
+  /// NSClipView refuses hit-tests outside the window's safe area, and the tab
+  /// strip lives in the titlebar band (excluded from the safe area under
+  /// `.fullSizeContentView`), so the stock clip view swallowed every click on
+  /// the tabs while rendering them fine. Hit-test by plain geometry instead.
+  private final class TabClipView: NSClipView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+      guard let superview else { return nil }
+      let local = convert(point, from: superview)
+      guard !isHidden, bounds.contains(local) else { return nil }
+      for sub in subviews.reversed() {
+        if let hit = sub.hitTest(local) { return hit }
+      }
+      return self
+    }
+  }
+
+  private let tabBar = TabBarView()
   /// Horizontally scrolling container for the tab stack. Clips and scrolls the
   /// tabs instead of letting them push out the window's minimum width.
   private let tabScroll = NSScrollView()
@@ -91,6 +116,9 @@ final class DFTerminalPane: NSView {
     // strip clips and scrolls as tabs accumulate instead of raising the
     // window's minimum width to the sum of all tab widths.
     tabScroll.translatesAutoresizingMaskIntoConstraints = false
+    let tabClip = TabClipView()
+    tabClip.drawsBackground = false
+    tabScroll.contentView = tabClip
     tabScroll.hasHorizontalScroller = false
     tabScroll.hasVerticalScroller = false
     tabScroll.autohidesScrollers = true
@@ -276,10 +304,14 @@ final class DFTerminalPane: NSView {
       nameBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
       container.addSubview(nameBtn)
 
-      // Double-click gesture on name button for rename
+      // Double-click gesture on name button for rename. Don't delay the
+      // button's own mouseDown/mouseUp while waiting for a possible second
+      // click — the single-click switch fires immediately (and alongside a
+      // double-click, which is fine since switching is idempotent).
       let doubleClick = NSClickGestureRecognizer(
         target: self, action: #selector(tabDoubleClicked(_:)))
       doubleClick.numberOfClicksRequired = 2
+      doubleClick.delaysPrimaryMouseButtonEvents = false
       nameBtn.addGestureRecognizer(doubleClick)
 
       // Close button (hidden if last remaining tab)
@@ -303,14 +335,18 @@ final class DFTerminalPane: NSView {
         tabDot.widthAnchor.constraint(equalToConstant: 6),
         tabDot.heightAnchor.constraint(equalToConstant: 6),
 
+        // Both buttons span the tab's full height so the whole tab is
+        // clickable, not just the text glyphs.
         nameBtn.leadingAnchor.constraint(
           equalTo: needsAttention ? tabDot.trailingAnchor : container.leadingAnchor,
           constant: needsAttention ? 2 : 0),
-        nameBtn.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        nameBtn.topAnchor.constraint(equalTo: container.topAnchor),
+        nameBtn.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
         closeBtn.leadingAnchor.constraint(equalTo: nameBtn.trailingAnchor, constant: -2),
         closeBtn.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -2),
-        closeBtn.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        closeBtn.topAnchor.constraint(equalTo: container.topAnchor),
+        closeBtn.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         closeBtn.widthAnchor.constraint(equalToConstant: 16),
       ])
 
