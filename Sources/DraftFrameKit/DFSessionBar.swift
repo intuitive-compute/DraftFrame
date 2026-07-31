@@ -213,11 +213,15 @@ final class SessionCard: NSView {
     layer?.backgroundColor = Theme.surface2.cgColor
     layer?.cornerRadius = 8
 
+    // Card background carries a dimmed wash of the status color so a
+    // glance at the session bar shows what every session is doing.
+    let stateColor = session.state.color
+
     if isActive {
       // Bright background + status-coloured border and left bar so the
       // active card visually telegraphs what claude is currently doing.
-      let stateColor = session.state.color
-      layer?.backgroundColor = Theme.surface3.cgColor
+      layer?.backgroundColor =
+        (Theme.surface3.blended(withFraction: 0.16, of: stateColor) ?? Theme.surface3).cgColor
       layer?.borderColor = stateColor.cgColor
       layer?.borderWidth = 1.5
 
@@ -229,8 +233,9 @@ final class SessionCard: NSView {
       layer?.masksToBounds = true
       layer?.addSublayer(accentBar)
     } else {
-      // Dimmed inactive card
-      layer?.backgroundColor = Theme.surface1.cgColor
+      // Dimmed inactive card, still tinted by its status color
+      layer?.backgroundColor =
+        (Theme.surface1.blended(withFraction: 0.12, of: stateColor) ?? Theme.surface1).cgColor
       layer?.borderWidth = 0
       alphaValue = 0.6
     }
