@@ -370,7 +370,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
 
       // bounds-checked: returns nil when the click isn't on this view.
       guard let (text, col) = self.lineAndColumn(at: event) else { return event }
-      let token = self.tokenAtClick(in: text, col: col)
+      let token = Self.tokenAtClick(in: text, col: col)
       NSLog(
         "[ClaudeTerminalView] cmd+click col=%d len=%d token=%@ line=|%@|",
         col, (text as NSString).length, token ?? "<none>", text)
@@ -386,13 +386,16 @@ class ClaudeTerminalView: LocalProcessTerminalView {
         EditorOpener.open(path: target.path, line: target.line, column: target.col)
         return nil
       }
-      // Open literal web links ourselves instead of deferring to SwiftTerm.
-      // SwiftTerm only opens an implicit (non-OSC-8) URL when its own hover
-      // highlight range lines up with the click, so cmd+click on a plain URL
-      // fired only intermittently — and not at all once the line scrolled into
-      // scrollback. We already have the rendered line text, so we resolve and
-      // open the URL deterministically.
-      if let url = self.webURL(in: text, col: col) {
+      // Web links: our wrap-group stitcher first — SwiftTerm's matcher
+      // silently truncates URLs spanning 3+ hard-wrapped rows, so it must
+      // not win when the stitcher can see the whole URL. Then SwiftTerm's
+      // matcher (handles URLs abutting punctuation and OSC-8 payloads),
+      // then the single-line token scan.
+      let local = self.convert(event.locationInWindow, from: nil)
+      if let url = self.stitchedWebURL(atLocal: local)
+        ?? self.swiftTermLinkURL(atLocal: local)
+        ?? self.webURL(in: text, col: col)
+      {
         NSLog("[ClaudeTerminalView] cmd+click opening web link: %@", url.absoluteString)
         NSWorkspace.shared.open(url)
         return nil
@@ -444,7 +447,9 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       let key = "\(col)|\(text)"
       if key != lastLinkHoverKey {
         lastLinkHoverKey = key
-        linkHoverActive = isClickableTarget(in: text, col: col)
+        linkHoverActive =
+          isClickableTarget(in: text, col: col) || stitchedWebURL(atLocal: p) != nil
+          || swiftTermLinkURL(atLocal: p) != nil
       }
     } else {
       lastLinkHoverKey = nil
@@ -466,7 +471,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   /// doesn't appear over whitespace elsewhere on a line containing a path.
   private func isClickableTarget(in text: String, col: Int) -> Bool {
     if prURL(in: text, col: col) != nil { return true }
-    guard let token = tokenAtClick(in: text, col: col) else { return false }
+    guard let token = Self.tokenAtClick(in: text, col: col) else { return false }
     if Self.hasOpenableScheme(token) { return true }
     let cwd = sessionWorkingDirectory()
     return Self.pathCandidates(from: token).contains {
@@ -496,6 +501,29 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   }
 
   func lineAndColumn(atLocal localPoint: CGPoint) -> (text: String, col: Int)? {
+    guard let (row, col) = gridPosition(atLocal: localPoint),
+      let text = renderedRow(row)
+    else { return nil }
+    return (text, col)
+  }
+
+  /// Rendered text of a visible row, normalized for hit-testing. SwiftTerm's
+  /// `translateToString` renders never-written cells as literal NULs (Ink
+  /// cursor-positions past the left margin instead of writing spaces), which
+  /// `tokenAtClick` would glue into tokens; and its right-trim only drops NUL
+  /// cells, not space-painted ones, so TUI rows padded with real spaces read
+  /// as full-width. Map NULs to spaces and re-trim the right edge.
+  private func renderedRow(_ row: Int) -> String? {
+    guard let line = getTerminal().getLine(row: row) else { return nil }
+    var text = line.translateToString(trimRight: true)
+      .replacingOccurrences(of: "\u{0}", with: " ")
+    while text.hasSuffix(" ") { text.removeLast() }
+    return text
+  }
+
+  /// Map a point in view coordinates to a visible grid cell (screen row and
+  /// column), mirroring SwiftTerm's own `calculateMouseHit`.
+  private func gridPosition(atLocal localPoint: CGPoint) -> (row: Int, col: Int)? {
     guard bounds.contains(localPoint) else { return nil }
 
     let term = getTerminal()
@@ -516,16 +544,116 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     let col = min(max(0, Int(localPoint.x / cellWidth)), term.cols - 1)
     let row = Int((bounds.height - localPoint.y) / cellHeight)
     guard row >= 0, row < term.rows else { return nil }
-    guard let line = term.getLine(row: row) else { return nil }
+    return (row, col)
+  }
 
-    return (line.translateToString(trimRight: true), col)
+  /// Ask SwiftTerm for the link under a point and turn it into a URL.
+  ///
+  /// SwiftTerm 1.13 ships Ghostty's implicit link matcher, which stitches
+  /// wrapped rows back together and resolves against the scrollback buffer —
+  /// both cases our single-line token scan gets wrong, and the main reason
+  /// cmd+click on a long URL fired only some of the time. We call the matcher
+  /// directly instead of letting SwiftTerm's `mouseUp` act on the click: its
+  /// activation is gated on the hover highlight range agreeing with the click,
+  /// and its default `requestOpenLink` hands the raw matched text to
+  /// `NSWorkspace.open` (Finder error -50 for anything schemeless).
+  private func swiftTermLinkURL(atLocal localPoint: CGPoint) -> URL? {
+    guard let (row, col) = gridPosition(atLocal: localPoint),
+      let link = getTerminal().link(
+        at: .screen(Position(col: col, row: row)), mode: .explicitAndImplicit),
+      Self.hasOpenableScheme(link),
+      let cleaned = Self.cleanedURLToken(link)
+    else { return nil }
+    return URL(string: cleaned)
+  }
+
+  /// Resolve a URL that hard-wraps across multiple rows by stitching the
+  /// wrap group back together ourselves.
+  ///
+  /// Claude Code's TUI wraps long URLs by emitting each segment as its own
+  /// line, so SwiftTerm's buffer never marks the continuation rows
+  /// `isWrapped`. SwiftTerm 1.13 has a heuristic for exactly this
+  /// (`canJoinImplicitRows`), but its seam check only regex-scans the last
+  /// 96 characters of the upper row — a URL longer than ~2 rows stops
+  /// stitching at the second seam because no scheme falls inside that
+  /// window, returning a silently truncated URL.
+  ///
+  /// The TUI wraps inside a padded content box, not at the terminal edge:
+  /// hard-wrapped rows all end at the same content-width column (short of
+  /// `term.cols`), and every continuation row re-emits the block's left
+  /// indent. So we infer the wrap column from the rows themselves — a
+  /// hard-wrapped segment fills its row to the group's shared width — and
+  /// strip the re-emitted indent when joining.
+  private func stitchedWebURL(atLocal localPoint: CGPoint) -> URL? {
+    guard let (row, col) = gridPosition(atLocal: localPoint) else { return nil }
+    let term = getTerminal()
+
+    func rowText(_ r: Int) -> String? {
+      guard r >= 0, r < term.rows else { return nil }
+      return renderedRow(r)
+    }
+    guard let clicked = rowText(row), !clicked.isEmpty else { return nil }
+
+    // The wrap column: either the clicked row is a full segment, or it is
+    // the tail of the group and the row above is full. Require a plausible
+    // width so two coincidentally equal short lines don't get joined.
+    let fullLen = max(
+      (clicked as NSString).length,
+      ((rowText(row - 1) ?? "") as NSString).length)
+    guard fullLen >= 40 else { return nil }
+
+    // Walk up to the top of the wrap group, then collect rows downward
+    // until one ends short of the wrap column (the tail, included).
+    var start = row
+    while start > 0, let prev = rowText(start - 1), (prev as NSString).length == fullLen {
+      start -= 1
+    }
+    var rows: [String] = []
+    var r = start
+    while let text = rowText(r) {
+      rows.append(text)
+      if (text as NSString).length < fullLen { break }
+      r += 1
+    }
+    guard row - start < rows.count else { return nil }
+
+    return Self.stitchedWebURL(rows: rows, clickedIndex: row - start, col: col)
+  }
+
+  /// Pure core of the wrap-group stitcher: concatenate the rows, translate
+  /// the clicked cell into the stitched string, and resolve the token under
+  /// it as a web URL. `rows` must be the full wrap group — every row except
+  /// the last reaching the group's wrap column. Continuation rows carry the
+  /// block's re-emitted left indent, which is dropped before joining.
+  static func stitchedWebURL(rows: [String], clickedIndex: Int, col: Int) -> URL? {
+    guard clickedIndex >= 0, clickedIndex < rows.count else { return nil }
+    var stitched = ""
+    var offset = -1
+    for (i, row) in rows.enumerated() {
+      let ns = row as NSString
+      var strip = 0
+      if i > 0 {
+        while strip < ns.length, ns.character(at: strip) == 0x20 { strip += 1 }
+      }
+      if i == clickedIndex {
+        // A click inside the stripped indent is a click on whitespace.
+        guard col >= strip else { return nil }
+        offset = (stitched as NSString).length + col - strip
+      }
+      stitched += ns.substring(from: strip)
+    }
+    guard offset >= 0, let token = tokenAtClick(in: stitched, col: offset),
+      hasOpenableScheme(token),
+      let cleaned = cleanedURLToken(token)
+    else { return nil }
+    return URL(string: cleaned)
   }
 
   /// Return a web/file URL if a scheme-carrying token (http, https, ftp, ssh,
   /// file, mailto) sits under `col`. Resolving these from the rendered line is
   /// deterministic, unlike deferring to SwiftTerm's hover-gated link handling.
   private func webURL(in text: String, col: Int) -> URL? {
-    guard let token = tokenAtClick(in: text, col: col),
+    guard let token = Self.tokenAtClick(in: text, col: col),
       Self.hasOpenableScheme(token),
       let cleaned = Self.cleanedURLToken(token),
       let url = URL(string: cleaned)
@@ -591,7 +719,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
 
   /// The maximal run of non-whitespace characters under `col`, or nil when the
   /// click landed on whitespace or outside the line's text.
-  private func tokenAtClick(in text: String, col: Int) -> String? {
+  static func tokenAtClick(in text: String, col: Int) -> String? {
     let nsText = text as NSString
     guard col >= 0, col < nsText.length else { return nil }
 
