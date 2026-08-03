@@ -755,33 +755,19 @@ final class DFSidebar: NSView {
     guard sender.tag >= 0, sender.tag < projects.count else { return }
     let project = projects[sender.tag]
 
-    let alert = NSAlert()
-    alert.messageText = "New Worktree"
-    alert.informativeText = "Enter a name for the new worktree branch in \(project.name):"
-    alert.addButton(withTitle: "Create")
-    alert.addButton(withTitle: "Cancel")
-
-    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-    input.placeholderString = "feature-name"
-    alert.accessoryView = input
-
     guard let win = window else { return }
-    alert.beginSheetModal(for: win) { response in
-      guard response == .alertFirstButtonReturn else { return }
-      let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !name.isEmpty else { return }
-
-      do {
-        let path = try WorktreeManager.shared.createWorktree(
-          repoRoot: project.path, name: name)
-        SessionManager.shared.createSession(name: name, worktreePath: path)
-        self.refreshWorktrees()
-      } catch {
-        let errAlert = NSAlert()
-        errAlert.messageText = "Worktree Error"
-        errAlert.informativeText = error.localizedDescription
-        errAlert.runModal()
-      }
+    NewWorktreeDialog.present(
+      on: win, title: "New Worktree",
+      message: "Enter a name for the new worktree branch in \(project.name):"
+    ) { result in
+      guard
+        let path = NewWorktreeDialog.createWorktreeReportingErrors(
+          repoRoot: project.path, name: result.name)
+      else { return }
+      SessionManager.shared.createSession(
+        name: result.name, worktreePath: path,
+        initialPrompt: result.ticket.map(TicketLink.kickoffPrompt))
+      self.refreshWorktrees()
     }
   }
 
@@ -795,33 +781,19 @@ final class DFSidebar: NSView {
     let sourceName =
       source.branch.isEmpty ? (source.path as NSString).lastPathComponent : source.branch
 
-    let alert = NSAlert()
-    alert.messageText = "New Worktree from \(sourceName)"
-    alert.informativeText = "Enter a name for the new worktree branch based on \(sourceName):"
-    alert.addButton(withTitle: "Create")
-    alert.addButton(withTitle: "Cancel")
-
-    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-    input.placeholderString = "feature-name"
-    alert.accessoryView = input
-
     guard let win = window else { return }
-    alert.beginSheetModal(for: win) { response in
-      guard response == .alertFirstButtonReturn else { return }
-      let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !name.isEmpty else { return }
-
-      do {
-        let path = try WorktreeManager.shared.createWorktree(
-          repoRoot: req.repoRoot, name: name, baseBranch: base)
-        SessionManager.shared.createSession(name: name, worktreePath: path)
-        self.refreshWorktrees()
-      } catch {
-        let errAlert = NSAlert()
-        errAlert.messageText = "Worktree Error"
-        errAlert.informativeText = error.localizedDescription
-        errAlert.runModal()
-      }
+    NewWorktreeDialog.present(
+      on: win, title: "New Worktree from \(sourceName)",
+      message: "Enter a name for the new worktree branch based on \(sourceName):"
+    ) { result in
+      guard
+        let path = NewWorktreeDialog.createWorktreeReportingErrors(
+          repoRoot: req.repoRoot, name: result.name, baseBranch: base)
+      else { return }
+      SessionManager.shared.createSession(
+        name: result.name, worktreePath: path,
+        initialPrompt: result.ticket.map(TicketLink.kickoffPrompt))
+      self.refreshWorktrees()
     }
   }
 
