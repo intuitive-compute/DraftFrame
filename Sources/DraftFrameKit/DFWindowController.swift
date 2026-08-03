@@ -231,31 +231,18 @@ final class DFWindowController: NSWindowController {
   }
 
   private func promptNewWorktreeSession() {
-    let alert = NSAlert()
-    alert.messageText = "New Session with Worktree"
-    alert.informativeText = "Enter a branch name for the new worktree:"
-    alert.addButton(withTitle: "Create")
-    alert.addButton(withTitle: "Cancel")
-
-    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-    input.placeholderString = "feature-name"
-    alert.accessoryView = input
-
     guard let win = window else { return }
-    alert.beginSheetModal(for: win) { response in
-      guard response == .alertFirstButtonReturn else { return }
-      let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !name.isEmpty else { return }
-
-      do {
-        let path = try WorktreeManager.shared.createWorktree(name: name)
-        self.terminalPane.createNewSession(name: name, worktreePath: path)
-      } catch {
-        let errAlert = NSAlert()
-        errAlert.messageText = "Worktree Error"
-        errAlert.informativeText = error.localizedDescription
-        errAlert.runModal()
-      }
+    NewWorktreeDialog.present(
+      on: win, title: "New Session with Worktree",
+      message: "Enter a branch name for the new worktree:"
+    ) { result in
+      guard
+        let path = NewWorktreeDialog.createWorktreeReportingErrors(
+          repoRoot: nil, name: result.name)
+      else { return }
+      self.terminalPane.createNewSession(
+        name: result.name, worktreePath: path,
+        initialPrompt: result.ticket.map(TicketLink.kickoffPrompt))
     }
   }
 

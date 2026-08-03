@@ -199,8 +199,11 @@ final class DFTerminalPane: NSView {
     createNewSession()
   }
 
-  func createNewSession(name: String? = nil, worktreePath: String? = nil) {
-    SessionManager.shared.createSession(name: name, worktreePath: worktreePath)
+  func createNewSession(
+    name: String? = nil, worktreePath: String? = nil, initialPrompt: String? = nil
+  ) {
+    SessionManager.shared.createSession(
+      name: name, worktreePath: worktreePath, initialPrompt: initialPrompt)
   }
 
   /// Ensure there's at least one session on first display.

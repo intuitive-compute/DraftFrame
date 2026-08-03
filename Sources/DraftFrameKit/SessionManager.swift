@@ -322,11 +322,13 @@ final class SessionManager {
 
   /// Create a new session and return it. `agent` defaults to the persisted
   /// agent preference; pass one explicitly to restore or restart a session
-  /// with the agent it originally launched with.
+  /// with the agent it originally launched with. `initialPrompt` is handed
+  /// to the agent CLI as a positional argument so the session starts working
+  /// on it immediately (used for ticket-linked worktrees).
   @discardableResult
   func createSession(
     name: String? = nil, command: String? = nil, worktreePath: String? = nil,
-    agent: AgentKind? = nil
+    agent: AgentKind? = nil, initialPrompt: String? = nil
   )
     -> Session
   {
@@ -398,7 +400,8 @@ final class SessionManager {
     // Resolve the agent command to an absolute path so we don't depend
     // on the spawned login shell re-sourcing PATH correctly.
     let agentBin = SessionManager.resolveAgentPath(agent: agent, augmentedPath: composedPath)
-    let agentCmd = agent.launchCommand(binPath: agentBin, modelId: modelId)
+    let agentCmd = agent.launchCommand(
+      binPath: agentBin, modelId: modelId, initialPrompt: initialPrompt)
 
     // Start transcript/status watchers for cost/token/state tracking.
     let watchDir = worktreePath ?? projectDir ?? FileManager.default.currentDirectoryPath
@@ -436,7 +439,7 @@ final class SessionManager {
     // render. The kernel buffers the bytes until the shell calls read(), so
     // we don't need a delay before sending.
     if let wtPath = worktreePath {
-      tv.send(txt: "cd \(wtPath) && clear && \(agentCmd)\r")
+      tv.send(txt: "cd \(shellSingleQuote(wtPath)) && clear && \(agentCmd)\r")
     } else {
       tv.send(txt: "clear && \(agentCmd)\r")
     }

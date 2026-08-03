@@ -105,9 +105,15 @@ enum AgentKind: String, CaseIterable {
   }
 
   /// Full command line that launches this agent with the given model
-  /// (empty = the CLI's own default).
-  func launchCommand(binPath: String, modelId: String) -> String {
-    modelId.isEmpty ? binPath : "\(binPath) --model \(modelId)"
+  /// (empty = the CLI's own default) and, optionally, an initial prompt the
+  /// agent starts working on immediately. Both CLIs take the prompt as a
+  /// positional argument.
+  func launchCommand(binPath: String, modelId: String, initialPrompt: String? = nil) -> String {
+    var cmd = modelId.isEmpty ? binPath : "\(binPath) --model \(modelId)"
+    if let prompt = initialPrompt, !prompt.isEmpty {
+      cmd += " \(shellSingleQuote(prompt))"
+    }
+    return cmd
   }
 }
 
