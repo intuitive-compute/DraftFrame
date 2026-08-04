@@ -170,10 +170,11 @@ enum NewWorktreeDialog {
       for row in [nameRow!, ticketRow!, branchRow!] {
         row.translatesAutoresizingMaskIntoConstraints = false
         fieldsSlot.addSubview(row)
+        let top: CGFloat = row === ticketRow ? 32 : 0
         NSLayoutConstraint.activate([
           row.leadingAnchor.constraint(equalTo: fieldsSlot.leadingAnchor),
           row.trailingAnchor.constraint(equalTo: fieldsSlot.trailingAnchor),
-          row.topAnchor.constraint(equalTo: fieldsSlot.topAnchor, constant: row === ticketRow ? 32 : 0),
+          row.topAnchor.constraint(equalTo: fieldsSlot.topAnchor, constant: top),
           row.heightAnchor.constraint(equalToConstant: 24),
         ])
       }
