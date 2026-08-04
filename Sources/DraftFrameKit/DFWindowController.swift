@@ -234,15 +234,27 @@ final class DFWindowController: NSWindowController {
     guard let win = window else { return }
     NewWorktreeDialog.present(
       on: win, title: "New Session with Worktree",
-      message: "Enter a branch name for the new worktree:"
+      message: "Create a worktree for the new session."
     ) { result in
-      guard
-        let path = NewWorktreeDialog.createWorktreeReportingErrors(
-          repoRoot: nil, name: result.name)
-      else { return }
-      self.terminalPane.createNewSession(
-        name: result.name, worktreePath: path,
-        initialPrompt: result.ticket.map(TicketLink.kickoffPrompt))
+      switch result {
+      case .newBranch(let name, let ticket):
+        guard
+          let path = NewWorktreeDialog.createWorktreeReportingErrors(
+            repoRoot: nil, name: name)
+        else { return }
+        self.terminalPane.createNewSession(
+          name: name, worktreePath: path,
+          initialPrompt: ticket.map(TicketLink.kickoffPrompt))
+      case .existingBranch(let branch):
+        // Session with no kickoff prompt — the worktree is set up but no
+        // work starts until the user says so.
+        guard
+          let path = NewWorktreeDialog.checkoutWorktreeReportingErrors(
+            repoRoot: nil, branch: branch)
+        else { return }
+        self.terminalPane.createNewSession(name: branch, worktreePath: path)
+        self.sidebar.refreshWorktrees()
+      }
     }
   }
 

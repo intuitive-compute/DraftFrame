@@ -163,6 +163,50 @@ final class WorktreeManager {
     return worktreePath
   }
 
+  /// Create a worktree that checks out an existing branch. Tries the local
+  /// branch first; when the branch only exists on origin, creates a local
+  /// tracking branch from it. The worktree directory flattens any `/` in the
+  /// branch name so it stays a single path component.
+  func createWorktree(repoRoot root: String, checkoutBranch branch: String) throws -> String {
+    let base = root + Self.worktreeSubpath
+    try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+
+    let dirName = branch.replacingOccurrences(of: "/", with: "-")
+    let worktreePath = "\(base)/\(dirName)"
+
+    let localError = runGit(
+      ["-C", root, "worktree", "add", worktreePath, branch], in: root)
+    guard let localError = localError else { return worktreePath }
+
+    // Fall back to a remote-only branch on origin.
+    let remoteError = runGit(
+      ["-C", root, "worktree", "add", "--track", "-b", branch, worktreePath, "origin/\(branch)"],
+      in: root)
+    if remoteError == nil { return worktreePath }
+
+    throw WorktreeError.creationFailed(localError)
+  }
+
+  /// Run git with `args`; returns nil on success, stderr text on failure.
+  private func runGit(_ args: [String], in dir: String) -> String? {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = args
+    proc.currentDirectoryURL = URL(fileURLWithPath: dir)
+    let errPipe = Pipe()
+    proc.standardError = errPipe
+    proc.standardOutput = Pipe()
+    do {
+      try proc.run()
+      proc.waitUntilExit()
+    } catch {
+      return error.localizedDescription
+    }
+    guard proc.terminationStatus != 0 else { return nil }
+    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+    return String(data: errData, encoding: .utf8) ?? "Unknown error"
+  }
+
   private func detectDefaultBranch(in dir: String) -> String? {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")

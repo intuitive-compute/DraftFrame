@@ -333,7 +333,7 @@ final class DFSidebar: NSView {
 
   // MARK: - Worktrees
 
-  @objc private func refreshWorktrees() {
+  @objc func refreshWorktrees() {
     // Process.waitUntilExit() inside getWorktrees(for:) pumps the run loop,
     // which can dispatch a queued .sessionsDidChange notification and re-enter
     // this method. The reentrant call clears the stack and rebuilds it, but
@@ -463,6 +463,13 @@ final class DFSidebar: NSView {
       showItem.target = self
       showItem.representedObject = project.path
       menu.addItem(showItem)
+
+      let fromBranchItem = NSMenuItem(
+        title: "New Worktree from Branch", action: #selector(addWorktreeFromBranch(_:)),
+        keyEquivalent: "")
+      fromBranchItem.target = self
+      fromBranchItem.representedObject = project.path
+      menu.addItem(fromBranchItem)
 
       menu.addItem(NSMenuItem.separator())
       let removeItem = NSMenuItem(
@@ -758,17 +765,49 @@ final class DFSidebar: NSView {
     guard let win = window else { return }
     NewWorktreeDialog.present(
       on: win, title: "New Worktree",
-      message: "Enter a name for the new worktree branch in \(project.name):"
+      message: "Create a worktree in \(project.name)."
     ) { result in
+      self.handleWorktreeDialogResult(result, repoRoot: project.path)
+    }
+  }
+
+  @objc private func addWorktreeFromBranch(_ sender: NSMenuItem) {
+    guard let projectPath = sender.representedObject as? String else { return }
+    guard let win = window else { return }
+    let projectName = (projectPath as NSString).lastPathComponent
+    NewWorktreeDialog.present(
+      on: win, title: "New Worktree from Branch",
+      message: "Check out an existing branch in \(projectName) into a worktree.",
+      initialMode: .existingBranch
+    ) { result in
+      self.handleWorktreeDialogResult(result, repoRoot: projectPath)
+    }
+  }
+
+  /// Shared tail of the worktree-creation dialogs: create the worktree, open
+  /// a session in it, then refresh the sidebar. Existing-branch checkouts get
+  /// a session with no kickoff prompt — the worktree is set up but no work
+  /// starts until the user says so.
+  private func handleWorktreeDialogResult(
+    _ result: NewWorktreeDialog.Result, repoRoot: String, baseBranch: String? = nil
+  ) {
+    switch result {
+    case .newBranch(let name, let ticket):
       guard
         let path = NewWorktreeDialog.createWorktreeReportingErrors(
-          repoRoot: project.path, name: result.name)
+          repoRoot: repoRoot, name: name, baseBranch: baseBranch)
       else { return }
       SessionManager.shared.createSession(
-        name: result.name, worktreePath: path,
-        initialPrompt: result.ticket.map(TicketLink.kickoffPrompt))
-      self.refreshWorktrees()
+        name: name, worktreePath: path,
+        initialPrompt: ticket.map(TicketLink.kickoffPrompt))
+    case .existingBranch(let branch):
+      guard
+        let path = NewWorktreeDialog.checkoutWorktreeReportingErrors(
+          repoRoot: repoRoot, branch: branch)
+      else { return }
+      SessionManager.shared.createSession(name: branch, worktreePath: path)
     }
+    refreshWorktrees()
   }
 
   @objc private func addWorktreeFromWorktree(_ sender: NSMenuItem) {
@@ -784,16 +823,9 @@ final class DFSidebar: NSView {
     guard let win = window else { return }
     NewWorktreeDialog.present(
       on: win, title: "New Worktree from \(sourceName)",
-      message: "Enter a name for the new worktree branch based on \(sourceName):"
+      message: "Create a worktree with a new branch based on \(sourceName)."
     ) { result in
-      guard
-        let path = NewWorktreeDialog.createWorktreeReportingErrors(
-          repoRoot: req.repoRoot, name: result.name, baseBranch: base)
-      else { return }
-      SessionManager.shared.createSession(
-        name: result.name, worktreePath: path,
-        initialPrompt: result.ticket.map(TicketLink.kickoffPrompt))
-      self.refreshWorktrees()
+      self.handleWorktreeDialogResult(result, repoRoot: req.repoRoot, baseBranch: base)
     }
   }
 
