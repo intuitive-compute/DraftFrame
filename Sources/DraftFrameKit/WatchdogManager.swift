@@ -86,25 +86,68 @@ final class WatchdogManager {
 
   // MARK: - Default Watchdogs
 
+  static let autoAcceptName = "Auto-accept tools"
+  static let notifyOnFinishName = "Notify on finish"
+
+  /// IDs of the built-in watchdogs mapped to the settings key used to
+  /// persist their enabled state across launches.
+  private var builtinSettingsNames: [UUID: String] = [:]
+
   private func loadDefaults() {
+    let autoAcceptID = UUID()
+    let notifyID = UUID()
+    builtinSettingsNames = [
+      autoAcceptID: Self.autoAcceptName,
+      notifyID: Self.notifyOnFinishName,
+    ]
     watchdogs = [
       Watchdog(
-        id: UUID(),
-        name: "Auto-accept tools",
-        isEnabled: false,
+        id: autoAcceptID,
+        name: Self.autoAcceptName,
+        isEnabled: AppSettings.watchdogEnabled(name: Self.autoAcceptName, fallback: false),
         sessionID: nil,
         trigger: .needsAttention,
         response: .autoAccept
       ),
       Watchdog(
-        id: UUID(),
-        name: "Notify on finish",
-        isEnabled: true,
+        id: notifyID,
+        name: Self.notifyOnFinishName,
+        isEnabled: AppSettings.watchdogEnabled(name: Self.notifyOnFinishName, fallback: true),
         sessionID: nil,
         trigger: .idleAfterWork,
         response: .notify
       ),
     ]
+  }
+
+  /// Built-in watchdogs remember their enabled state across launches.
+  private func persistEnabledIfBuiltin(id: UUID, isEnabled: Bool) {
+    guard let name = builtinSettingsNames[id] else { return }
+    AppSettings.setWatchdogEnabled(name: name, isEnabled)
+  }
+
+  /// Set a built-in watchdog's enabled state by its settings name. Used by
+  /// the settings window; persists even if the watchdog was removed.
+  func setEnabled(_ enabled: Bool, builtinName: String) {
+    AppSettings.setWatchdogEnabled(name: builtinName, enabled)
+    guard let id = builtinSettingsNames.first(where: { $0.value == builtinName })?.key,
+      let idx = watchdogs.firstIndex(where: { $0.id == id }),
+      watchdogs[idx].isEnabled != enabled
+    else { return }
+    var updated = watchdogs[idx]
+    updated.isEnabled = enabled
+    updateWatchdog(updated)
+  }
+
+  /// Current enabled state for a built-in watchdog: the live watchdog if it
+  /// still exists, otherwise the persisted setting.
+  func isEnabled(builtinName: String, fallback: Bool) -> Bool {
+    if let id = builtinSettingsNames.first(where: { $0.value == builtinName })?.key,
+      let wd = watchdogs.first(where: { $0.id == id })
+    {
+      return wd.isEnabled
+    }
+    return AppSettings.watchdogEnabled(name: builtinName, fallback: fallback)
   }
 
   // MARK: - CRUD
@@ -145,6 +188,7 @@ final class WatchdogManager {
       }
     }
 
+    persistEnabledIfBuiltin(id: updated.id, isEnabled: updated.isEnabled)
     NotificationCenter.default.post(name: .watchdogsDidChange, object: nil)
   }
 
@@ -156,6 +200,7 @@ final class WatchdogManager {
     } else {
       stopPeriodicTimer(for: id)
     }
+    persistEnabledIfBuiltin(id: id, isEnabled: watchdogs[idx].isEnabled)
     NotificationCenter.default.post(name: .watchdogsDidChange, object: nil)
   }
 

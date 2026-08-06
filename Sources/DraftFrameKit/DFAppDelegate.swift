@@ -126,6 +126,11 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Check for Updates\u{2026}", action: #selector(checkForUpdates),
       keyEquivalent: "")
     appMenu.addItem(NSMenuItem.separator())
+    let settingsItem = NSMenuItem(
+      title: "Settings\u{2026}", action: #selector(openSettings), keyEquivalent: ",")
+    settingsItem.target = self
+    appMenu.addItem(settingsItem)
+    appMenu.addItem(NSMenuItem.separator())
     let quitItem = NSMenuItem(
       title: "Quit DraftFrame", action: #selector(requestQuit), keyEquivalent: "q")
     quitItem.target = self
@@ -329,6 +334,10 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
   @objc private func checkForUpdates() {
     UpdateManager.shared.checkNow()
+  }
+
+  @objc private func openSettings() {
+    DFSettingsWindow.shared.show()
   }
 
   @objc private func showKeyboardShortcuts() {

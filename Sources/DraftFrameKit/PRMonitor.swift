@@ -161,9 +161,11 @@ final class PRMonitor {
     statusBySession[sessionID]
   }
 
+  /// Explicit per-worktree config if the user has toggled anything for this
+  /// path, otherwise the app-wide defaults from Settings.
   func config(for worktreePath: String?) -> PRMonitorConfig {
-    guard let path = worktreePath else { return PRMonitorConfig() }
-    return configByWorktree[path] ?? PRMonitorConfig()
+    guard let path = worktreePath else { return AppSettings.defaultPRConfig }
+    return configByWorktree[path] ?? AppSettings.defaultPRConfig
   }
 
   func setConfig(_ config: PRMonitorConfig, for worktreePath: String) {
@@ -314,7 +316,7 @@ final class PRMonitor {
       NotificationCenter.default.post(name: .prStatusDidChange, object: nil)
     }
 
-    let config = configByWorktree[worktreePath] ?? PRMonitorConfig()
+    let config = configByWorktree[worktreePath] ?? AppSettings.defaultPRConfig
 
     if newStatus.rollup != .passing {
       mergedAttempted.remove(sessionID)

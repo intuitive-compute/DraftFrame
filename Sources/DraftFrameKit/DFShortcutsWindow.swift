@@ -32,6 +32,7 @@ final class DFShortcutsWindow: NSObject, NSWindowDelegate {
       title: "General",
       shortcuts: [
         Shortcut(keys: ["⌘", "O"], detail: "Open project"),
+        Shortcut(keys: ["⌘", ","], detail: "Open settings"),
         Shortcut(keys: ["⌘", "Q"], detail: "Quit DraftFrame"),
       ]),
     Section(
