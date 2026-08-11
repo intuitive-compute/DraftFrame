@@ -316,6 +316,9 @@ final class SessionCard: NSView {
     }
     menu.addItem(NSMenuItem.separator())
     add("Close Session", #selector(closeFromMenu))
+    if session.worktreePath != nil {
+      add("Remove Session and Worktree…", #selector(removeSessionAndWorktreeFromMenu))
+    }
     return menu
   }
 
@@ -325,6 +328,43 @@ final class SessionCard: NSView {
 
   @objc private func closeFromMenu() {
     SessionManager.shared.closeSession(id: session.id)
+  }
+
+  @objc private func removeSessionAndWorktreeFromMenu() {
+    guard let path = session.worktreePath else { return }
+    let subpath = WorktreeManager.worktreeSubpath + "/"
+    guard let range = path.range(of: subpath) else { return }
+    let repoRoot = String(path[..<range.lowerBound])
+
+    let alert = NSAlert()
+    alert.messageText = "Remove Session and Worktree?"
+    alert.informativeText =
+      "This will close the session and remove the worktree at:\n\(path)\n\n"
+      + "Any uncommitted changes will be lost."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Remove")
+    alert.addButton(withTitle: "Cancel")
+
+    guard let win = window else { return }
+    alert.beginSheetModal(for: win) { [weak self] response in
+      guard response == .alertFirstButtonReturn, let self = self else { return }
+      let sessionId = self.session.id
+      SessionManager.shared.closeSession(id: sessionId)
+
+      DispatchQueue.global(qos: .userInitiated).async {
+        let result = Result {
+          try WorktreeManager.shared.removeWorktree(repoRoot: repoRoot, path: path)
+        }
+        DispatchQueue.main.async {
+          if case .failure(let error) = result {
+            let errAlert = NSAlert()
+            errAlert.messageText = "Remove Failed"
+            errAlert.informativeText = error.localizedDescription
+            errAlert.runModal()
+          }
+        }
+      }
+    }
   }
 
   @objc private func openPRFromMenu() {
