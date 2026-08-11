@@ -227,6 +227,30 @@ final class DFWindowController: NSWindowController {
       DFQuickTerminal.shared.toggle()
     }
 
+    shortcuts.onQuickTerminalNewTab = {
+      DFQuickTerminal.shared.addTab()
+    }
+
+    shortcuts.onQuickTerminalSplitVertical = {
+      DFQuickTerminal.shared.splitFocusedPane(.vertical)
+    }
+
+    shortcuts.onQuickTerminalSplitHorizontal = {
+      DFQuickTerminal.shared.splitFocusedPane(.horizontal)
+    }
+
+    shortcuts.onQuickTerminalCloseFocusedPane = {
+      DFQuickTerminal.shared.closeFocusedPane()
+    }
+
+    shortcuts.onQuickTerminalCloseTab = {
+      DFQuickTerminal.shared.closeActiveTab()
+    }
+
+    shortcuts.onQuickTerminalJumpTo = { index in
+      DFQuickTerminal.shared.jumpTo(index: index)
+    }
+
     shortcuts.install()
   }
 

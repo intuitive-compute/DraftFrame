@@ -363,6 +363,23 @@ final class SessionCard: NSView {
     let avatar = GenerativeAvatar(seed: session.avatarSeed)
     avatar.translatesAutoresizingMaskIntoConstraints = false
 
+    // Positional Cmd+N badge in the card's corner. Only the first nine
+    // sessions have a shortcut; renumbers automatically since cards are
+    // rebuilt whenever the session list changes.
+    let numberBadge: NSTextField? = {
+      guard index < 9 else { return nil }
+      let badge = NSTextField(labelWithString: "\(index + 1)")
+      badge.font = Theme.mono(9, weight: .medium)
+      badge.textColor = isActive ? Theme.accent : Theme.text3
+      badge.alignment = .center
+      badge.wantsLayer = true
+      badge.layer?.backgroundColor = Theme.surface3.cgColor
+      badge.layer?.cornerRadius = 3
+      badge.toolTip = "Switch to session (\u{2318}\(index + 1))"
+      badge.translatesAutoresizingMaskIntoConstraints = false
+      return badge
+    }()
+
     // Name
     let nameLabel = NSTextField(labelWithString: session.displayName)
     nameLabel.font = Theme.mono(12, weight: .medium)
@@ -437,6 +454,7 @@ final class SessionCard: NSView {
       addSubview(v)
     }
     if let cl = contextLabel { addSubview(cl) }
+    if let badge = numberBadge { addSubview(badge) }
 
     // PR status pill (only if gh reports a PR for this worktree).
     let prStatus = PRMonitor.shared.status(for: session.id)
@@ -487,6 +505,14 @@ final class SessionCard: NSView {
       constraints.append(contentsOf: [
         pill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
         pill.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
+      ])
+    }
+    if let badge = numberBadge {
+      constraints.append(contentsOf: [
+        badge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+        badge.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+        badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 13),
+        badge.heightAnchor.constraint(equalToConstant: 13),
       ])
     }
     NSLayoutConstraint.activate(constraints)
