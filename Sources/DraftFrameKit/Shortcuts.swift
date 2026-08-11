@@ -13,6 +13,12 @@ final class ShortcutManager {
   var onToggleSidebar: (() -> Void)?
   var onToggleEditor: (() -> Void)?
   var onToggleQuickTerminal: (() -> Void)?
+  var onQuickTerminalNewTab: (() -> Void)?
+  var onQuickTerminalSplitVertical: (() -> Void)?
+  var onQuickTerminalSplitHorizontal: (() -> Void)?
+  var onQuickTerminalCloseFocusedPane: (() -> Void)?
+  var onQuickTerminalCloseTab: (() -> Void)?
+  var onQuickTerminalJumpTo: ((Int) -> Void)?
 
   private var keyDownMonitor: Any?
   private var keyUpMonitor: Any?
@@ -96,6 +102,52 @@ final class ShortcutManager {
         VoiceManager.shared.startListening()
       }
       return true
+    }
+
+    // Quick-terminal tab/split shortcuts, scoped to only fire while the
+    // popup terminal itself is the key window.
+    if DFQuickTerminal.shared.isFocused {
+      // Option+T: new tab
+      if flags == .option, event.keyCode == 17 {  // 't'
+        onQuickTerminalNewTab?()
+        return true
+      }
+
+      // Option+Shift+D: split horizontally (stacked)
+      if flags == [.option, .shift], event.keyCode == 2 {  // 'd'
+        onQuickTerminalSplitHorizontal?()
+        return true
+      }
+
+      // Option+D: split vertically (side-by-side)
+      if flags == .option, event.keyCode == 2 {  // 'd'
+        onQuickTerminalSplitVertical?()
+        return true
+      }
+
+      // Option+Shift+W: close the active tab (and every pane in it)
+      if flags == [.option, .shift], event.keyCode == 13 {  // 'w'
+        onQuickTerminalCloseTab?()
+        return true
+      }
+
+      // Option+W: close the focused pane
+      if flags == .option, event.keyCode == 13 {  // 'w'
+        onQuickTerminalCloseFocusedPane?()
+        return true
+      }
+
+      // Option+1 through Option+9: jump to terminal N
+      if flags == .option {
+        let digitKeyCodes: [UInt16: Int] = [
+          18: 1, 19: 2, 20: 3, 21: 4, 23: 5,
+          22: 6, 26: 7, 28: 8, 25: 9,
+        ]
+        if let terminalNum = digitKeyCodes[event.keyCode] {
+          onQuickTerminalJumpTo?(terminalNum - 1)
+          return true
+        }
+      }
     }
 
     // Cmd+1 through Cmd+9: switch to session N

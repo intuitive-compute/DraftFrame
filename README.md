@@ -31,6 +31,7 @@ Grab the latest DMG from [GitHub Releases](https://github.com/intuitive-compute/
 - **Code editor** — Built-in file inspector with syntax highlighting (Cmd+E)
 - **Configurable toolkit** — One-click commands (test, build, lint) with output popovers
 - **Voice transcription** — On-device speech-to-text via Apple Speech (Cmd+Shift+V)
+- **Quick terminal** — Floating per-session shell (Cmd+`) with tabs and tmux-style recursive splits
 - **Dashboard** — Full-screen session overview (Cmd+D)
 - **Session persistence** — Restore sessions across app restarts
 - **Keyboard shortcuts** — Cmd+T/W/1-9/D/N/O/E/` and more
@@ -64,7 +65,24 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for DMG packaging, signing, and notarizatio
 | Cmd+N | New session with worktree |
 | Cmd+O | Open project |
 | Cmd+Shift+V | Voice input |
-| Cmd+` | Toggle quick terminal (floating shell in the project directory) |
+| Cmd+` | Toggle quick terminal (floating shell in the session's worktree) |
+
+### Quick Terminal
+
+Each session's quick terminal supports multiple terminals: tabs, plus recursive splits within each tab. Tabs are numbered by position and renumber as they close, always matching Option+1-9. Session tabs and cards in the main window show their Cmd+1-9 number the same way.
+
+These shortcuts are active while the quick terminal is focused:
+
+| Shortcut | Action |
+|----------|--------|
+| Option+T | New tab |
+| Option+D | Split focused pane side-by-side |
+| Option+Shift+D | Split focused pane stacked |
+| Option+W | Close focused pane |
+| Option+Shift+W | Close tab |
+| Option+1-9 | Jump to tab N |
+
+The focused pane carries a light accent outline when a tab is split; click any pane to move focus.
 
 ## Architecture
 

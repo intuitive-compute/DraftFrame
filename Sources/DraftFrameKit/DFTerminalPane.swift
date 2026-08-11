@@ -299,8 +299,21 @@ final class DFTerminalPane: NSView {
         .foregroundColor: nameColor,
         .paragraphStyle: para,
       ]
-      nameBtn.attributedTitle = NSAttributedString(
-        string: " \(session.displayName) ", attributes: attrs)
+      // Positional Cmd+N number ahead of the name, dimmer than the name so
+      // it reads as chrome. Only the first nine sessions have a shortcut.
+      let title = NSMutableAttributedString()
+      if i < 9 {
+        title.append(
+          NSAttributedString(
+            string: " \(i + 1)",
+            attributes: [
+              .font: Theme.mono(9, weight: .medium),
+              .foregroundColor: isActive ? Theme.accent : Theme.text3,
+              .paragraphStyle: para,
+            ]))
+      }
+      title.append(NSAttributedString(string: " \(session.displayName) ", attributes: attrs))
+      nameBtn.attributedTitle = title
       nameBtn.cell?.lineBreakMode = .byTruncatingTail
       nameBtn.cell?.truncatesLastVisibleLine = true
       // Let the name truncate rather than widen the tab past its cap.
