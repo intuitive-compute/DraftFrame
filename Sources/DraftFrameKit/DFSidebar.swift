@@ -19,6 +19,11 @@ final class DFSidebar: NSView {
   /// only.
   private var pendingRemovals: Set<String> = []
 
+  /// Project paths with a `git pull` currently running. The project header's
+  /// pull button is replaced by a spinner while its path is in here, and
+  /// duplicate pulls for the same project are ignored. Main-thread only.
+  private var pullsInFlight: Set<String> = []
+
   /// Composed SF Symbol: leaf with a small "+" badge in the bottom-right.
   private static let leafPlusBadge: NSImage = {
     let size = NSSize(width: 16, height: 16)
@@ -56,6 +61,7 @@ final class DFSidebar: NSView {
     let projectPaths: [String]
     let activeDir: String?
     let pendingRemovals: Set<String>
+    let pullsInFlight: Set<String>
     let worktreesPerProject: [String: [WorktreeKey]]
   }
   private struct WorktreeKey: Equatable {
@@ -364,6 +370,7 @@ final class DFSidebar: NSView {
       projectPaths: projects.map { $0.path },
       activeDir: activeDir,
       pendingRemovals: pendingRemovals,
+      pullsInFlight: pullsInFlight,
       worktreesPerProject: worktreesPerProject.mapValues { wts in
         wts.map { WorktreeKey(path: $0.path, branch: $0.branch, isBare: $0.isBare) }
       }
@@ -449,6 +456,39 @@ final class DFSidebar: NSView {
         addBtn.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
         addBtn.widthAnchor.constraint(equalToConstant: 16),
         addBtn.heightAnchor.constraint(equalToConstant: 16),
+      ])
+
+      // Pull button (or a spinner while a pull runs) so the base branch new
+      // worktrees start from can be brought up to date with its remote
+      // without leaving the app.
+      let pullView: NSView
+      if pullsInFlight.contains(project.path) {
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isIndeterminate = true
+        spinner.isDisplayedWhenStopped = false
+        spinner.startAnimation(nil)
+        pullView = spinner
+      } else {
+        let pullBtn = NSButton(title: "", target: self, action: #selector(pullProject(_:)))
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        pullBtn.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: "Pull")?
+          .withSymbolConfiguration(config)
+        pullBtn.isBordered = false
+        pullBtn.imageScaling = .scaleProportionallyDown
+        pullBtn.contentTintColor = Theme.text3
+        pullBtn.toolTip = "Pull base branch in \(project.name)"
+        pullBtn.tag = idx
+        pullView = pullBtn
+      }
+      pullView.translatesAutoresizingMaskIntoConstraints = false
+      projectRow.addSubview(pullView)
+      NSLayoutConstraint.activate([
+        pullView.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -6),
+        pullView.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
+        pullView.widthAnchor.constraint(equalToConstant: 16),
+        pullView.heightAnchor.constraint(equalToConstant: 16),
       ])
 
       let menu = NSMenu()
@@ -768,6 +808,37 @@ final class DFSidebar: NSView {
       message: "Create a worktree in \(project.name)."
     ) { result in
       self.handleWorktreeDialogResult(result, repoRoot: project.path)
+    }
+  }
+
+  @objc private func pullProject(_ sender: NSButton) {
+    let projects = ProjectManager.shared.projects
+    guard sender.tag >= 0, sender.tag < projects.count else { return }
+    let project = projects[sender.tag]
+    guard !pullsInFlight.contains(project.path) else { return }
+
+    pullsInFlight.insert(project.path)
+    refreshWorktrees()
+
+    DispatchQueue.global(qos: .userInitiated).async {
+      let result = Result {
+        try WorktreeManager.shared.pull(repoRoot: project.path)
+      }
+      DispatchQueue.main.async {
+        self.pullsInFlight.remove(project.path)
+        self.refreshWorktrees()
+        if case .failure(let error) = result {
+          let alert = NSAlert()
+          alert.messageText = "Pull Failed"
+          alert.informativeText = error.localizedDescription
+          alert.alertStyle = .warning
+          if let win = self.window {
+            alert.beginSheetModal(for: win)
+          } else {
+            alert.runModal()
+          }
+        }
+      }
     }
   }
 
