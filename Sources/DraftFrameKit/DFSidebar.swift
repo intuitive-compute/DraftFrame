@@ -19,6 +19,11 @@ final class DFSidebar: NSView {
   /// only.
   private var pendingRemovals: Set<String> = []
 
+  /// Project paths whose default branch is currently being pulled. The
+  /// project row shows a spinner and its "Pull <branch>" menu item is
+  /// disabled while the background `git pull` runs. Main-thread only.
+  private var pullsInFlight: Set<String> = []
+
   /// Composed SF Symbol: leaf with a small "+" badge in the bottom-right.
   private static let leafPlusBadge: NSImage = {
     let size = NSSize(width: 16, height: 16)
@@ -56,6 +61,7 @@ final class DFSidebar: NSView {
     let projectPaths: [String]
     let activeDir: String?
     let pendingRemovals: Set<String>
+    let pullsInFlight: Set<String>
     let worktreesPerProject: [String: [WorktreeKey]]
   }
   private struct WorktreeKey: Equatable {
@@ -364,6 +370,7 @@ final class DFSidebar: NSView {
       projectPaths: projects.map { $0.path },
       activeDir: activeDir,
       pendingRemovals: pendingRemovals,
+      pullsInFlight: pullsInFlight,
       worktreesPerProject: worktreesPerProject.mapValues { wts in
         wts.map { WorktreeKey(path: $0.path, branch: $0.branch, isBare: $0.isBare) }
       }
@@ -451,6 +458,26 @@ final class DFSidebar: NSView {
         addBtn.heightAnchor.constraint(equalToConstant: 16),
       ])
 
+      // In-progress indicator for a background default-branch pull. The row
+      // rebuilds when `pullsInFlight` changes (it's part of the snapshot),
+      // so the spinner appears/disappears with the pull.
+      let isPulling = pullsInFlight.contains(project.path)
+      if isPulling {
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isIndeterminate = true
+        spinner.startAnimation(nil)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        projectRow.addSubview(spinner)
+        NSLayoutConstraint.activate([
+          spinner.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -6),
+          spinner.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
+          spinner.widthAnchor.constraint(equalToConstant: 12),
+          spinner.heightAnchor.constraint(equalToConstant: 12),
+        ])
+      }
+
       let menu = NSMenu()
       let switchItem = NSMenuItem(
         title: "Switch to Project", action: #selector(switchToProject(_:)), keyEquivalent: "")
@@ -470,6 +497,21 @@ final class DFSidebar: NSView {
       fromBranchItem.target = self
       fromBranchItem.representedObject = project.path
       menu.addItem(fromBranchItem)
+
+      // Pull the default branch from its remote — keeps new worktrees (which
+      // branch off the local default branch) from starting stale. Skipped
+      // when no default branch is resolvable (e.g. not a git repo).
+      if let defaultBranch = WorktreeManager.shared.defaultBranch(repoRoot: project.path) {
+        // A nil action leaves the item disabled while a pull is in flight.
+        let pullItem = NSMenuItem(
+          title: isPulling ? "Pulling \(defaultBranch)…" : "Pull \(defaultBranch)",
+          action: isPulling ? nil : #selector(pullDefaultBranch(_:)),
+          keyEquivalent: "")
+        pullItem.target = self
+        pullItem.representedObject = DefaultBranchPullRequest(
+          repoRoot: project.path, branch: defaultBranch)
+        menu.addItem(pullItem)
+      }
 
       menu.addItem(NSMenuItem.separator())
       let removeItem = NSMenuItem(
@@ -741,6 +783,34 @@ final class DFSidebar: NSView {
     guard let path = sender.representedObject as? String else { return }
     if let wc = window?.windowController as? DFWindowController {
       wc.openProject(at: path)
+    }
+  }
+
+  @objc private func pullDefaultBranch(_ sender: NSMenuItem) {
+    guard let req = sender.representedObject as? DefaultBranchPullRequest else { return }
+    guard !pullsInFlight.contains(req.repoRoot) else { return }
+    pullsInFlight.insert(req.repoRoot)
+    refreshWorktrees()
+
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let error = WorktreeManager.shared.pullDefaultBranch(
+        repoRoot: req.repoRoot, branch: req.branch)
+      DispatchQueue.main.async {
+        guard let self = self else { return }
+        self.pullsInFlight.remove(req.repoRoot)
+        self.refreshWorktrees()
+        if let error = error {
+          let alert = NSAlert()
+          alert.messageText = "Pull \(req.branch) Failed"
+          alert.informativeText = error.trimmingCharacters(in: .whitespacesAndNewlines)
+          alert.alertStyle = .warning
+          if let win = self.window {
+            alert.beginSheetModal(for: win)
+          } else {
+            alert.runModal()
+          }
+        }
+      }
     }
   }
 
@@ -1570,4 +1640,11 @@ private struct WorktreeRemovalRequest {
 private struct WorktreeBranchRequest {
   let source: WorktreeManager.Worktree
   let repoRoot: String
+}
+
+/// Payload stored on a "Pull <branch>" menu item so the action handler knows
+/// the repo and the default branch it resolved to when the menu was built.
+private struct DefaultBranchPullRequest {
+  let repoRoot: String
+  let branch: String
 }
