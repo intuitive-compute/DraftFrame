@@ -104,7 +104,8 @@ final class WorktreeManagerPullTests: XCTestCase {
     let error = WorktreeManager.shared.pullDefaultBranch(repoRoot: localDir.path, branch: "main")
     XCTAssertNil(error)
     XCTAssertEqual(head("main", in: localDir), head("main", in: remoteDir))
-    XCTAssertTrue(FileManager.default.fileExists(atPath: wtDir.appendingPathComponent("two.txt").path))
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: wtDir.appendingPathComponent("two.txt").path))
   }
 
   func testPullReportsDivergedBranch() {
