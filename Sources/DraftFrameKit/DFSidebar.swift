@@ -491,6 +491,16 @@ final class DFSidebar: NSView {
         pullView.heightAnchor.constraint(equalToConstant: 16),
       ])
 
+      // The row label has no trailing constraint of its own; in a narrow
+      // sidebar a long project name would run underneath the buttons. Pin it
+      // clear of them and truncate the name instead.
+      if let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
+        lbl.lineBreakMode = .byTruncatingTail
+        lbl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        lbl.trailingAnchor.constraint(lessThanOrEqualTo: pullView.leadingAnchor, constant: -6)
+          .isActive = true
+      }
+
       let menu = NSMenu()
       let switchItem = NSMenuItem(
         title: "Switch to Project", action: #selector(switchToProject(_:)), keyEquivalent: "")
