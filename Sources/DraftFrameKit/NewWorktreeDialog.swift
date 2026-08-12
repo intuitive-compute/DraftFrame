@@ -157,6 +157,12 @@ enum NewWorktreeDialog {
       ticketField.placeholderString = "Ticket link (optional)"
       branchField.placeholderString = "existing-branch-name"
 
+      // Explicit key-view loop so Tab/Shift+Tab cycle between the fields;
+      // hidden fields (the mode not shown) are skipped automatically.
+      nameField.nextKeyView = ticketField
+      ticketField.nextKeyView = branchField
+      branchField.nextKeyView = nameField
+
       nameRow = fieldRow(label: "Name", field: nameField)
       ticketRow = fieldRow(label: "Ticket", field: ticketField)
       branchRow = fieldRow(label: "Branch", field: branchField)
