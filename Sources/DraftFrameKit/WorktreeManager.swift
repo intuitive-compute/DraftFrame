@@ -417,6 +417,42 @@ final class WorktreeManager {
     }
   }
 
+  /// Pull the branch checked out in the repo's primary worktree — the branch
+  /// new worktrees are based on when none is specified. Fast-forward only, so
+  /// a diverged local branch fails with git's explanation instead of silently
+  /// creating a merge commit.
+  func pull(repoRoot root: String) throws {
+    // Scrub GIT_* env vars so a stray GIT_DIR/GIT_WORK_TREE inherited from
+    // the launching session doesn't redirect git to the wrong repo.
+    let env = ProcessInfo.processInfo.environment
+      .filter { !$0.key.hasPrefix("GIT_") }
+
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = ["-C", root, "pull", "--ff-only"]
+    proc.environment = env
+    proc.standardOutput = FileHandle.nullDevice
+    let errPipe = Pipe()
+    proc.standardError = errPipe
+
+    do {
+      try proc.run()
+    } catch {
+      throw WorktreeError.pullFailed(error.localizedDescription)
+    }
+    // Read to EOF before waiting — stderr past the 64KB pipe buffer would
+    // otherwise deadlock git against waitUntilExit().
+    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+    proc.waitUntilExit()
+
+    if proc.terminationStatus != 0 {
+      let errMsg = String(data: errData, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      throw WorktreeError.pullFailed(
+        (errMsg?.isEmpty == false) ? errMsg! : "git pull exited with a non-zero status")
+    }
+  }
+
   /// Best-effort `git branch -D <name>`. Silently ignores failures (the
   /// branch may already be gone, or it may be checked out elsewhere).
   private func deleteBranch(name: String, repoRoot root: String, env: [String: String]) {
@@ -465,11 +501,13 @@ final class WorktreeManager {
   enum WorktreeError: Error, LocalizedError {
     case creationFailed(String)
     case removeFailed(String)
+    case pullFailed(String)
 
     var errorDescription: String? {
       switch self {
       case .creationFailed(let msg): return "Worktree creation failed: \(msg)"
       case .removeFailed(let msg): return "Worktree removal failed: \(msg)"
+      case .pullFailed(let msg): return "Pull failed: \(msg)"
       }
     }
   }
