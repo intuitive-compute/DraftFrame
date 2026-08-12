@@ -19,10 +19,10 @@ final class DFSidebar: NSView {
   /// only.
   private var pendingRemovals: Set<String> = []
 
-  /// Project paths with a `git pull` currently running. The project header's
-  /// pull button is replaced by a spinner while its path is in here, and
-  /// duplicate pulls for the same project are ignored. Main-thread only.
-  private var pullsInFlight: Set<String> = []
+  /// Project paths with a worktree setup (base-branch pull + worktree create)
+  /// currently running in the background. The project header shows a spinner
+  /// while its path is in here. Main-thread only.
+  private var worktreeSetupsInFlight: Set<String> = []
 
   /// Composed SF Symbol: leaf with a small "+" badge in the bottom-right.
   private static let leafPlusBadge: NSImage = {
@@ -61,7 +61,7 @@ final class DFSidebar: NSView {
     let projectPaths: [String]
     let activeDir: String?
     let pendingRemovals: Set<String>
-    let pullsInFlight: Set<String>
+    let worktreeSetupsInFlight: Set<String>
     let worktreesPerProject: [String: [WorktreeKey]]
   }
   private struct WorktreeKey: Equatable {
@@ -370,7 +370,7 @@ final class DFSidebar: NSView {
       projectPaths: projects.map { $0.path },
       activeDir: activeDir,
       pendingRemovals: pendingRemovals,
-      pullsInFlight: pullsInFlight,
+      worktreeSetupsInFlight: worktreeSetupsInFlight,
       worktreesPerProject: worktreesPerProject.mapValues { wts in
         wts.map { WorktreeKey(path: $0.path, branch: $0.branch, isBare: $0.isBare) }
       }
@@ -458,38 +458,26 @@ final class DFSidebar: NSView {
         addBtn.heightAnchor.constraint(equalToConstant: 16),
       ])
 
-      // Pull button (or a spinner while a pull runs) so the base branch new
-      // worktrees start from can be brought up to date with its remote
-      // without leaving the app.
-      let pullView: NSView
-      if pullsInFlight.contains(project.path) {
+      // While a worktree setup (base-branch pull + create) runs for this
+      // project, show a spinner next to the add button.
+      var trailingControl: NSView = addBtn
+      if worktreeSetupsInFlight.contains(project.path) {
         let spinner = NSProgressIndicator()
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.isIndeterminate = true
         spinner.isDisplayedWhenStopped = false
         spinner.startAnimation(nil)
-        pullView = spinner
-      } else {
-        let pullBtn = NSButton(title: "", target: self, action: #selector(pullProject(_:)))
-        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
-        pullBtn.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: "Pull")?
-          .withSymbolConfiguration(config)
-        pullBtn.isBordered = false
-        pullBtn.imageScaling = .scaleProportionallyDown
-        pullBtn.contentTintColor = Theme.text3
-        pullBtn.toolTip = "Pull base branch in \(project.name)"
-        pullBtn.tag = idx
-        pullView = pullBtn
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        projectRow.addSubview(spinner)
+        NSLayoutConstraint.activate([
+          spinner.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -6),
+          spinner.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
+          spinner.widthAnchor.constraint(equalToConstant: 16),
+          spinner.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        trailingControl = spinner
       }
-      pullView.translatesAutoresizingMaskIntoConstraints = false
-      projectRow.addSubview(pullView)
-      NSLayoutConstraint.activate([
-        pullView.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -6),
-        pullView.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
-        pullView.widthAnchor.constraint(equalToConstant: 16),
-        pullView.heightAnchor.constraint(equalToConstant: 16),
-      ])
 
       // The row label has no trailing constraint of its own; in a narrow
       // sidebar a long project name would run underneath the buttons. Pin it
@@ -497,8 +485,9 @@ final class DFSidebar: NSView {
       if let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
         lbl.lineBreakMode = .byTruncatingTail
         lbl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        lbl.trailingAnchor.constraint(lessThanOrEqualTo: pullView.leadingAnchor, constant: -6)
-          .isActive = true
+        lbl.trailingAnchor.constraint(
+          lessThanOrEqualTo: trailingControl.leadingAnchor, constant: -6
+        ).isActive = true
       }
 
       let menu = NSMenu()
@@ -821,37 +810,6 @@ final class DFSidebar: NSView {
     }
   }
 
-  @objc private func pullProject(_ sender: NSButton) {
-    let projects = ProjectManager.shared.projects
-    guard sender.tag >= 0, sender.tag < projects.count else { return }
-    let project = projects[sender.tag]
-    guard !pullsInFlight.contains(project.path) else { return }
-
-    pullsInFlight.insert(project.path)
-    refreshWorktrees()
-
-    DispatchQueue.global(qos: .userInitiated).async {
-      let result = Result {
-        try WorktreeManager.shared.pull(repoRoot: project.path)
-      }
-      DispatchQueue.main.async {
-        self.pullsInFlight.remove(project.path)
-        self.refreshWorktrees()
-        if case .failure(let error) = result {
-          let alert = NSAlert()
-          alert.messageText = "Pull Failed"
-          alert.informativeText = error.localizedDescription
-          alert.alertStyle = .warning
-          if let win = self.window {
-            alert.beginSheetModal(for: win)
-          } else {
-            alert.runModal()
-          }
-        }
-      }
-    }
-  }
-
   @objc private func addWorktreeFromBranch(_ sender: NSMenuItem) {
     guard let projectPath = sender.representedObject as? String else { return }
     guard let win = window else { return }
@@ -874,6 +832,13 @@ final class DFSidebar: NSView {
   ) {
     switch result {
     case .newBranch(let name, let ticket):
+      // Branching off the primary worktree's checked-out branch (no explicit
+      // base): bring that branch up to date with its remote first so new
+      // worktrees don't silently start from a stale base.
+      if baseBranch == nil {
+        createWorktreeAfterPull(repoRoot: repoRoot, name: name, ticket: ticket)
+        return
+      }
       guard
         let path = NewWorktreeDialog.createWorktreeReportingErrors(
           repoRoot: repoRoot, name: name, baseBranch: baseBranch)
@@ -889,6 +854,43 @@ final class DFSidebar: NSView {
       SessionManager.shared.createSession(name: branch, worktreePath: path)
     }
     refreshWorktrees()
+  }
+
+  /// Pull the base branch, then create the worktree — both off the main
+  /// thread, with a spinner on the project row meanwhile. The pull is
+  /// best-effort: on failure (offline, diverged local branch) the worktree is
+  /// still created from the local state and the error shows as a transient
+  /// toast at the bottom of the window.
+  private func createWorktreeAfterPull(repoRoot: String, name: String, ticket: String?) {
+    worktreeSetupsInFlight.insert(repoRoot)
+    refreshWorktrees()
+
+    DispatchQueue.global(qos: .userInitiated).async {
+      let pullResult = Result { try WorktreeManager.shared.pull(repoRoot: repoRoot) }
+      let createResult = Result {
+        try WorktreeManager.shared.createWorktree(repoRoot: repoRoot, name: name)
+      }
+      DispatchQueue.main.async {
+        self.worktreeSetupsInFlight.remove(repoRoot)
+        self.refreshWorktrees()
+
+        if case .failure(let pullError) = pullResult, let win = self.window {
+          let suffix =
+            (try? createResult.get()) != nil
+            ? " The worktree was created from the local branch." : ""
+          DFToast.show("\(pullError.localizedDescription)\(suffix)", in: win)
+        }
+
+        switch createResult {
+        case .success(let path):
+          SessionManager.shared.createSession(
+            name: name, worktreePath: path,
+            initialPrompt: ticket.map(TicketLink.kickoffPrompt))
+        case .failure(let error):
+          NewWorktreeDialog.reportError(error)
+        }
+      }
+    }
   }
 
   @objc private func addWorktreeFromWorktree(_ sender: NSMenuItem) {

@@ -67,7 +67,9 @@ enum NewWorktreeDialog {
     }
   }
 
-  private static func reportError(_ error: Error) {
+  /// The standard "Worktree Error" alert, shared with callers that run the
+  /// create off the main thread themselves.
+  static func reportError(_ error: Error) {
     let errAlert = NSAlert()
     errAlert.messageText = "Worktree Error"
     errAlert.informativeText = error.localizedDescription
