@@ -187,24 +187,102 @@ final class WorktreeManager {
     throw WorktreeError.creationFailed(localError)
   }
 
+  /// Environment for git subprocesses: GIT_* vars scrubbed (a stray
+  /// GIT_DIR/GIT_WORK_TREE inherited from the launching session would
+  /// redirect git to the wrong repo) and terminal prompting disabled so a
+  /// network command can never hang waiting for credentials.
+  private static func gitEnvironment() -> [String: String] {
+    var env = ProcessInfo.processInfo.environment
+      .filter { !$0.key.hasPrefix("GIT_") }
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+  }
+
   /// Run git with `args`; returns nil on success, stderr text on failure.
   private func runGit(_ args: [String], in dir: String) -> String? {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = args
+    proc.environment = Self.gitEnvironment()
     proc.currentDirectoryURL = URL(fileURLWithPath: dir)
     let errPipe = Pipe()
     proc.standardError = errPipe
-    proc.standardOutput = Pipe()
+    proc.standardOutput = FileHandle.nullDevice
+    let errData: Data
     do {
       try proc.run()
+      // Read to EOF before waiting — stderr past the 64KB pipe buffer would
+      // otherwise deadlock git against waitUntilExit().
+      errData = errPipe.fileHandleForReading.readDataToEndOfFile()
       proc.waitUntilExit()
     } catch {
       return error.localizedDescription
     }
     guard proc.terminationStatus != 0 else { return nil }
-    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
     return String(data: errData, encoding: .utf8) ?? "Unknown error"
+  }
+
+  /// Run git with `args`; returns trimmed stdout on success, nil on failure.
+  private func gitOutput(_ args: [String], in dir: String) -> String? {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    proc.arguments = args
+    proc.environment = Self.gitEnvironment()
+    proc.currentDirectoryURL = URL(fileURLWithPath: dir)
+    let outPipe = Pipe()
+    proc.standardOutput = outPipe
+    proc.standardError = FileHandle.nullDevice
+    let data: Data
+    do {
+      try proc.run()
+      data = outPipe.fileHandleForReading.readDataToEndOfFile()
+      proc.waitUntilExit()
+    } catch {
+      return nil
+    }
+    guard proc.terminationStatus == 0 else { return nil }
+    return String(data: data, encoding: .utf8)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Detect a repo's default branch: the remote HEAD when the clone recorded
+  /// one (refs/remotes/origin/HEAD), else a local `main` or `master`.
+  func defaultBranch(repoRoot root: String) -> String? {
+    if let ref = gitOutput(
+      ["-C", root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: root),
+      let name = ref.split(separator: "/", maxSplits: 1).last.map(String.init),
+      !name.isEmpty
+    {
+      return name
+    }
+    for name in ["main", "master"]
+    where gitOutput(
+      ["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], in: root) != nil
+    {
+      return name
+    }
+    return nil
+  }
+
+  /// Fast-forward `branch` (the repo's default branch) from its remote.
+  /// Returns nil on success, or a user-facing error message on failure.
+  ///
+  /// When the branch is checked out somewhere — the main repo or a worktree —
+  /// the pull runs from that checkout so the working tree advances with the
+  /// ref, and git itself reports why a plain pull isn't safe there (dirty
+  /// checkout, diverged history). When it isn't checked out anywhere, the
+  /// ref is fast-forwarded directly via `git fetch <remote> <branch>:<branch>`,
+  /// which touches no working tree and refuses non-fast-forward updates.
+  func pullDefaultBranch(repoRoot root: String, branch: String) -> String? {
+    let remote =
+      gitOutput(["-C", root, "config", "--get", "branch.\(branch).remote"], in: root) ?? "origin"
+
+    if let checkout = listWorktrees(repoRoot: root)
+      .first(where: { !$0.isBare && $0.branch == branch })
+    {
+      return runGit(["-C", checkout.path, "pull", "--ff-only", remote, branch], in: checkout.path)
+    }
+    return runGit(["-C", root, "fetch", remote, "\(branch):\(branch)"], in: root)
   }
 
   private func detectDefaultBranch(in dir: String) -> String? {
@@ -227,12 +305,18 @@ final class WorktreeManager {
   /// List all worktrees by parsing `git worktree list --porcelain`.
   func listWorktrees() -> [Worktree] {
     guard let root = repoRoot else { return [] }
+    return listWorktrees(repoRoot: root)
+  }
+
+  /// List the worktrees of the repo rooted at `root`.
+  func listWorktrees(repoRoot root: String) -> [Worktree] {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", root, "worktree", "list", "--porcelain"]
+    proc.environment = Self.gitEnvironment()
     let pipe = Pipe()
     proc.standardOutput = pipe
-    proc.standardError = Pipe()
+    proc.standardError = FileHandle.nullDevice
 
     do {
       try proc.run()
