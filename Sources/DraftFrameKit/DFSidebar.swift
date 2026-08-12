@@ -479,6 +479,22 @@ final class DFSidebar: NSView {
       }
 
       let menu = NSMenu()
+
+      // Pull the default branch from its remote — keeps new worktrees (which
+      // branch off the local default branch) from starting stale. Skipped
+      // when no default branch is resolvable (e.g. not a git repo).
+      if let defaultBranch = WorktreeManager.shared.defaultBranch(repoRoot: project.path) {
+        // A nil action leaves the item disabled while a pull is in flight.
+        let pullItem = NSMenuItem(
+          title: isPulling ? "Pulling \(defaultBranch)…" : "Pull \(defaultBranch)",
+          action: isPulling ? nil : #selector(pullDefaultBranch(_:)),
+          keyEquivalent: "")
+        pullItem.target = self
+        pullItem.representedObject = DefaultBranchPullRequest(
+          repoRoot: project.path, branch: defaultBranch)
+        menu.addItem(pullItem)
+      }
+
       let switchItem = NSMenuItem(
         title: "Switch to Project", action: #selector(switchToProject(_:)), keyEquivalent: "")
       switchItem.target = self
@@ -497,21 +513,6 @@ final class DFSidebar: NSView {
       fromBranchItem.target = self
       fromBranchItem.representedObject = project.path
       menu.addItem(fromBranchItem)
-
-      // Pull the default branch from its remote — keeps new worktrees (which
-      // branch off the local default branch) from starting stale. Skipped
-      // when no default branch is resolvable (e.g. not a git repo).
-      if let defaultBranch = WorktreeManager.shared.defaultBranch(repoRoot: project.path) {
-        // A nil action leaves the item disabled while a pull is in flight.
-        let pullItem = NSMenuItem(
-          title: isPulling ? "Pulling \(defaultBranch)…" : "Pull \(defaultBranch)",
-          action: isPulling ? nil : #selector(pullDefaultBranch(_:)),
-          keyEquivalent: "")
-        pullItem.target = self
-        pullItem.representedObject = DefaultBranchPullRequest(
-          repoRoot: project.path, branch: defaultBranch)
-        menu.addItem(pullItem)
-      }
 
       menu.addItem(NSMenuItem.separator())
       let removeItem = NSMenuItem(
