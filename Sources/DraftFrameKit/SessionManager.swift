@@ -470,6 +470,18 @@ final class SessionManager {
     NotificationCenter.default.post(name: .activeSessionDidChange, object: nil)
   }
 
+  /// Update the session bound to a worktree after the worktree was renamed
+  /// on disk: adopt the new name and path, and re-point the transcript and
+  /// status watchers at the new directory.
+  func worktreeRenamed(from oldPath: String, to newPath: String, newName: String) {
+    guard let session = sessions.first(where: { $0.worktreePath == oldPath }) else { return }
+    session.name = newName
+    session.worktreePath = newPath
+    session.stopWatchers()
+    session.startWatchers(directory: newPath)
+    NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+  }
+
   /// Close session by ID.
   func closeSession(id: UUID) {
     if let idx = sessions.firstIndex(where: { $0.id == id }) {
