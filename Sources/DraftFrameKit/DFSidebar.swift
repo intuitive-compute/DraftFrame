@@ -596,6 +596,18 @@ final class DFSidebar: NSView {
           wtMenu.addItem(branchItem)
           if !isBase {
             wtMenu.addItem(NSMenuItem.separator())
+            // Rename only applies to draftframe-managed worktrees — the
+            // primary checkout is the project root itself and can't be moved
+            // under .claude/worktrees/.
+            if !isPrimary {
+              let renameItem = NSMenuItem(
+                title: "Rename Worktree", action: #selector(renameWorktreeFromMenu(_:)),
+                keyEquivalent: "")
+              renameItem.target = self
+              renameItem.representedObject = WorktreeRenameRequest(
+                worktree: wt, repoRoot: project.path)
+              wtMenu.addItem(renameItem)
+            }
             let rmItem = NSMenuItem(
               title: "Remove Worktree", action: #selector(removeWorktreeFromMenu(_:)),
               keyEquivalent: "")
@@ -720,6 +732,49 @@ final class DFSidebar: NSView {
           if case .failure(let error) = result {
             let errAlert = NSAlert()
             errAlert.messageText = "Remove Failed"
+            errAlert.informativeText = error.localizedDescription
+            errAlert.runModal()
+          }
+          self.refreshWorktrees()
+        }
+      }
+    }
+  }
+
+  @objc private func renameWorktreeFromMenu(_ sender: NSMenuItem) {
+    guard let req = sender.representedObject as? WorktreeRenameRequest else { return }
+    let wt = req.worktree
+    let projectRoot = req.repoRoot
+    let oldName = wt.branch.isEmpty ? (wt.path as NSString).lastPathComponent : wt.branch
+
+    let alert = NSAlert()
+    alert.messageText = "Rename Worktree"
+    alert.informativeText = "Renames the branch and moves the worktree directory to match."
+    alert.addButton(withTitle: "Rename")
+    alert.addButton(withTitle: "Cancel")
+    let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+    field.stringValue = oldName
+    alert.accessoryView = field
+    alert.window.initialFirstResponder = field
+
+    guard let win = window else { return }
+    alert.beginSheetModal(for: win) { response in
+      guard response == .alertFirstButtonReturn else { return }
+      let newName = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !newName.isEmpty, newName != oldName else { return }
+
+      DispatchQueue.global(qos: .userInitiated).async {
+        let result = Result {
+          try WorktreeManager.shared.renameWorktree(
+            repoRoot: projectRoot, worktree: wt, newName: newName)
+        }
+        DispatchQueue.main.async {
+          switch result {
+          case .success(let newPath):
+            SessionManager.shared.worktreeRenamed(from: wt.path, to: newPath, newName: newName)
+          case .failure(let error):
+            let errAlert = NSAlert()
+            errAlert.messageText = "Rename Failed"
             errAlert.informativeText = error.localizedDescription
             errAlert.runModal()
           }
@@ -1698,6 +1753,13 @@ final class ClickableRow: NSView {
 /// Payload stored on a "Remove Worktree" menu item so the action handler knows
 /// both the worktree to remove and which project's repo it belongs to.
 private struct WorktreeRemovalRequest {
+  let worktree: WorktreeManager.Worktree
+  let repoRoot: String
+}
+
+/// Payload stored on a "Rename Worktree" menu item so the action handler knows
+/// both the worktree to rename and which project's repo it belongs to.
+private struct WorktreeRenameRequest {
   let worktree: WorktreeManager.Worktree
   let repoRoot: String
 }

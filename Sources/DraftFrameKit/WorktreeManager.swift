@@ -417,6 +417,52 @@ final class WorktreeManager {
     }
   }
 
+  /// Rename a managed worktree: renames its checked-out branch to `newName`
+  /// and moves its directory to `<repo>/.claude/worktrees/<newName>`.
+  /// Returns the worktree's new path.
+  ///
+  /// `repoRoot` must be the main repo for this worktree; this does not
+  /// consult `self.repoRoot`.
+  func renameWorktree(repoRoot root: String, worktree: Worktree, newName: String) throws -> String {
+    let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else {
+      throw WorktreeError.renameFailed("The new name is empty.")
+    }
+    guard !name.contains("/") else {
+      throw WorktreeError.renameFailed("The new name can't contain \"/\".")
+    }
+    let newPath = root + Self.worktreeSubpath + "/" + name
+    // Compare symlink-resolved paths: git reports realpaths (e.g. /private/var
+    // on macOS) while callers may hold the unresolved spelling.
+    let resolvedNew = URL(fileURLWithPath: newPath).resolvingSymlinksInPath().path
+    let resolvedOld = URL(fileURLWithPath: worktree.path).resolvingSymlinksInPath().path
+    guard resolvedNew != resolvedOld else { return worktree.path }
+    guard !FileManager.default.fileExists(atPath: newPath) else {
+      throw WorktreeError.renameFailed("\(newPath) already exists.")
+    }
+
+    // Rename the branch first — `git branch -m` validates the new name and
+    // fails cleanly if a branch by that name already exists, leaving the
+    // worktree untouched.
+    let oldBranch = worktree.branch
+    if !oldBranch.isEmpty, oldBranch != name {
+      if let err = runGit(["-C", root, "branch", "-m", oldBranch, name], in: root) {
+        throw WorktreeError.renameFailed(err)
+      }
+    }
+
+    if let err = runGit(["-C", root, "worktree", "move", worktree.path, newPath], in: root) {
+      // Best-effort roll back the branch rename so a failed move doesn't
+      // leave the branch and directory names out of sync.
+      if !oldBranch.isEmpty, oldBranch != name {
+        _ = runGit(["-C", root, "branch", "-m", name, oldBranch], in: root)
+      }
+      throw WorktreeError.renameFailed(err)
+    }
+
+    return newPath
+  }
+
   /// Pull the branch checked out in the repo's primary worktree — the branch
   /// new worktrees are based on when none is specified. Fast-forward only, so
   /// a diverged local branch fails with git's explanation instead of silently
@@ -501,12 +547,14 @@ final class WorktreeManager {
   enum WorktreeError: Error, LocalizedError {
     case creationFailed(String)
     case removeFailed(String)
+    case renameFailed(String)
     case pullFailed(String)
 
     var errorDescription: String? {
       switch self {
       case .creationFailed(let msg): return "Worktree creation failed: \(msg)"
       case .removeFailed(let msg): return "Worktree removal failed: \(msg)"
+      case .renameFailed(let msg): return "Worktree rename failed: \(msg)"
       case .pullFailed(let msg): return "Pull failed: \(msg)"
       }
     }
