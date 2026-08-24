@@ -129,6 +129,10 @@ final class PRMonitor {
   /// One poll timer per session.
   private var timers: [UUID: DispatchSourceTimer] = [:]
 
+  /// Path each timer's event handler captured at start, so a session whose
+  /// worktree moved (rename) gets its timer restarted on the new path.
+  private var timerPaths: [UUID: String] = [:]
+
   private let queue = DispatchQueue(label: "com.draftframe.pr-monitor", qos: .utility)
 
   /// How often to hit `gh pr view` per session.
@@ -204,8 +208,14 @@ final class PRMonitor {
     // since the child shell inherits that cwd at launch. Sessions created
     // with neither (shouldn't happen in practice) are skipped.
     for session in sessions {
-      guard timers[session.id] == nil else { continue }
       guard let path = Self.effectivePath(for: session) else { continue }
+      // The timer's event handler captured its path at start; if the
+      // session's worktree has since moved (rename), restart on the new one.
+      if timers[session.id] != nil, timerPaths[session.id] != path {
+        timers[session.id]?.cancel()
+        timers.removeValue(forKey: session.id)
+      }
+      guard timers[session.id] == nil else { continue }
       startTimer(sessionID: session.id, worktreePath: path)
     }
 
@@ -213,6 +223,7 @@ final class PRMonitor {
     for id in timers.keys where !currentIDs.contains(id) {
       timers[id]?.cancel()
       timers.removeValue(forKey: id)
+      timerPaths.removeValue(forKey: id)
       statusBySession.removeValue(forKey: id)
       lastFailureFiredAt.removeValue(forKey: id)
       mergedAttempted.remove(id)
@@ -231,6 +242,7 @@ final class PRMonitor {
     }
     timer.resume()
     timers[sessionID] = timer
+    timerPaths[sessionID] = worktreePath
   }
 
   // MARK: - Polling (runs on `queue`)

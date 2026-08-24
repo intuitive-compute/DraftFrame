@@ -30,6 +30,17 @@ final class WorktreeManager {
     return resolved.contains(worktreeSubpath + "/")
   }
 
+  /// Repo root that owns a managed worktree path. Matches the LAST
+  /// `/.claude/worktrees/` occurrence: a managed worktree can itself contain
+  /// managed worktrees, and a first-occurrence match would resolve a nested
+  /// worktree to the outermost repo. Nil when the path isn't managed.
+  static func managedRepoRoot(forWorktreePath path: String) -> String? {
+    guard let range = path.range(of: worktreeSubpath + "/", options: .backwards) else {
+      return nil
+    }
+    return String(path[..<range.lowerBound])
+  }
+
   /// Resolve the git repo root for an arbitrary path.
   static func repoRoot(at path: String) -> String? {
     let proc = Process()
@@ -433,11 +444,13 @@ final class WorktreeManager {
     }
     let newPath = root + Self.worktreeSubpath + "/" + name
     // Compare symlink-resolved paths: git reports realpaths (e.g. /private/var
-    // on macOS) while callers may hold the unresolved spelling.
+    // on macOS) while callers may hold the unresolved spelling. When the
+    // directory already matches, the branch may still need renaming (slash
+    // branches live in dash-named directories), so only skip the move.
     let resolvedNew = URL(fileURLWithPath: newPath).resolvingSymlinksInPath().path
     let resolvedOld = URL(fileURLWithPath: worktree.path).resolvingSymlinksInPath().path
-    guard resolvedNew != resolvedOld else { return worktree.path }
-    guard !FileManager.default.fileExists(atPath: newPath) else {
+    let directoryAlreadyMatches = resolvedNew == resolvedOld
+    guard directoryAlreadyMatches || !FileManager.default.fileExists(atPath: newPath) else {
       throw WorktreeError.renameFailed("\(newPath) already exists.")
     }
 
@@ -450,6 +463,8 @@ final class WorktreeManager {
         throw WorktreeError.renameFailed(err)
       }
     }
+
+    if directoryAlreadyMatches { return worktree.path }
 
     if let err = runGit(["-C", root, "worktree", "move", worktree.path, newPath], in: root) {
       // Best-effort roll back the branch rename so a failed move doesn't
