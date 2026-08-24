@@ -102,7 +102,7 @@ final class DFSessionBar: NSView {
     }
 
     for (i, session) in sessions.enumerated() {
-      let card = SessionCard(session: session, isActive: i == activeIdx, index: i)
+      let card = SessionCard(session: session, isActive: i == activeIdx, index: i, bar: self)
       card.translatesAutoresizingMaskIntoConstraints = false
       card.widthAnchor.constraint(equalToConstant: 284).isActive = true
       cardStack.addArrangedSubview(card)
@@ -189,6 +189,116 @@ final class DFSessionBar: NSView {
     dropIndicator.isHidden = true
     lastDropIndex = nil
   }
+
+  // MARK: - Card context-menu actions
+
+  // Card menu items target the bar, not the card: cards are torn down and
+  // rebuilt on every `.sessionsDidChange` tick (~1.5s while an agent works),
+  // and NSMenuItem holds its target weakly — targeting the card meant any
+  // rebuild while the menu or a confirmation sheet was open silently dropped
+  // the action (issue #13). The bar lives as long as the window, and each
+  // item retains its Session via `representedObject`.
+
+  private func payload(from sender: NSMenuItem) -> SessionCardMenuPayload? {
+    sender.representedObject as? SessionCardMenuPayload
+  }
+
+  @objc fileprivate func renameSessionFromMenu(_ sender: NSMenuItem) {
+    guard let payload = payload(from: sender) else { return }
+    runRenameDialog(for: payload.session)
+  }
+
+  @objc fileprivate func restartSessionFromMenu(_ sender: NSMenuItem) {
+    guard let payload = payload(from: sender) else { return }
+    SessionManager.shared.restartSession(id: payload.session.id)
+  }
+
+  @objc fileprivate func closeSessionFromMenu(_ sender: NSMenuItem) {
+    guard let payload = payload(from: sender) else { return }
+    SessionManager.shared.closeSession(id: payload.session.id)
+  }
+
+  @objc fileprivate func openPRFromMenu(_ sender: NSMenuItem) {
+    guard let url = payload(from: sender)?.prURL else { return }
+    NSWorkspace.shared.open(url)
+  }
+
+  @objc fileprivate func copyWorktreePathFromMenu(_ sender: NSMenuItem) {
+    guard let path = payload(from: sender)?.session.worktreePath else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(path, forType: .string)
+  }
+
+  @objc fileprivate func removeSessionAndWorktreeFromMenu(_ sender: NSMenuItem) {
+    guard let session = payload(from: sender)?.session else { return }
+    guard let path = session.worktreePath else { return }
+    guard let repoRoot = WorktreeManager.managedRepoRoot(forWorktreePath: path) else { return }
+
+    let alert = NSAlert()
+    alert.messageText = "Remove Session and Worktree?"
+    alert.informativeText =
+      "This will close the session and remove the worktree at:\n\(path)\n\n"
+      + "Any uncommitted changes will be lost."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Remove")
+    alert.addButton(withTitle: "Cancel")
+
+    guard let win = window else { return }
+    alert.beginSheetModal(for: win) { response in
+      guard response == .alertFirstButtonReturn else { return }
+      SessionManager.shared.closeSession(id: session.id)
+
+      DispatchQueue.global(qos: .userInitiated).async {
+        let result = Result {
+          try WorktreeManager.shared.removeWorktree(repoRoot: repoRoot, path: path)
+        }
+        DispatchQueue.main.async {
+          if case .failure(let error) = result {
+            let errAlert = NSAlert()
+            errAlert.messageText = "Remove Failed"
+            errAlert.informativeText = error.localizedDescription
+            errAlert.runModal()
+          }
+        }
+      }
+    }
+  }
+
+  /// Rename dialog for a session. Lives on the bar (not the card) so the
+  /// sheet's completion survives card rebuilds; `session` is retained by
+  /// the closure and updated in place.
+  fileprivate func runRenameDialog(for session: Session) {
+    let alert = NSAlert()
+    alert.messageText = "Rename Session"
+    alert.informativeText = "Enter a new name for \"\(session.name)\":"
+    alert.addButton(withTitle: "Rename")
+    alert.addButton(withTitle: "Cancel")
+
+    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+    input.stringValue = session.name
+    alert.accessoryView = input
+
+    guard let win = window else { return }
+    alert.beginSheetModal(for: win) { response in
+      guard response == .alertFirstButtonReturn else { return }
+      let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !newName.isEmpty else { return }
+      session.name = newName
+      NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+    }
+  }
+}
+
+/// Payload stored on a session card's menu items so the action handler on
+/// DFSessionBar still knows which session (and PR) the user right-clicked
+/// after the originating card has been rebuilt.
+private final class SessionCardMenuPayload: NSObject {
+  let session: Session
+  let prURL: URL?
+  init(session: Session, prURL: URL?) {
+    self.session = session
+    self.prURL = prURL
+  }
 }
 
 // MARK: - Session Card (Live Data)
@@ -198,15 +308,17 @@ final class SessionCard: NSView {
   private let session: Session
   private let index: Int
   private let isActive: Bool
+  private weak var bar: DFSessionBar?
   private var glowLayer: CALayer?
   private var mouseDownPoint: NSPoint?
   private var prPill: NSTextField?
   private var prURL: URL?
 
-  init(session: Session, isActive: Bool, index: Int) {
+  init(session: Session, isActive: Bool, index: Int, bar: DFSessionBar?) {
     self.session = session
     self.index = index
     self.isActive = isActive
+    self.bar = bar
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
@@ -298,104 +410,39 @@ final class SessionCard: NSView {
 
   private func makeContextMenu() -> NSMenu {
     let menu = NSMenu()
+    // Items target the bar with the session in `representedObject`, so the
+    // action still fires after this card has been rebuilt (see the actions'
+    // comment on DFSessionBar).
+    let payload = SessionCardMenuPayload(session: session, prURL: prURL)
     func add(_ title: String, _ action: Selector) {
       let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-      item.target = self
+      item.target = bar
+      item.representedObject = payload
       menu.addItem(item)
     }
-    add("Rename Session…", #selector(doubleClicked))
-    add("Restart Session", #selector(restartFromMenu))
+    add("Rename Session…", #selector(DFSessionBar.renameSessionFromMenu(_:)))
+    add("Restart Session", #selector(DFSessionBar.restartSessionFromMenu(_:)))
     if prURL != nil || session.worktreePath != nil {
       menu.addItem(NSMenuItem.separator())
       if prURL != nil {
-        add("Open Pull Request", #selector(openPRFromMenu))
+        add("Open Pull Request", #selector(DFSessionBar.openPRFromMenu(_:)))
       }
       if session.worktreePath != nil {
-        add("Copy Worktree Path", #selector(copyWorktreePathFromMenu))
+        add("Copy Worktree Path", #selector(DFSessionBar.copyWorktreePathFromMenu(_:)))
       }
     }
     menu.addItem(NSMenuItem.separator())
-    add("Close Session", #selector(closeFromMenu))
+    add("Close Session", #selector(DFSessionBar.closeSessionFromMenu(_:)))
     if session.worktreePath != nil {
-      add("Remove Session and Worktree…", #selector(removeSessionAndWorktreeFromMenu))
+      add(
+        "Remove Session and Worktree…",
+        #selector(DFSessionBar.removeSessionAndWorktreeFromMenu(_:)))
     }
     return menu
   }
 
-  @objc private func restartFromMenu() {
-    SessionManager.shared.restartSession(id: session.id)
-  }
-
-  @objc private func closeFromMenu() {
-    SessionManager.shared.closeSession(id: session.id)
-  }
-
-  @objc private func removeSessionAndWorktreeFromMenu() {
-    guard let path = session.worktreePath else { return }
-    let subpath = WorktreeManager.worktreeSubpath + "/"
-    guard let range = path.range(of: subpath) else { return }
-    let repoRoot = String(path[..<range.lowerBound])
-
-    let alert = NSAlert()
-    alert.messageText = "Remove Session and Worktree?"
-    alert.informativeText =
-      "This will close the session and remove the worktree at:\n\(path)\n\n"
-      + "Any uncommitted changes will be lost."
-    alert.alertStyle = .warning
-    alert.addButton(withTitle: "Remove")
-    alert.addButton(withTitle: "Cancel")
-
-    guard let win = window else { return }
-    alert.beginSheetModal(for: win) { [weak self] response in
-      guard response == .alertFirstButtonReturn, let self = self else { return }
-      let sessionId = self.session.id
-      SessionManager.shared.closeSession(id: sessionId)
-
-      DispatchQueue.global(qos: .userInitiated).async {
-        let result = Result {
-          try WorktreeManager.shared.removeWorktree(repoRoot: repoRoot, path: path)
-        }
-        DispatchQueue.main.async {
-          if case .failure(let error) = result {
-            let errAlert = NSAlert()
-            errAlert.messageText = "Remove Failed"
-            errAlert.informativeText = error.localizedDescription
-            errAlert.runModal()
-          }
-        }
-      }
-    }
-  }
-
-  @objc private func openPRFromMenu() {
-    if let url = prURL { NSWorkspace.shared.open(url) }
-  }
-
-  @objc private func copyWorktreePathFromMenu() {
-    guard let path = session.worktreePath else { return }
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(path, forType: .string)
-  }
-
   @objc private func doubleClicked() {
-    let alert = NSAlert()
-    alert.messageText = "Rename Session"
-    alert.informativeText = "Enter a new name for \"\(session.name)\":"
-    alert.addButton(withTitle: "Rename")
-    alert.addButton(withTitle: "Cancel")
-
-    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-    input.stringValue = session.name
-    alert.accessoryView = input
-
-    guard let win = window else { return }
-    alert.beginSheetModal(for: win) { [weak self] response in
-      guard response == .alertFirstButtonReturn, let self = self else { return }
-      let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !newName.isEmpty else { return }
-      self.session.name = newName
-      NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
-    }
+    bar?.runRenameDialog(for: session)
   }
 
   private func buildCard() {

@@ -71,9 +71,7 @@ final class Session {
   var displayName: String {
     guard name == "main" || name == "master" else { return name }
     guard let path = worktreePath else { return name }
-    let subpath = WorktreeManager.worktreeSubpath + "/"
-    if let range = path.range(of: subpath) {
-      let projectRoot = String(path[..<range.lowerBound])
+    if let projectRoot = WorktreeManager.managedRepoRoot(forWorktreePath: path) {
       return (projectRoot as NSString).lastPathComponent
     }
     return (path as NSString).lastPathComponent
@@ -474,7 +472,16 @@ final class SessionManager {
   /// on disk: adopt the new name and path, and re-point the transcript and
   /// status watchers at the new directory.
   func worktreeRenamed(from oldPath: String, to newPath: String, newName: String) {
-    guard let session = sessions.first(where: { $0.worktreePath == oldPath }) else { return }
+    // Match on symlink-resolved paths: callers pass git's realpath spelling
+    // (e.g. /private/var) while the session may hold the unresolved one.
+    let resolvedOld = URL(fileURLWithPath: oldPath).resolvingSymlinksInPath().path
+    guard
+      let session = sessions.first(where: { s in
+        guard let p = s.worktreePath else { return false }
+        return p == oldPath
+          || URL(fileURLWithPath: p).resolvingSymlinksInPath().path == resolvedOld
+      })
+    else { return }
     session.name = newName
     session.worktreePath = newPath
     session.stopWatchers()
@@ -519,9 +526,16 @@ final class SessionManager {
     createSession(name: old.name, worktreePath: old.worktreePath, agent: old.agent)
   }
 
-  /// Get the current git branch for the active session's directory.
-  func currentBranch() -> String {
-    let dir = activeSession?.worktreePath ?? FileManager.default.currentDirectoryPath
+  /// Directory whose git branch the status bar should show. Read on the
+  /// main thread; the actual `git` spawn happens off-main via
+  /// `currentBranch(inDirectory:)`.
+  var branchLookupDirectory: String {
+    activeSession?.worktreePath ?? FileManager.default.currentDirectoryPath
+  }
+
+  /// Get the current git branch for `dir`. Spawns git and blocks until it
+  /// exits, so call from a background queue.
+  func currentBranch(inDirectory dir: String) -> String {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]

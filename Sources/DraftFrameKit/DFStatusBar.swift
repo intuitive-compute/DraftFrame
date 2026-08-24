@@ -22,6 +22,17 @@ final class DFStatusBar: NSView {
   private var micIndicator: NSImageView!
   private var refreshTimer: Timer?
 
+  // Concurrent so a git that hangs (dead network mount, wedged fsmonitor)
+  // can't wedge the recovery lookup behind it on a serial queue.
+  private let branchQueue = DispatchQueue(
+    label: "com.draftframe.statusbar.branch", qos: .utility, attributes: .concurrent)
+  private var branchRefreshInFlight = false
+  private var branchRefreshStartedAt = Date.distantPast
+  private var branchRefreshGeneration = 0
+  /// After this long, an in-flight lookup is presumed hung and a new one may
+  /// start; the hung git keeps its thread but the label recovers.
+  private static let branchRefreshTimeout: TimeInterval = 10
+
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
@@ -132,12 +143,43 @@ final class DFStatusBar: NSView {
     micIndicator.isHidden = !VoiceManager.shared.isListening
   }
 
+  /// Resolve the branch off the main thread: `refresh()` runs on every
+  /// `.sessionsDidChange` tick (~40x/min while an agent works) and spawning
+  /// git synchronously there blocks event delivery — on a cold or busy repo
+  /// long enough to beachball. At most one lookup is in flight; ticks that
+  /// arrive mid-lookup are dropped (the next tick re-checks anyway).
+  private func refreshBranchAsync() {
+    let now = Date()
+    if branchRefreshInFlight,
+      now.timeIntervalSince(branchRefreshStartedAt) < Self.branchRefreshTimeout
+    {
+      return
+    }
+    branchRefreshInFlight = true
+    branchRefreshStartedAt = now
+    branchRefreshGeneration += 1
+    let generation = branchRefreshGeneration
+    let dir = SessionManager.shared.branchLookupDirectory
+    branchQueue.async { [weak self] in
+      let branch = SessionManager.shared.currentBranch(inDirectory: dir)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        // A presumed-hung lookup that eventually returns must not clear a
+        // newer lookup's flag or overwrite its result.
+        guard generation == self.branchRefreshGeneration else { return }
+        self.branchRefreshInFlight = false
+        // The active session may have changed mid-lookup; drop stale results.
+        guard dir == SessionManager.shared.branchLookupDirectory else { return }
+        self.branchLabel.stringValue = branch
+      }
+    }
+  }
+
   @objc private func refresh() {
     let mgr = SessionManager.shared
 
     // Branch from active session
-    let branch = mgr.currentBranch()
-    branchLabel.stringValue = branch
+    refreshBranchAsync()
 
     // Active model
     if let session = mgr.activeSession {

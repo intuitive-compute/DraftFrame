@@ -560,8 +560,14 @@ final class DFSidebar: NSView {
           let branchName = wt.branch.isEmpty ? "detached" : wt.branch
           let isBase = wt.isBare
           // The primary worktree is the project root itself (not a child
-          // under .claude/worktrees/).
-          let isPrimary = !isBase && wt.path == project.path
+          // under .claude/worktrees/). Compare symlink-resolved paths: git
+          // reports realpaths (e.g. /private/var) while the project may have
+          // been added under an unresolved spelling.
+          let resolvedProjectPath =
+            URL(fileURLWithPath: project.path).resolvingSymlinksInPath().path
+          let isPrimary =
+            !isBase
+            && URL(fileURLWithPath: wt.path).resolvingSymlinksInPath().path == resolvedProjectPath
           let icon = isPrimary ? "circle.fill" : "arrow.triangle.branch"
           let detail = isBase ? "base" : nil
           let row = makeClickableRow(
@@ -598,8 +604,9 @@ final class DFSidebar: NSView {
             wtMenu.addItem(NSMenuItem.separator())
             // Rename only applies to draftframe-managed worktrees — the
             // primary checkout is the project root itself and can't be moved
-            // under .claude/worktrees/.
-            if !isPrimary {
+            // under .claude/worktrees/, and renaming a hand-made worktree
+            // would relocate it there out from under the user.
+            if !isPrimary && WorktreeManager.isManagedWorktree(wt.path) {
               let renameItem = NSMenuItem(
                 title: "Rename Worktree", action: #selector(renameWorktreeFromMenu(_:)),
                 keyEquivalent: "")
