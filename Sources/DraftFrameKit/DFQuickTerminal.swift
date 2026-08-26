@@ -138,8 +138,10 @@ final class DFQuickTerminal {
     win.titleVisibility = .hidden
     win.backgroundColor = Theme.bg
     win.isMovableByWindowBackground = false
-    win.hidesOnDeactivate = true
-    win.level = .normal
+    // Stay on screen when the app deactivates, and float above other apps'
+    // windows, so the terminal can be referenced while working elsewhere.
+    win.hidesOnDeactivate = false
+    win.level = .floating
     win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     win.isReleasedWhenClosed = false
     win.minSize = NSSize(width: 500, height: 200)
