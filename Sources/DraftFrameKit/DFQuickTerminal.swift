@@ -138,7 +138,10 @@ final class DFQuickTerminal {
     win.titleVisibility = .hidden
     win.backgroundColor = Theme.bg
     win.isMovableByWindowBackground = false
-    win.hidesOnDeactivate = true
+    // Stay on screen when the app deactivates so the quick terminal's
+    // visibility tracks the main window's: at normal level both are covered
+    // or revealed together rather than the terminal vanishing on app switch.
+    win.hidesOnDeactivate = false
     win.level = .normal
     win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     win.isReleasedWhenClosed = false
