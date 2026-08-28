@@ -189,6 +189,16 @@ final class DFSidebar: NSView {
     openProjectBtn.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(openProjectBtn)
 
+    let sortBtn = NSButton(title: "", target: self, action: #selector(sortButtonClicked(_:)))
+    sortBtn.image = NSImage(
+      systemSymbolName: "arrow.up.arrow.down", accessibilityDescription: "Sort Projects")
+    sortBtn.isBordered = false
+    sortBtn.imageScaling = .scaleProportionallyDown
+    sortBtn.contentTintColor = Theme.text3
+    sortBtn.toolTip = "Sort Projects"
+    sortBtn.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(sortBtn)
+
     worktreeStack.orientation = .vertical
     worktreeStack.spacing = 2
     worktreeStack.alignment = .leading
@@ -266,6 +276,11 @@ final class DFSidebar: NSView {
       openProjectBtn.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
       openProjectBtn.widthAnchor.constraint(equalToConstant: 16),
       openProjectBtn.heightAnchor.constraint(equalToConstant: 16),
+
+      sortBtn.centerYAnchor.constraint(equalTo: projectHeader.centerYAnchor),
+      sortBtn.trailingAnchor.constraint(equalTo: openProjectBtn.leadingAnchor, constant: -8),
+      sortBtn.widthAnchor.constraint(equalToConstant: 16),
+      sortBtn.heightAnchor.constraint(equalToConstant: 16),
 
       worktreeStack.topAnchor.constraint(equalTo: projectHeader.bottomAnchor, constant: 6),
       worktreeStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
@@ -345,6 +360,49 @@ final class DFSidebar: NSView {
 
   // MARK: - Worktrees
 
+  /// Projects in the user's chosen sort order. "Active sessions" means the
+  /// project has at least one open session rooted at the project itself or
+  /// at a worktree beneath it (paths compared symlink-resolved, since git
+  /// and session bookkeeping report realpaths).
+  private func sortedProjects() -> [ProjectManager.Project] {
+    let projects = ProjectManager.shared.projects
+    var activePaths: Set<String> = []
+    if ProjectManager.shared.sortOrder == .activeSessions {
+      let sessionPaths = SessionManager.shared.sessions.compactMap { s in
+        s.worktreePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+      }
+      for project in projects {
+        let root = URL(fileURLWithPath: project.path).resolvingSymlinksInPath().path
+        if sessionPaths.contains(where: { $0 == root || $0.hasPrefix(root + "/") }) {
+          activePaths.insert(project.path)
+        }
+      }
+    }
+    return ProjectManager.shared.sortedProjects(activeProjectPaths: activePaths)
+  }
+
+  @objc private func sortButtonClicked(_ sender: NSButton) {
+    let menu = NSMenu()
+    let current = ProjectManager.shared.sortOrder
+    for order in ProjectManager.SortOrder.allCases {
+      let item = NSMenuItem(
+        title: order.displayName, action: #selector(sortOrderSelected(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = order.rawValue
+      item.state = (order == current) ? .on : .off
+      menu.addItem(item)
+    }
+    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
+  }
+
+  @objc private func sortOrderSelected(_ sender: NSMenuItem) {
+    guard let raw = sender.representedObject as? String,
+      let order = ProjectManager.SortOrder(rawValue: raw)
+    else { return }
+    ProjectManager.shared.sortOrder = order
+    refreshWorktrees()
+  }
+
   @objc func refreshWorktrees() {
     // Process.waitUntilExit() inside getWorktrees(for:) pumps the run loop,
     // which can dispatch a queued .sessionsDidChange notification and re-enter
@@ -360,7 +418,7 @@ final class DFSidebar: NSView {
     isRefreshingWorktrees = true
     defer { isRefreshingWorktrees = false }
 
-    let projects = ProjectManager.shared.projects
+    let projects = sortedProjects()
     let activeDir = SessionManager.shared.projectDir
 
     // Always fetch every project's worktrees, including collapsed ones, so
@@ -428,7 +486,7 @@ final class DFSidebar: NSView {
       return
     }
 
-    for (idx, project) in projects.enumerated() {
+    for project in projects {
       let isActive = project.path == activeDir
 
       // Project header row — clickable to expand/collapse. Chevron icon is
@@ -456,7 +514,6 @@ final class DFSidebar: NSView {
       addBtn.contentTintColor = Theme.text3
       addBtn.toolTip = "New worktree in \(project.name)"
       addBtn.translatesAutoresizingMaskIntoConstraints = false
-      addBtn.tag = idx
       projectRow.addSubview(addBtn)
       NSLayoutConstraint.activate([
         addBtn.trailingAnchor.constraint(equalTo: projectRow.trailingAnchor),
@@ -913,16 +970,17 @@ final class DFSidebar: NSView {
   }
 
   @objc private func addWorktreeForProject(_ sender: NSButton) {
-    let projects = ProjectManager.shared.projects
-    guard sender.tag >= 0, sender.tag < projects.count else { return }
-    let project = projects[sender.tag]
+    // The button lives inside the project's ClickableRow; read the path from
+    // there rather than indexing into the (sort-order-dependent) project list.
+    guard let row = sender.superview as? ClickableRow, let path = row.worktreePath else { return }
+    let name = (path as NSString).lastPathComponent
 
     guard let win = window else { return }
     NewWorktreeDialog.present(
       on: win, title: "New Worktree",
-      message: "Create a worktree in \(project.name)."
+      message: "Create a worktree in \(name)."
     ) { result in
-      self.handleWorktreeDialogResult(result, repoRoot: project.path)
+      self.handleWorktreeDialogResult(result, repoRoot: path)
     }
   }
 
