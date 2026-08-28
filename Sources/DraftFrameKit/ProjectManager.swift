@@ -12,9 +12,70 @@ final class ProjectManager {
     var name: String { (path as NSString).lastPathComponent }
   }
 
+  /// How the sidebar orders the project list.
+  enum SortOrder: String, CaseIterable {
+    case recent
+    case activeSessions
+    case nameAscending
+    case nameDescending
+
+    var displayName: String {
+      switch self {
+      case .recent: return "Recent"
+      case .activeSessions: return "Active Sessions"
+      case .nameAscending: return "A-Z"
+      case .nameDescending: return "Z-A"
+      }
+    }
+  }
+
   private(set) var projects: [Project] = []
 
   private static let configPath = NSHomeDirectory() + "/.config/draftframe/projects.json"
+  private static let sortOrderKey = "DFProjectSortOrder"
+
+  var sortOrder: SortOrder {
+    get {
+      SortOrder(rawValue: UserDefaults.standard.string(forKey: Self.sortOrderKey) ?? "")
+        ?? .recent
+    }
+    set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.sortOrderKey) }
+  }
+
+  /// Projects in the persisted sort order. The stored array is already
+  /// most-recently-opened first, so `.recent` returns it as-is; the other
+  /// orders are stable reorderings of it (ties keep recency order).
+  func sortedProjects(activeProjectPaths: Set<String> = []) -> [Project] {
+    Self.sort(projects, by: sortOrder, activeProjectPaths: activeProjectPaths)
+  }
+
+  static func sort(
+    _ projects: [Project], by order: SortOrder, activeProjectPaths: Set<String>
+  ) -> [Project] {
+    switch order {
+    case .recent:
+      return projects
+    case .activeSessions:
+      return projects.filter { activeProjectPaths.contains($0.path) }
+        + projects.filter { !activeProjectPaths.contains($0.path) }
+    case .nameAscending:
+      return projects.enumerated().sorted {
+        switch $0.element.name.localizedCaseInsensitiveCompare($1.element.name) {
+        case .orderedAscending: return true
+        case .orderedDescending: return false
+        case .orderedSame: return $0.offset < $1.offset
+        }
+      }.map { $0.element }
+    case .nameDescending:
+      return projects.enumerated().sorted {
+        switch $0.element.name.localizedCaseInsensitiveCompare($1.element.name) {
+        case .orderedAscending: return false
+        case .orderedDescending: return true
+        case .orderedSame: return $0.offset < $1.offset
+        }
+      }.map { $0.element }
+    }
+  }
 
   private init() {
     load()
