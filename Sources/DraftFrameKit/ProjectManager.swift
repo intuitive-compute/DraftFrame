@@ -115,6 +115,9 @@ final class ProjectManager {
   // MARK: - Persistence
 
   private func save() {
+    // QA runs share this file with real launches; never let their throwaway
+    // projects overwrite the user's project list.
+    if QABridge.isQAMode { return }
     let dir = (ProjectManager.configPath as NSString).deletingLastPathComponent
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     if let data = try? JSONEncoder().encode(projects) {

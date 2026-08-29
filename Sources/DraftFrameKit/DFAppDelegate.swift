@@ -46,6 +46,9 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     wc.window?.makeKeyAndOrderFront(nil)
     windowController = wc
 
+    // QA automation bridge — no-op unless DRAFTFRAME_QA_SOCKET is set.
+    QABridge.startIfEnabled(appDelegate: self)
+
     // Check for updates in the background (throttled to once per day).
     // Deferred a few seconds past launch so the update modal can't blot
     // out the main window mid-startup — clicking "Download" while the
@@ -76,13 +79,22 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
   }
 
   public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    // Save session state before quitting
-    SessionPersistence.shared.saveSessions()
+    // Save session state before quitting — but never from a QA run, whose
+    // throwaway sessions would overwrite the user's real saved sessions.
+    if !QABridge.isQAMode {
+      SessionPersistence.shared.saveSessions()
+    }
 
     // Close all sessions cleanly
     let sessions = SessionManager.shared.sessions
     for i in (0..<sessions.count).reversed() {
       sessions[i].stopWatchers()
+    }
+
+    // QA runs quit unattended; the worktree-cleanup alert below would hang
+    // them, and QA-created worktrees are cleaned up by the QA script itself.
+    if QABridge.isQAMode {
+      return .terminateNow
     }
 
     // Check if there are draftframe-managed worktrees to clean up.

@@ -19,6 +19,10 @@ let package = Package(
             path: "Sources/DraftFrame",
             exclude: ["AppIcon.png"]
         ),
+        .executableTarget(
+            name: "dfqa",
+            path: "Sources/dfqa"
+        ),
         .testTarget(
             name: "DraftFrameTests",
             dependencies: ["DraftFrameKit"],

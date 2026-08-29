@@ -321,7 +321,14 @@ final class DFWindowController: NSWindowController {
     let dirName = (path as NSString).lastPathComponent
     window?.title = "DraftFrame — \(dirName)"
 
-    // Check for saved sessions to restore
+    // Check for saved sessions to restore. QA runs skip the prompt and
+    // always start fresh, without clearing the user's saved sessions.
+    if QABridge.isQAMode {
+      DispatchQueue.main.async { [weak self] in
+        self?.terminalPane.createNewSession(name: dirName, worktreePath: path)
+      }
+      return
+    }
     var shouldRestore = false
     if SessionPersistence.shared.hasSavedSessions(for: path) {
       let alert = NSAlert()

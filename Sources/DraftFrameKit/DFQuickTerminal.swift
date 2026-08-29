@@ -12,6 +12,12 @@ final class DFQuickTerminal {
   static let shared = DFQuickTerminal()
 
   private var window: NSWindow?
+
+  /// Whether the quick terminal is currently on screen. Read by QABridge.
+  var isVisible: Bool { window?.isVisible == true }
+
+  /// The quick terminal's window, for QABridge screenshots.
+  var qaWindow: NSWindow? { window }
   private var container: NSView?
   private var sessionStates: [UUID: QTSessionState] = [:]
   private var currentlyInstalledSessionID: UUID?
