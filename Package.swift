@@ -11,7 +11,13 @@ let package = Package(
         .target(
             name: "DraftFrameKit",
             dependencies: ["SwiftTerm"],
-            path: "Sources/DraftFrameKit"
+            path: "Sources/DraftFrameKit",
+            swiftSettings: [
+                // Surface data-race hazards as warnings (Swift 5 language
+                // mode never promotes these to errors). Inventory for the
+                // incremental actor migration; see git history for context.
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
         ),
         .executableTarget(
             name: "DraftFrame",

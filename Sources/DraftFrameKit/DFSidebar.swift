@@ -51,11 +51,19 @@ final class DFSidebar: NSView {
     return img
   }()
 
-  /// Guard against reentrant calls to `refreshWorktrees()`.
-  /// `Process.waitUntilExit()` pumps the run loop, which can dispatch queued
-  /// notifications and re-enter this method mid-iteration — splicing one
-  /// project's worktree rows under another project's header.
-  private var isRefreshingWorktrees = false
+  /// Serial queue for `git worktree list` spawns. Enumeration used to run on
+  /// the main thread, where `Process.waitUntilExit()` both hitched the UI on
+  /// a cold/busy repo and pumped the run loop (which needed a reentrancy
+  /// guard to stop queued notifications from splicing rows mid-rebuild).
+  private let worktreeEnumQueue = DispatchQueue(
+    label: "com.draftframe.sidebar.worktree-enum", qos: .userInitiated)
+
+  /// True while an enumeration pass is on `worktreeEnumQueue`. Further
+  /// `refreshWorktrees()` calls set `worktreeRefreshQueued` so at most one
+  /// pass runs at a time and bursts of `.sessionsDidChange` pings collapse
+  /// into a single trailing re-check (same pattern as `filesRefreshInFlight`).
+  private var worktreeRefreshInFlight = false
+  private var worktreeRefreshQueued = false
 
   /// Comparable snapshot of everything that affects the rendered worktree
   /// rows. `.sessionsDidChange` fires every ~1.5s from JSONL/status pollers
@@ -403,30 +411,72 @@ final class DFSidebar: NSView {
     refreshWorktrees()
   }
 
+  /// Listings from the most recent completed enumeration. Lets UI-only
+  /// changes (sort order, expand/collapse, active project) repaint in the
+  /// same frame instead of waiting a git round-trip.
+  private var lastEnumerated: [String: [WorktreeManager.Worktree]]?
+
   @objc func refreshWorktrees() {
-    // Process.waitUntilExit() inside getWorktrees(for:) pumps the run loop,
-    // which can dispatch a queued .sessionsDidChange notification and re-enter
-    // this method. The reentrant call clears the stack and rebuilds it, but
-    // then the original call resumes appending rows — splicing one project's
-    // worktrees under another project's header. Guard against that here;
-    // schedule a fresh pass after the current one finishes so the final state
-    // is always consistent.
-    guard !isRefreshingWorktrees else {
-      DispatchQueue.main.async { [weak self] in self?.refreshWorktrees() }
+    // Repaint synchronously from cached listings first — sort, collapse, and
+    // selection changes must land this frame to feel instant. The background
+    // enumeration below then re-applies only if git reports something
+    // different (the content snapshot guard makes it a no-op otherwise).
+    if let cached = lastEnumerated {
+      applyWorktreeResults(cached)
+    }
+
+    guard !worktreeRefreshInFlight else {
+      worktreeRefreshQueued = true
       return
     }
-    isRefreshingWorktrees = true
-    defer { isRefreshingWorktrees = false }
+    worktreeRefreshInFlight = true
+    // A fresh enumeration reads the latest state, so any queued request is
+    // satisfied by this run.
+    worktreeRefreshQueued = false
 
+    let projectPaths = ProjectManager.shared.projects.map { $0.path }
+    worktreeEnumQueue.async { [weak self] in
+      // Always fetch every project's worktrees, including collapsed ones, so
+      // the rows exist in the stack and can be hidden/shown via animator()
+      // without tearing the view down on every expand/collapse.
+      var worktreesPerProject: [String: [WorktreeManager.Worktree]] = [:]
+      for path in projectPaths {
+        worktreesPerProject[path] = Self.enumerateWorktrees(for: path)
+      }
+      DispatchQueue.main.async {
+        guard let self = self else { return }
+        self.worktreeRefreshInFlight = false
+        self.lastEnumerated = worktreesPerProject
+        self.applyWorktreeResults(worktreesPerProject)
+        if self.worktreeRefreshQueued {
+          self.worktreeRefreshQueued = false
+          self.refreshWorktrees()
+        }
+      }
+    }
+  }
+
+  /// Render enumeration results against CURRENT main-thread state: project
+  /// list/order, expansion, active dir, and the in-flight sets are all
+  /// re-read here, so anything that changed while git ran can't paint stale
+  /// rows. Only the worktree listings themselves come from the background
+  /// pass.
+  private func applyWorktreeResults(
+    _ enumerated: [String: [WorktreeManager.Worktree]]
+  ) {
     let projects = sortedProjects()
     let activeDir = SessionManager.shared.projectDir
 
-    // Always fetch every project's worktrees, including collapsed ones, so
-    // the rows exist in the stack and can be hidden/shown via animator()
-    // without tearing the view down on every expand/collapse.
+    // A project added while the enumeration ran has no listing yet — render
+    // it empty and queue a trailing pass so its rows appear right away
+    // instead of waiting for the next status tick.
+    if projects.contains(where: { enumerated[$0.path] == nil }) {
+      worktreeRefreshQueued = true
+    }
+
     var worktreesPerProject: [String: [WorktreeManager.Worktree]] = [:]
     for project in projects {
-      worktreesPerProject[project.path] = getWorktrees(for: project.path)
+      worktreesPerProject[project.path] = (enumerated[project.path] ?? [])
         .filter { !pendingRemovals.contains($0.path) }
     }
 
@@ -859,8 +909,11 @@ final class DFSidebar: NSView {
     NSPasteboard.general.setString(path, forType: .string)
   }
 
-  /// Get worktrees for a specific project directory.
-  private func getWorktrees(for projectPath: String) -> [WorktreeManager.Worktree] {
+  /// Get worktrees for a specific project directory. Spawns git and blocks
+  /// until it exits — call from `worktreeEnumQueue`, never the main thread.
+  private nonisolated static func enumerateWorktrees(for projectPath: String)
+    -> [WorktreeManager.Worktree]
+  {
     // Scrub GIT_* env vars so a stray GIT_DIR/GIT_WORK_TREE inherited from
     // the launching session doesn't redirect git to the wrong repo.
     let env = ProcessInfo.processInfo.environment
@@ -1234,7 +1287,7 @@ final class DFSidebar: NSView {
     let path: String
   }
 
-  private static func gitChangedFiles(in dir: String) -> [ChangedFile] {
+  private nonisolated static func gitChangedFiles(in dir: String) -> [ChangedFile] {
     let env = ProcessInfo.processInfo.environment
       .filter { !$0.key.hasPrefix("GIT_") }
 
