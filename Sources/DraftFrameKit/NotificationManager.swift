@@ -9,9 +9,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Whether we can use UNUserNotificationCenter (requires app bundle).
   private let canUseNotifications = Bundle.main.bundleIdentifier != nil
 
-  /// Tracks previous state per session ID so we can detect transitions.
-  private var previousStates: [UUID: SessionState] = [:]
-
   private override init() {
     super.init()
 
@@ -20,8 +17,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     NotificationCenter.default.addObserver(
-      self, selector: #selector(sessionsChanged),
-      name: .sessionsDidChange, object: nil
+      self, selector: #selector(sessionStateChanged(_:)),
+      name: .sessionStateDidChange, object: nil
+    )
+    // A needs-attention session being closed shrinks the badge count.
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(sessionListChanged),
+      name: .sessionListDidChange, object: nil
     )
   }
 
@@ -44,53 +46,43 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - Session State Observation
 
-  @objc private func sessionsChanged() {
-    let sessions = SessionManager.shared.sessions
-    let activeSession = SessionManager.shared.activeSession
-
-    var needsAttentionCount = 0
-
-    for session in sessions {
-      let previous = previousStates[session.id] ?? .idle
-      let current = session.state
-
-      // Count sessions needing attention for badge
-      if current == .needsAttention {
-        needsAttentionCount += 1
-      }
-
+  /// The typed event carries the transition, so there's no per-session state
+  /// diffing (or its cleanup) here anymore.
+  @objc private func sessionStateChanged(_ note: Notification) {
+    if let change = SessionEvents.stateChange(note),
+      let session = SessionManager.shared.sessions.first(where: { $0.id == change.id }),
       // Only notify for non-active (background) sessions
-      let isActive = session.id == activeSession?.id
-      if !isActive && previous != current {
-        // Transition to .needsAttention
-        if current == .needsAttention {
-          sendNotification(
-            title: "Session needs attention",
-            body: "\(session.name) \u{2014} permission prompt or error",
-            identifier: "needsAttention-\(session.id.uuidString)"
-          )
-        }
-
-        // Transition from non-idle to .userInput (the agent finished)
-        if current == .userInput && previous != .idle {
-          sendNotification(
-            title: "\(session.agent.displayName) finished",
-            body: "\(session.name) is waiting for input",
-            identifier: "finished-\(session.id.uuidString)"
-          )
-        }
+      session.id != SessionManager.shared.activeSession?.id
+    {
+      // Transition to .needsAttention
+      if change.new == .needsAttention {
+        sendNotification(
+          title: "Session needs attention",
+          body: "\(session.name) \u{2014} permission prompt or error",
+          identifier: "needsAttention-\(session.id.uuidString)"
+        )
       }
 
-      // Update tracked state
-      previousStates[session.id] = current
+      // Transition from non-idle to .userInput (the agent finished)
+      if change.new == .userInput && change.old != .idle {
+        sendNotification(
+          title: "\(session.agent.displayName) finished",
+          body: "\(session.name) is waiting for input",
+          identifier: "finished-\(session.id.uuidString)"
+        )
+      }
     }
 
-    // Clean up states for removed sessions
-    let activeIDs = Set(sessions.map { $0.id })
-    previousStates = previousStates.filter { activeIDs.contains($0.key) }
+    refreshDockBadge()
+  }
 
-    // Update dock badge
-    updateDockBadge(count: needsAttentionCount)
+  @objc private func sessionListChanged() {
+    refreshDockBadge()
+  }
+
+  private func refreshDockBadge() {
+    let count = SessionManager.shared.sessions.filter { $0.state == .needsAttention }.count
+    updateDockBadge(count: count)
   }
 
   // MARK: - Public API for Watchdogs

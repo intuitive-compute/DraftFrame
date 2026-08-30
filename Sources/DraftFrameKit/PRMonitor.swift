@@ -148,9 +148,11 @@ final class PRMonitor {
 
   private init() {
     loadConfig()
+    // Timers track session membership and worktree paths, both of which
+    // only move on list changes — state/usage ticks are irrelevant here.
     NotificationCenter.default.addObserver(
       self, selector: #selector(sessionsChanged),
-      name: .sessionsDidChange, object: nil
+      name: .sessionListDidChange, object: nil
     )
   }
 

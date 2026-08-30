@@ -18,9 +18,12 @@ final class DFSessionBar: NSView {
     buildUI()
     registerForDraggedTypes([.dfSessionDrag])
 
+    // Structural changes (membership, order, active card, PR pills) rebuild
+    // the cards; state and usage ticks update the existing cards in place so
+    // a working agent doesn't tear the bar down once a second.
     NotificationCenter.default.addObserver(
       self, selector: #selector(sessionsChanged),
-      name: .sessionsDidChange, object: nil
+      name: .sessionListDidChange, object: nil
     )
     NotificationCenter.default.addObserver(
       self, selector: #selector(sessionsChanged),
@@ -29,6 +32,14 @@ final class DFSessionBar: NSView {
     NotificationCenter.default.addObserver(
       self, selector: #selector(sessionsChanged),
       name: .prStatusDidChange, object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(sessionDynamicsChanged),
+      name: .sessionStateDidChange, object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(sessionDynamicsChanged),
+      name: .sessionUsageDidChange, object: nil
     )
   }
 
@@ -41,6 +52,17 @@ final class DFSessionBar: NSView {
 
   @objc private func sessionsChanged() {
     refreshCards()
+  }
+
+  /// State/usage tick: refresh every card in place. Falls back to a full
+  /// rebuild when a card reports a structural change (its context row
+  /// appearing for the first time).
+  @objc private func sessionDynamicsChanged() {
+    var needsRebuild = false
+    for case let card as SessionCard in cardStack.arrangedSubviews {
+      if !card.refreshDynamic() { needsRebuild = true }
+    }
+    if needsRebuild { refreshCards() }
   }
 
   private func buildUI() {
@@ -193,7 +215,7 @@ final class DFSessionBar: NSView {
   // MARK: - Card context-menu actions
 
   // Card menu items target the bar, not the card: cards are torn down and
-  // rebuilt on every `.sessionsDidChange` tick (~1.5s while an agent works),
+  // rebuilt whenever the session list or PR status changes,
   // and NSMenuItem holds its target weakly — targeting the card meant any
   // rebuild while the menu or a confirmation sheet was open silently dropped
   // the action (issue #13). The bar lives as long as the window, and each
@@ -284,7 +306,7 @@ final class DFSessionBar: NSView {
       let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !newName.isEmpty else { return }
       session.name = newName
-      NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+      SessionEvents.postListChanged()
     }
   }
 }
@@ -314,6 +336,15 @@ final class SessionCard: NSView {
   private var prPill: NSTextField?
   private var prURL: URL?
 
+  // Views `refreshDynamic()` updates in place. Everything else on the card
+  // is fixed for its lifetime; structural changes rebuild the card instead.
+  private var accentBar: CALayer?
+  private var dot: NSView!
+  private var statusLabel: NSTextField!
+  private var modelLabel: NSTextField!
+  private var costLabel: NSTextField!
+  private var contextLabel: NSTextField?
+
   init(session: Session, isActive: Bool, index: Int, bar: DFSessionBar?) {
     self.session = session
     self.index = index
@@ -325,56 +356,29 @@ final class SessionCard: NSView {
     layer?.backgroundColor = Theme.surface2.cgColor
     layer?.cornerRadius = 8
 
-    // Card background carries a dimmed wash of the status color so a
-    // glance at the session bar shows what every session is doing.
-    let stateColor = session.state.color
-
+    // Structural chrome fixed for the card's lifetime; all status-driven
+    // styling (wash, border color, glow, dot) is applied by
+    // `applyStateStyling()`, shared with the in-place refresh path.
     if isActive {
-      // Bright background + status-coloured border and left bar so the
-      // active card visually telegraphs what claude is currently doing.
-      layer?.backgroundColor =
-        (Theme.surface3.blended(withFraction: 0.16, of: stateColor) ?? Theme.surface3).cgColor
-      layer?.borderColor = stateColor.cgColor
+      // Status-coloured border and left bar so the active card visually
+      // telegraphs what claude is currently doing.
       layer?.borderWidth = 1.5
 
       let accentBar = CALayer()
-      accentBar.backgroundColor = stateColor.cgColor
       accentBar.frame = CGRect(x: 0, y: 0, width: 4, height: bounds.height)
       accentBar.autoresizingMask = [.layerHeightSizable]
       accentBar.cornerRadius = 0
       layer?.masksToBounds = true
       layer?.addSublayer(accentBar)
+      self.accentBar = accentBar
     } else {
       // Dimmed inactive card, still tinted by its status color
-      layer?.backgroundColor =
-        (Theme.surface1.blended(withFraction: 0.12, of: stateColor) ?? Theme.surface1).cgColor
       layer?.borderWidth = 0
       alphaValue = 0.6
     }
 
-    // Pulsing border glow for attention/input states
-    let needsPulse = session.state == .needsAttention || session.state == .userInput
-    if needsPulse {
-      let glow = CALayer()
-      glow.cornerRadius = 8
-      glow.borderWidth = 1.5
-      glow.borderColor = session.state.color.cgColor
-      glow.frame = bounds
-      glow.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
-      layer?.addSublayer(glow)
-      glowLayer = glow
-
-      let pulse = CABasicAnimation(keyPath: "opacity")
-      pulse.fromValue = 0.3
-      pulse.toValue = 1.0
-      pulse.duration = 1.4
-      pulse.autoreverses = true
-      pulse.repeatCount = .infinity
-      pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-      glow.add(pulse, forKey: "borderPulse")
-    }
-
     buildCard()
+    applyStateStyling()
 
     // Click to switch
     let click = NSClickGestureRecognizer(target: self, action: #selector(clicked(_:)))
@@ -476,46 +480,26 @@ final class SessionCard: NSView {
     nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     nameLabel.translatesAutoresizingMaskIntoConstraints = false
 
-    // Status dot + label
-    let dot = NSView()
+    // Status dot + label. Color, pulse, and shadow come from
+    // `applyStateStyling()`.
+    dot = NSView()
     dot.wantsLayer = true
-    dot.layer?.backgroundColor = session.state.color.cgColor
     dot.layer?.cornerRadius = 3.5
     dot.translatesAutoresizingMaskIntoConstraints = false
 
-    // Breathing pulse on the dot for attention/input states
-    if session.state == .needsAttention || session.state == .userInput {
-      let dotPulse = CABasicAnimation(keyPath: "opacity")
-      dotPulse.fromValue = 0.35
-      dotPulse.toValue = 1.0
-      dotPulse.duration = 1.4
-      dotPulse.autoreverses = true
-      dotPulse.repeatCount = .infinity
-      dotPulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-      dot.layer?.add(dotPulse, forKey: "dotPulse")
-
-      // Soft glow shadow behind the dot
-      dot.layer?.shadowColor = session.state.color.cgColor
-      dot.layer?.shadowOffset = .zero
-      dot.layer?.shadowRadius = 6
-      dot.layer?.shadowOpacity = 0.8
-      dot.layer?.masksToBounds = false
-    }
-
-    let statusLabel = NSTextField(labelWithString: session.state.label)
+    statusLabel = NSTextField(labelWithString: session.state.label)
     statusLabel.font = Theme.mono(9, weight: .medium)
-    statusLabel.textColor = session.state.color
     statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
     // Model
-    let modelLabel = NSTextField(labelWithString: session.model)
+    modelLabel = NSTextField(labelWithString: session.model)
     modelLabel.font = Theme.mono(9)
     modelLabel.textColor = Theme.text3
     modelLabel.translatesAutoresizingMaskIntoConstraints = false
 
     // Cost. The label shows the current run (matches Claude Code's /usage);
     // the tooltip also reveals this tab's lifetime spend across all runs.
-    let costLabel = NSTextField(labelWithString: String(format: "$%.2f", session.cost))
+    costLabel = NSTextField(labelWithString: String(format: "$%.2f", session.cost))
     costLabel.font = Theme.mono(11)
     costLabel.textColor = Theme.text2
     costLabel.toolTip = String(
@@ -525,7 +509,7 @@ final class SessionCard: NSView {
 
     // Context window usage (e.g. "42.1K / 200K"). Hidden until the JSONL
     // watcher has parsed at least one assistant turn.
-    let contextLabel: NSTextField? = {
+    contextLabel = {
       guard session.contextTokens > 0 else { return nil }
       let label = NSTextField(
         labelWithString:
@@ -603,6 +587,97 @@ final class SessionCard: NSView {
       ])
     }
     NSLayoutConstraint.activate(constraints)
+  }
+
+  /// Re-apply everything the session's mutable state drives (colors, pulses,
+  /// labels) to the existing views, without tearing the card down — that
+  /// preserves hover, open menus, and in-flight drags across the once-a-second
+  /// ticks of a working agent. Returns false when the change is structural
+  /// (the context row appears once contextTokens > 0) and the bar must
+  /// rebuild the card instead.
+  func refreshDynamic() -> Bool {
+    guard (session.contextTokens > 0) == (contextLabel != nil) else { return false }
+    applyStateStyling()
+    statusLabel.stringValue = session.state.label
+    modelLabel.stringValue = session.model
+    costLabel.stringValue = String(format: "$%.2f", session.cost)
+    costLabel.toolTip = String(
+      format: "This run: $%.2f (matches /usage)\nThis tab, all runs: $%.2f",
+      session.cost, session.lifetimeCost)
+    contextLabel?.stringValue =
+      "\(TokenFormat.short(session.contextTokens)) / \(TokenFormat.short(session.maxContextTokens))"
+    return true
+  }
+
+  /// Status-driven styling shared by init and `refreshDynamic()`: the card
+  /// wash, border/accent color, pulsing glow, status dot, and status label
+  /// color. The card background carries a dimmed wash of the status color so
+  /// a glance at the session bar shows what every session is doing.
+  private func applyStateStyling() {
+    let stateColor = session.state.color
+
+    if isActive {
+      // Bright background + status-coloured border and left bar so the
+      // active card visually telegraphs what claude is currently doing.
+      layer?.backgroundColor =
+        (Theme.surface3.blended(withFraction: 0.16, of: stateColor) ?? Theme.surface3).cgColor
+      layer?.borderColor = stateColor.cgColor
+      accentBar?.backgroundColor = stateColor.cgColor
+    } else {
+      // Dimmed inactive card, still tinted by its status color
+      layer?.backgroundColor =
+        (Theme.surface1.blended(withFraction: 0.12, of: stateColor) ?? Theme.surface1).cgColor
+    }
+
+    // Pulsing border glow for attention/input states
+    glowLayer?.removeFromSuperlayer()
+    glowLayer = nil
+    let needsPulse = session.state == .needsAttention || session.state == .userInput
+    if needsPulse {
+      let glow = CALayer()
+      glow.cornerRadius = 8
+      glow.borderWidth = 1.5
+      glow.borderColor = stateColor.cgColor
+      glow.frame = bounds
+      glow.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+      layer?.addSublayer(glow)
+      glowLayer = glow
+
+      let pulse = CABasicAnimation(keyPath: "opacity")
+      pulse.fromValue = 0.3
+      pulse.toValue = 1.0
+      pulse.duration = 1.4
+      pulse.autoreverses = true
+      pulse.repeatCount = .infinity
+      pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      glow.add(pulse, forKey: "borderPulse")
+    }
+
+    // Status dot color plus breathing pulse and glow shadow while attention
+    // or input is wanted.
+    dot.layer?.backgroundColor = stateColor.cgColor
+    dot.layer?.removeAnimation(forKey: "dotPulse")
+    if needsPulse {
+      let dotPulse = CABasicAnimation(keyPath: "opacity")
+      dotPulse.fromValue = 0.35
+      dotPulse.toValue = 1.0
+      dotPulse.duration = 1.4
+      dotPulse.autoreverses = true
+      dotPulse.repeatCount = .infinity
+      dotPulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      dot.layer?.add(dotPulse, forKey: "dotPulse")
+
+      // Soft glow shadow behind the dot
+      dot.layer?.shadowColor = stateColor.cgColor
+      dot.layer?.shadowOffset = .zero
+      dot.layer?.shadowRadius = 6
+      dot.layer?.shadowOpacity = 0.8
+      dot.layer?.masksToBounds = false
+    } else {
+      dot.layer?.shadowOpacity = 0
+    }
+
+    statusLabel.textColor = stateColor
   }
 
   private func makePRPill(status: PRStatus) -> NSTextField {

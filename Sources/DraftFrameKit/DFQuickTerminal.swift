@@ -81,8 +81,8 @@ final class DFQuickTerminal {
       object: nil)
     NotificationCenter.default.addObserver(
       self,
-      selector: #selector(sessionsDidChange),
-      name: .sessionsDidChange,
+      selector: #selector(sessionListChanged),
+      name: .sessionListDidChange,
       object: nil)
   }
 
@@ -708,7 +708,7 @@ final class DFQuickTerminal {
     focusInstalledContent()
   }
 
-  @objc private func sessionsDidChange() {
+  @objc private func sessionListChanged() {
     // Drop cached state for sessions that no longer exist, killing their
     // shells so closed sessions don't leak background processes.
     let liveIDs = Set(SessionManager.shared.sessions.map(\.id))

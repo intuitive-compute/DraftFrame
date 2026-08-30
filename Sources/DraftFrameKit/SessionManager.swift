@@ -1,10 +1,52 @@
 import AppKit
 import SwiftTerm
 
-/// Notification posted whenever session list or session state changes.
+/// Typed per-session notifications. Consumers subscribe only to the events
+/// that affect what they render, replacing the old catch-all
+/// `.sessionsDidChange` that woke every observer for every cost tick.
 extension Notification.Name {
-  static let sessionsDidChange = Notification.Name("DFSessionsDidChange")
+  /// Membership, order, or naming of the session list changed
+  /// (create, close, move, rename, worktree rename).
+  static let sessionListDidChange = Notification.Name("DFSessionListDidChange")
+  /// One session's `SessionState` changed. Payload via `SessionEvents`.
+  static let sessionStateDidChange = Notification.Name("DFSessionStateDidChange")
+  /// One session's cost/token/model/context figures changed.
+  /// Payload via `SessionEvents`.
+  static let sessionUsageDidChange = Notification.Name("DFSessionUsageDidChange")
   static let activeSessionDidChange = Notification.Name("DFActiveSessionDidChange")
+}
+
+/// Posting and payload parsing for the typed session notifications, so the
+/// userInfo keys live in exactly one place.
+enum SessionEvents {
+  static let sessionIDKey = "sessionID"
+  static let oldStateKey = "oldState"
+  static let newStateKey = "newState"
+
+  static func postListChanged() {
+    NotificationCenter.default.post(name: .sessionListDidChange, object: nil)
+  }
+
+  static func postStateChanged(id: UUID, old: SessionState, new: SessionState) {
+    NotificationCenter.default.post(
+      name: .sessionStateDidChange, object: nil,
+      userInfo: [sessionIDKey: id, oldStateKey: old, newStateKey: new])
+  }
+
+  static func postUsageChanged(id: UUID) {
+    NotificationCenter.default.post(
+      name: .sessionUsageDidChange, object: nil, userInfo: [sessionIDKey: id])
+  }
+
+  static func stateChange(_ note: Notification)
+    -> (id: UUID, old: SessionState, new: SessionState)?
+  {
+    guard let id = note.userInfo?[sessionIDKey] as? UUID,
+      let old = note.userInfo?[oldStateKey] as? SessionState,
+      let new = note.userInfo?[newStateKey] as? SessionState
+    else { return nil }
+    return (id, old, new)
+  }
 }
 
 /// State of an agent session, detected from its status file or terminal output.
@@ -121,8 +163,9 @@ final class Session {
     ptyAnalyzer.onContextWindowChange = { [weak self] maxTokens in
       guard let self = self else { return }
       self.maxContextTokens = maxTokens
+      let id = self.id
       DispatchQueue.main.async {
-        NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+        SessionEvents.postUsageChanged(id: id)
       }
     }
   }
@@ -151,13 +194,15 @@ final class Session {
       if maxContextTokens > 0 {
         self.maxContextTokens = maxContextTokens
       }
-      NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+      SessionEvents.postUsageChanged(id: self.id)
     }
 
     let applyState: (SessionState) -> Void = { [weak self] newState in
       guard let self = self else { return }
+      let old = self.state
+      guard old != newState else { return }
       self.state = newState
-      NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+      SessionEvents.postStateChanged(id: self.id, old: old, new: newState)
     }
 
     switch agent {
@@ -190,7 +235,7 @@ final class Session {
       ptyAnalyzer.onModelDetected = { [weak self] model in
         guard let self = self, self.model != model else { return }
         self.model = model
-        NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+        SessionEvents.postUsageChanged(id: self.id)
       }
     }
   }
@@ -412,7 +457,7 @@ final class SessionManager {
     sessions.append(session)
     activeSessionIndex = sessions.count - 1
 
-    NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+    SessionEvents.postListChanged()
     NotificationCenter.default.post(name: .activeSessionDidChange, object: nil)
 
     tv.window?.layoutIfNeeded()
@@ -464,7 +509,7 @@ final class SessionManager {
       activeSessionIndex = sessions.count - 1
     }
 
-    NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+    SessionEvents.postListChanged()
     NotificationCenter.default.post(name: .activeSessionDidChange, object: nil)
   }
 
@@ -486,7 +531,7 @@ final class SessionManager {
     session.worktreePath = newPath
     session.stopWatchers()
     session.startWatchers(directory: newPath)
-    NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+    SessionEvents.postListChanged()
   }
 
   /// Close session by ID.
@@ -512,7 +557,7 @@ final class SessionManager {
       activeSessionIndex = newIdx
     }
 
-    NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+    SessionEvents.postListChanged()
     if activeSessionIndex != priorActiveIndex {
       NotificationCenter.default.post(name: .activeSessionDidChange, object: nil)
     }

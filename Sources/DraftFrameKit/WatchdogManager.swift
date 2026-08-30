@@ -64,9 +64,6 @@ final class WatchdogManager {
   /// Log of all watchdog actions: (timestamp, description).
   private(set) var watchdogLog: [(Date, String)] = []
 
-  /// Tracks previous session states to detect transitions.
-  private var previousStates: [UUID: SessionState] = [:]
-
   /// Timers for periodic watchdogs, keyed by watchdog ID.
   private var periodicTimers: [UUID: Timer] = [:]
 
@@ -74,8 +71,8 @@ final class WatchdogManager {
     loadDefaults()
 
     NotificationCenter.default.addObserver(
-      self, selector: #selector(sessionsChanged),
-      name: .sessionsDidChange, object: nil
+      self, selector: #selector(sessionStateChanged(_:)),
+      name: .sessionStateDidChange, object: nil
     )
   }
 
@@ -206,48 +203,37 @@ final class WatchdogManager {
 
   // MARK: - Session State Observation
 
-  @objc private func sessionsChanged() {
-    let sessions = SessionManager.shared.sessions
+  /// The typed event carries the transition, so there's no per-session state
+  /// diffing (or its cleanup) here anymore.
+  @objc private func sessionStateChanged(_ note: Notification) {
+    guard let change = SessionEvents.stateChange(note),
+      let session = SessionManager.shared.sessions.first(where: { $0.id == change.id })
+    else { return }
 
-    for session in sessions {
-      let previous = previousStates[session.id] ?? .idle
-      let current = session.state
-
-      guard previous != current else { continue }
-
-      // Evaluate all enabled watchdogs
-      for watchdog in watchdogs where watchdog.isEnabled {
-        // Check session scope
-        if let targetID = watchdog.sessionID, targetID != session.id {
-          continue
-        }
-
-        var shouldFire = false
-
-        switch watchdog.trigger {
-        case .needsAttention:
-          shouldFire = current == .needsAttention
-
-        case .idleAfterWork:
-          let wasWorking = previous == .generating || previous == .thinking
-          shouldFire = wasWorking && current == .userInput
-
-        case .periodic:
-          // Periodic triggers are handled by timers, not state transitions
-          break
-        }
-
-        if shouldFire {
-          executeResponse(watchdog.response, for: session, watchdog: watchdog)
-        }
+    for watchdog in watchdogs where watchdog.isEnabled {
+      // Check session scope
+      if let targetID = watchdog.sessionID, targetID != change.id {
+        continue
       }
 
-      previousStates[session.id] = current
-    }
+      let shouldFire: Bool
+      switch watchdog.trigger {
+      case .needsAttention:
+        shouldFire = change.new == .needsAttention
 
-    // Clean up states for removed sessions
-    let activeIDs = Set(sessions.map { $0.id })
-    previousStates = previousStates.filter { activeIDs.contains($0.key) }
+      case .idleAfterWork:
+        let wasWorking = change.old == .generating || change.old == .thinking
+        shouldFire = wasWorking && change.new == .userInput
+
+      case .periodic:
+        // Periodic triggers are handled by timers, not state transitions
+        shouldFire = false
+      }
+
+      if shouldFire {
+        executeResponse(watchdog.response, for: session, watchdog: watchdog)
+      }
+    }
   }
 
   // MARK: - Periodic Timers

@@ -60,16 +60,20 @@ final class DFSidebar: NSView {
 
   /// True while an enumeration pass is on `worktreeEnumQueue`. Further
   /// `refreshWorktrees()` calls set `worktreeRefreshQueued` so at most one
-  /// pass runs at a time and bursts of `.sessionsDidChange` pings collapse
+  /// pass runs at a time and bursts of refresh requests collapse
   /// into a single trailing re-check (same pattern as `filesRefreshInFlight`).
   private var worktreeRefreshInFlight = false
   private var worktreeRefreshQueued = false
 
+  /// Slow poll catching worktree changes made outside the app.
+  private var externalWorktreeTimer: Timer?
+
   /// Comparable snapshot of everything that affects the rendered worktree
-  /// rows. `.sessionsDidChange` fires every ~1.5s from JSONL/status pollers
-  /// regardless of whether projects, active dir, or worktrees actually
-  /// changed; we use this to skip the rebuild in those no-op cases. Excludes
-  /// `isExpanded` so collapse/expand can animate without rebuilding rows.
+  /// rows. Refreshes arrive from list/active-session events, direct calls,
+  /// and the external-changes poll regardless of whether anything rendered
+  /// actually changed; we use this to skip the rebuild in those no-op cases.
+  /// Excludes `isExpanded` so collapse/expand can animate without rebuilding
+  /// rows.
   private struct WorktreesContentSnapshot: Equatable {
     let projectPaths: [String]
     let activeDir: String?
@@ -86,9 +90,9 @@ final class DFSidebar: NSView {
   private var lastContentSnapshot: WorktreesContentSnapshot?
 
   /// Comparable snapshot of the rendered CHANGES rows. `refreshFiles()` is
-  /// driven by `.sessionsDidChange`, which fires repeatedly while an agent
-  /// works; we use this to rebuild the rows only when the actual changed-file
-  /// set differs, instead of tearing the stack down on every notification.
+  /// driven by FSEvents and session state changes, which repeat while an
+  /// agent works; we use this to rebuild the rows only when the actual
+  /// changed-file set differs, instead of tearing the stack down every time.
   private struct FilesContentSnapshot: Equatable {
     let worktreeDir: String?
     let files: [ChangedFile]
@@ -127,8 +131,22 @@ final class DFSidebar: NSView {
 
     NotificationCenter.default.addObserver(
       self, selector: #selector(refreshWorktrees),
-      name: .sessionsDidChange, object: nil
+      name: .sessionListDidChange, object: nil
     )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(refreshWorktrees),
+      name: .activeSessionDidChange, object: nil
+    )
+    // Worktrees created or removed outside the app (a plain `git worktree
+    // add` in a terminal) have no in-app event; the old catch-all
+    // notification used to pick those up incidentally. A slow poll covers
+    // them: the enumeration runs off-main and the snapshot guard makes a
+    // no-change pass free.
+    externalWorktreeTimer = Timer.scheduledTimer(
+      withTimeInterval: 10.0, repeats: true
+    ) { [weak self] _ in
+      self?.refreshWorktrees()
+    }
     NotificationCenter.default.addObserver(
       self, selector: #selector(refreshWatchdogs),
       name: .watchdogsDidChange, object: nil
@@ -154,6 +172,7 @@ final class DFSidebar: NSView {
   required init?(coder: NSCoder) { fatalError() }
 
   deinit {
+    externalWorktreeTimer?.invalidate()
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -351,12 +370,12 @@ final class DFSidebar: NSView {
       self, selector: #selector(activeSessionChanged),
       name: .activeSessionDidChange, object: nil
     )
-    // Belt-and-braces fallback: also refresh whenever an agent advances (and
-    // on the ~1.5s status polls), in case FSEvents misses a change or hasn't
-    // started yet. The snapshot guard in refreshFiles() keeps no-ops cheap.
+    // Belt-and-braces fallback: also refresh when an agent's state flips
+    // (start/finish of a turn is when files change), in case FSEvents misses
+    // a change or hasn't started yet. The snapshot guard keeps no-ops cheap.
     NotificationCenter.default.addObserver(
       self, selector: #selector(refreshFiles),
-      name: .sessionsDidChange, object: nil
+      name: .sessionStateDidChange, object: nil
     )
 
     // Auto-refresh toolkit when config file changes
@@ -497,7 +516,7 @@ final class DFSidebar: NSView {
     let contentChanged = (snapshot != lastContentSnapshot)
     let expansionChanged = (expansionStates != lastExpansionStates)
     if !contentChanged && !expansionChanged {
-      // Polling-driven .sessionsDidChange lands here ~40x/min — nothing
+      // The external-changes poll and no-op event bursts land here — nothing
       // visible has changed, so skip the rebuild and the resulting flash.
       return
     }
@@ -1204,9 +1223,9 @@ final class DFSidebar: NSView {
   }
 
   private func applyChangedFiles(_ changedFiles: [ChangedFile], worktreeDir: String?) {
-    // `.sessionsDidChange` lands here repeatedly while an agent works; skip the
-    // teardown/rebuild (and the hover/click disruption it causes) unless the
-    // changed-file set actually differs from what's already rendered.
+    // FSEvents and state changes land here repeatedly while an agent works;
+    // skip the teardown/rebuild (and the hover/click disruption it causes)
+    // unless the changed-file set actually differs from what's rendered.
     let snapshot = FilesContentSnapshot(worktreeDir: worktreeDir, files: changedFiles)
     guard snapshot != lastFilesSnapshot else { return }
     lastFilesSnapshot = snapshot

@@ -23,14 +23,17 @@ final class DFDashboard: NSView {
     isHidden = true
     setupUI()
 
-    NotificationCenter.default.addObserver(
-      self, selector: #selector(sessionsChanged),
-      name: .sessionsDidChange, object: nil
-    )
-    NotificationCenter.default.addObserver(
-      self, selector: #selector(sessionsChanged),
-      name: .prStatusDidChange, object: nil
-    )
+    // The dashboard renders list, state, and usage, so it subscribes to all
+    // three — but its handler is already a no-op while hidden.
+    for name: Notification.Name in [
+      .sessionListDidChange, .sessionStateDidChange, .sessionUsageDidChange,
+      .prStatusDidChange,
+    ] {
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(sessionsChanged),
+        name: name, object: nil
+      )
+    }
   }
 
   @available(*, unavailable)

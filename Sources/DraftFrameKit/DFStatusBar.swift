@@ -39,9 +39,15 @@ final class DFStatusBar: NSView {
     layer?.backgroundColor = Theme.surface1.cgColor
     buildUI()
 
+    // Shows cost/token totals and the active session's model — usage and
+    // list events cover those; state flips don't change anything here.
     NotificationCenter.default.addObserver(
       self, selector: #selector(refresh),
-      name: .sessionsDidChange, object: nil
+      name: .sessionUsageDidChange, object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(refresh),
+      name: .sessionListDidChange, object: nil
     )
     NotificationCenter.default.addObserver(
       self, selector: #selector(refresh),
@@ -144,7 +150,7 @@ final class DFStatusBar: NSView {
   }
 
   /// Resolve the branch off the main thread: `refresh()` runs on every
-  /// `.sessionsDidChange` tick (~40x/min while an agent works) and spawning
+  /// usage tick (roughly once a second while an agent works) and spawning
   /// git synchronously there blocks event delivery — on a cold or busy repo
   /// long enough to beachball. At most one lookup is in flight; ticks that
   /// arrive mid-lookup are dropped (the next tick re-checks anyway).
