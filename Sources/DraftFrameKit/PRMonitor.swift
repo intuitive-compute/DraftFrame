@@ -107,6 +107,11 @@ extension Notification.Name {
 /// Singleton that polls `gh pr view` for each session with a worktree,
 /// surfaces CI status, and fires auto-fix / auto-merge / auto-archive
 /// actions when configured.
+///
+/// Main-actor isolated: all mutable state (status, timers, config) lives on
+/// the main actor. The blocking `gh` spawns are `nonisolated` and run on the
+/// private queue, handing results back via explicit main-queue hops.
+@MainActor
 final class PRMonitor {
   static let shared = PRMonitor()
 
@@ -156,10 +161,8 @@ final class PRMonitor {
     )
   }
 
-  deinit {
-    NotificationCenter.default.removeObserver(self)
-    for timer in timers.values { timer.cancel() }
-  }
+  // No deinit: the shared singleton never deallocates, so observer removal
+  // and timer cancellation there would be dead code.
 
   // MARK: - Public
 
@@ -249,7 +252,7 @@ final class PRMonitor {
 
   // MARK: - Polling (runs on `queue`)
 
-  private func poll(sessionID: UUID, worktreePath: String) {
+  nonisolated private func poll(sessionID: UUID, worktreePath: String) {
     guard FileManager.default.fileExists(atPath: worktreePath) else {
       NSLog("[PRMonitor] poll skipped: path does not exist: %@", worktreePath)
       return
@@ -272,7 +275,9 @@ final class PRMonitor {
         "[PRMonitor] no PR for %@ (gh output: %@)",
         worktreePath, preview.isEmpty ? "<empty>" : String(preview))
       DispatchQueue.main.async { [weak self] in
-        self?.clearStatus(sessionID: sessionID)
+        MainActor.assumeIsolated {
+          self?.clearStatus(sessionID: sessionID)
+        }
       }
       return
     }
@@ -292,11 +297,13 @@ final class PRMonitor {
     )
 
     DispatchQueue.main.async { [weak self] in
-      self?.updateStatus(sessionID: sessionID, worktreePath: worktreePath, newStatus: status)
+      MainActor.assumeIsolated {
+        self?.updateStatus(sessionID: sessionID, worktreePath: worktreePath, newStatus: status)
+      }
     }
   }
 
-  private func computeRollup(checks: [PRCheck]) -> PRRollup {
+  nonisolated private func computeRollup(checks: [PRCheck]) -> PRRollup {
     if checks.isEmpty { return .none }
     if checks.contains(where: { c in c.conclusion.map { PRConclusion.failing.contains($0) } ?? false
     }) {
@@ -394,11 +401,13 @@ final class PRMonitor {
       )
       NSLog("[PRMonitor] auto-merge output: %@", output)
       DispatchQueue.main.async {
-        let session = SessionManager.shared.sessions.first(where: { $0.id == sessionID })
-        NotificationManager.shared.sendWatchdogNotification(
-          title: "PR #\(status.number) auto-merge requested",
-          body: "Merge queued on \(session?.name ?? "session")"
-        )
+        MainActor.assumeIsolated {
+          let session = SessionManager.shared.sessions.first(where: { $0.id == sessionID })
+          NotificationManager.shared.sendWatchdogNotification(
+            title: "PR #\(status.number) auto-merge requested",
+            body: "Merge queued on \(session?.name ?? "session")"
+          )
+        }
       }
     }
   }
@@ -448,7 +457,7 @@ final class PRMonitor {
 
   // MARK: - gh shell out
 
-  private func runGH(args: [String], cwd: String) -> String {
+  nonisolated private func runGH(args: [String], cwd: String) -> String {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     proc.arguments = ["gh"] + args

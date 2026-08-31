@@ -2,6 +2,7 @@ import AppKit
 
 /// Help window listing all keyboard shortcuts.
 /// Singleton — reuses the same window across show/hide cycles.
+@MainActor
 final class DFShortcutsWindow: NSObject, NSWindowDelegate {
   static let shared = DFShortcutsWindow()
 

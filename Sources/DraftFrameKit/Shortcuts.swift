@@ -1,6 +1,8 @@
 import AppKit
 
 /// Registers global keyboard shortcuts for the app.
+/// Main-actor isolated: local event monitors deliver on the main thread.
+@MainActor
 final class ShortcutManager {
   static let shared = ShortcutManager()
 

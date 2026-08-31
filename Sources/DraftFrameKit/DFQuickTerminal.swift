@@ -8,6 +8,7 @@ import SwiftTerm
 /// visible/focused. Shells persist across show/hide, tab switches, and
 /// session switches, so scrollback and in-flight commands survive all of
 /// that until the shell itself exits.
+@MainActor
 final class DFQuickTerminal {
   static let shared = DFQuickTerminal()
 
@@ -799,7 +800,10 @@ final class DFQuickTerminal {
     loads[paneID]?.maxTimer = Timer.scheduledTimer(
       withTimeInterval: Self.maxLoad, repeats: false
     ) { [weak self] _ in
-      self?.finishLoading(for: paneID)
+      // Timers fire on the main run loop, matching this class's isolation.
+      MainActor.assumeIsolated {
+        self?.finishLoading(for: paneID)
+      }
     }
   }
 
@@ -832,7 +836,10 @@ final class DFQuickTerminal {
     load.settleTimer = Timer.scheduledTimer(
       withTimeInterval: Self.settleQuiet, repeats: false
     ) { [weak self] _ in
-      self?.finishLoading(for: paneID)
+      // Timers fire on the main run loop, matching this class's isolation.
+      MainActor.assumeIsolated {
+        self?.finishLoading(for: paneID)
+      }
     }
   }
 

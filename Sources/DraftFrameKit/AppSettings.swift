@@ -4,7 +4,9 @@ import Foundation
 /// worktrees; explicit per-worktree toggles (sidebar PR action rows) and
 /// per-watchdog edits still override them.
 enum AppSettings {
-  private static let defaults = UserDefaults.standard
+  // UserDefaults is documented thread-safe; the annotation just tells the
+  // compiler so.
+  private nonisolated(unsafe) static let defaults = UserDefaults.standard
 
   private static let autoFixKey = "DFDefaultPRAutoFix"
   private static let autoMergeKey = "DFDefaultPRAutoMerge"

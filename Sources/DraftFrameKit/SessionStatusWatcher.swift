@@ -12,7 +12,7 @@ import os
 /// at once. `onUpdate` fires on the main queue, only when the state changes.
 final class SessionStatusWatcher {
 
-  typealias UpdateCallback = (SessionState) -> Void
+  typealias UpdateCallback = @MainActor @Sendable (SessionState) -> Void
 
   private let id = UUID()
   /// Consulted by the registry (its liveness probe) before every callback.

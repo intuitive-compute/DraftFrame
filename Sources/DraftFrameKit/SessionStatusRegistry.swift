@@ -25,9 +25,9 @@ actor SessionStatusRegistry {
   /// out-of-order stop()-before-subscribe harmless: the late subscribe is
   /// refused because the probe already answers false.
   typealias IsActive = @Sendable () -> Bool
-  /// Fired on the main queue, only when the state differs from the last
+  /// Fired on the main actor, only when the state differs from the last
   /// one reported to this subscriber.
-  typealias Callback = @Sendable (SessionState) -> Void
+  typealias Callback = @MainActor @Sendable (SessionState) -> Void
 
   private struct Subscriber {
     let cwd: String
@@ -144,7 +144,9 @@ actor SessionStatusRegistry {
       let isActive = sub.isActive
       DispatchQueue.main.async {
         guard isActive() else { return }
-        callback(state)
+        MainActor.assumeIsolated {
+          callback(state)
+        }
       }
     }
   }

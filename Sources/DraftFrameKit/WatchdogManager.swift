@@ -56,6 +56,8 @@ struct Watchdog: Identifiable {
 
 /// Singleton that manages watchdogs — semi-autonomous monitors that watch
 /// Claude sessions and auto-respond when certain conditions are met.
+/// Main-actor isolated: driven by session events and main-runloop timers.
+@MainActor
 final class WatchdogManager {
   static let shared = WatchdogManager()
 
@@ -76,10 +78,9 @@ final class WatchdogManager {
     )
   }
 
-  deinit {
-    NotificationCenter.default.removeObserver(self)
-    for timer in periodicTimers.values { timer.invalidate() }
-  }
+  // No deinit: the shared singleton never deallocates, so observer removal
+  // and timer invalidation there would be dead code (and deinit can't touch
+  // main-actor state under strict concurrency).
 
   // MARK: - Default Watchdogs
 
@@ -243,7 +244,10 @@ final class WatchdogManager {
 
     let interval = TimeInterval(max(seconds, 1))
     let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-      self?.firePeriodicWatchdog(id: watchdog.id)
+      // Scheduled on the main run loop, matching this class's isolation.
+      MainActor.assumeIsolated {
+        self?.firePeriodicWatchdog(id: watchdog.id)
+      }
     }
     RunLoop.main.add(timer, forMode: .common)
     periodicTimers[watchdog.id] = timer
@@ -287,31 +291,29 @@ final class WatchdogManager {
     case .autoAccept:
       let msg = "\(logPrefix): auto-accepting (sending 'y')"
       appendLog(msg)
-      DispatchQueue.main.async {
-        session.terminalView?.send(txt: "y\r")
-      }
+      session.terminalView?.send(txt: "y\r")
 
     case .sendText(let text):
       let msg = "\(logPrefix): sending text \"\(text)\""
       appendLog(msg)
-      DispatchQueue.main.async {
-        session.terminalView?.send(txt: text + "\r")
-      }
+      session.terminalView?.send(txt: text + "\r")
 
     case .runCommand(let cmd):
       let msg = "\(logPrefix): running command \"\(cmd)\""
       appendLog(msg)
-      runShellCommand(cmd) { [weak self] output in
+      Self.runShellCommand(cmd) { [weak self] output in
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         self?.appendLog("\(logPrefix): command output: \(trimmed)")
-        DispatchQueue.main.async {
-          session.terminalView?.send(txt: trimmed + "\r")
-        }
+        session.terminalView?.send(txt: trimmed + "\r")
       }
     }
   }
 
-  private func runShellCommand(_ command: String, completion: @escaping (String) -> Void) {
+  /// Runs `command` in a login shell off the main thread and delivers its
+  /// output back on the main actor.
+  private nonisolated static func runShellCommand(
+    _ command: String, completion: @escaping @MainActor @Sendable (String) -> Void
+  ) {
     DispatchQueue.global(qos: .userInitiated).async {
       let proc = Process()
       let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
@@ -322,17 +324,18 @@ final class WatchdogManager {
       proc.standardOutput = pipe
       proc.standardError = pipe
 
+      let output: String
       do {
         try proc.run()
         proc.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        DispatchQueue.main.async {
-          completion(output)
-        }
+        output = String(data: data, encoding: .utf8) ?? ""
       } catch {
-        DispatchQueue.main.async {
-          completion("Error: \(error.localizedDescription)")
+        output = "Error: \(error.localizedDescription)"
+      }
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          completion(output)
         }
       }
     }

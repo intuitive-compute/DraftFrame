@@ -21,7 +21,10 @@ import SwiftTerm
   ///
   /// The env-var gate means the bridge never runs for normal users — packaged
   /// builds don't set it, and there is no UI to turn it on.
-  public final class QABridge {
+  /// `@unchecked Sendable`: the mutable fields are written once during
+  /// `start` (on the main thread, before the accept thread spawns) and only
+  /// read afterwards; all command handling hops to the main actor.
+  public final class QABridge: @unchecked Sendable {
     public static let shared = QABridge()
 
     private weak var appDelegate: DFAppDelegate?
@@ -119,20 +122,23 @@ import SwiftTerm
         if buf[0..<n].contains(0x0A) { break }
       }
 
-      var response: [String: Any]
+      // Serialize the response inside the main.sync block so only Sendable
+      // Data crosses back to the socket thread, not a [String: Any].
+      var out: Data
       if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
         let cmd = obj["cmd"] as? String
       {
-        var result: [String: Any] = [:]
-        DispatchQueue.main.sync {
-          result = self.handle(cmd: cmd, params: obj)
+        out = DispatchQueue.main.sync {
+          MainActor.assumeIsolated {
+            let result = self.handle(cmd: cmd, params: obj)
+            return (try? JSONSerialization.data(withJSONObject: result))
+              ?? Data(#"{"ok":false,"error":"unencodable response"}"#.utf8)
+          }
         }
-        response = result
       } else {
-        response = ["ok": false, "error": "invalid request: expected JSON with a \"cmd\" field"]
+        out = Data(
+          #"{"ok":false,"error":"invalid request: expected JSON with a \"cmd\" field"}"#.utf8)
       }
-
-      guard var out = try? JSONSerialization.data(withJSONObject: response) else { return }
       out.append(0x0A)
       out.withUnsafeBytes { raw in
         var sent = 0
@@ -146,6 +152,7 @@ import SwiftTerm
 
     // MARK: - Command dispatch (main thread)
 
+    @MainActor
     private func handle(cmd: String, params: [String: Any]) -> [String: Any] {
       switch cmd {
       case "ping":
@@ -247,7 +254,7 @@ import SwiftTerm
 
     // MARK: - Helpers
 
-    private func resolveSession(_ params: [String: Any]) -> Session? {
+    @MainActor private func resolveSession(_ params: [String: Any]) -> Session? {
       let mgr = SessionManager.shared
       if let idx = params["index"] as? Int {
         guard idx >= 0, idx < mgr.sessions.count else { return nil }
@@ -256,7 +263,7 @@ import SwiftTerm
       return mgr.activeSession
     }
 
-    private func sessionList() -> [[String: Any]] {
+    @MainActor private func sessionList() -> [[String: Any]] {
       let mgr = SessionManager.shared
       return mgr.sessions.enumerated().map { i, s in
         [
@@ -276,7 +283,7 @@ import SwiftTerm
       }
     }
 
-    private func appState() -> [String: Any] {
+    @MainActor private func appState() -> [String: Any] {
       let mgr = SessionManager.shared
       var state: [String: Any] = [
         "ok": true,
@@ -300,7 +307,7 @@ import SwiftTerm
     /// Text of the session's visible terminal screen — what a human QA would
     /// see. `ClaudeTerminalView` pins the viewport to the live screen, so this
     /// tracks program output. `requestedLines` keeps only the last N rows.
-    private func readBuffer(tv: ClaudeTerminalView, requestedLines: Int?) -> [String: Any] {
+    @MainActor private func readBuffer(tv: ClaudeTerminalView, requestedLines: Int?) -> [String: Any] {
       let term = tv.getTerminal()
       var lines: [String] = []
       for row in 0..<term.rows {
@@ -328,7 +335,7 @@ import SwiftTerm
     /// Capture a window's actual pixels into a PNG via CGWindowListCreateImage.
     /// Capturing our own process's windows needs no screen-recording permission,
     /// and unlike `cacheDisplay` it includes SwiftTerm's terminal rendering.
-    private func screenshot(to path: String, window which: String) -> [String: Any] {
+    @MainActor private func screenshot(to path: String, window which: String) -> [String: Any] {
       let win: NSWindow?
       switch which {
       case "quick":
@@ -366,7 +373,7 @@ import SwiftTerm
     /// Find a menu item by its title path (e.g. ["View", "Toggle Dashboard"])
     /// and perform its action. The action fires asynchronously so an item that
     /// opens a modal (About, alerts) can't deadlock the bridge's reply.
-    private func invokeMenu(titles: [String]) -> [String: Any] {
+    @MainActor private func invokeMenu(titles: [String]) -> [String: Any] {
       guard var menu = NSApp.mainMenu else {
         return ["ok": false, "error": "no main menu"]
       }

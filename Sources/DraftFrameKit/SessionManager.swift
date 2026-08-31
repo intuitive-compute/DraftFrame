@@ -78,7 +78,11 @@ enum SessionState: String {
   }
 }
 
-/// A single terminal session.
+/// A single terminal session. Main-actor isolated: every field here feeds
+/// the UI directly, and the watcher pipelines already deliver their updates
+/// on the main queue — the annotation makes that contract compiler-checked
+/// instead of conventional.
+@MainActor
 final class Session {
   let id: UUID
   var name: String
@@ -197,7 +201,7 @@ final class Session {
       SessionEvents.postUsageChanged(id: self.id)
     }
 
-    let applyState: (SessionState) -> Void = { [weak self] newState in
+    let applyState: @MainActor @Sendable (SessionState) -> Void = { [weak self] newState in
       guard let self = self else { return }
       let old = self.state
       guard old != newState else { return }
@@ -250,7 +254,9 @@ final class Session {
   }
 }
 
-/// Singleton managing all terminal sessions.
+/// Singleton managing all terminal sessions. Main-actor isolated; the few
+/// helpers that background queues legitimately call are marked `nonisolated`.
+@MainActor
 final class SessionManager {
   static let shared = SessionManager()
 
@@ -579,8 +585,9 @@ final class SessionManager {
   }
 
   /// Get the current git branch for `dir`. Spawns git and blocks until it
-  /// exits, so call from a background queue.
-  func currentBranch(inDirectory dir: String) -> String {
+  /// exits, so call from a background queue (hence static + nonisolated:
+  /// callers need no reference to the main-actor singleton).
+  nonisolated static func currentBranch(inDirectory dir: String) -> String {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]

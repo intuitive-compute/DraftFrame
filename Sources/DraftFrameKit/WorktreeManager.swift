@@ -2,7 +2,11 @@ import Foundation
 
 /// Manages git worktrees for isolated parallel sessions.
 final class WorktreeManager {
-  static let shared = WorktreeManager()
+  // TODO: WorktreeManager is called from both the main thread and background
+  // queues (worktree removal, pulls); converting it to an actor is the clean
+  // fix. Until then the singleton is declared nonisolated(unsafe), matching
+  // its long-standing cross-thread use.
+  nonisolated(unsafe) static let shared = WorktreeManager()
 
   struct Worktree {
     let path: String

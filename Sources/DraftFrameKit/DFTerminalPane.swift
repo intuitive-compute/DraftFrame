@@ -429,14 +429,19 @@ final class DFTerminalPane: NSView {
       load.revealTimer = Timer.scheduledTimer(
         withTimeInterval: Self.claudeRevealDelay, repeats: false
       ) { [weak self] _ in
-        self?.finishLoading(for: sessionID)
+        // Timers fire on the main run loop, matching the view's isolation.
+        MainActor.assumeIsolated {
+          self?.finishLoading(for: sessionID)
+        }
       }
     }
 
     load.maxTimer = Timer.scheduledTimer(
       withTimeInterval: Self.claudeMaxLoad, repeats: false
     ) { [weak self] _ in
-      self?.finishLoading(for: sessionID)
+      MainActor.assumeIsolated {
+        self?.finishLoading(for: sessionID)
+      }
     }
   }
 

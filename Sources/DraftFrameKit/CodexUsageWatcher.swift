@@ -17,7 +17,9 @@ import Foundation
 ///     session's working/idle state.
 ///   - `turn_context`: the model in effect for the turn (users can switch
 ///     mid-session with /model).
-final class CodexUsageWatcher: UsageWatcher {
+/// `@unchecked Sendable`: mutable state is confined to the tailer's serial
+/// queue, except the assistant-text pair, which is lock-guarded.
+final class CodexUsageWatcher: UsageWatcher, @unchecked Sendable {
 
   // MARK: - Model pricing per token (derived from per-1M-token rates)
 
@@ -148,7 +150,7 @@ final class CodexUsageWatcher: UsageWatcher {
   // MARK: - Private
 
   private let onUpdate: SessionJSONLWatcher.UpdateCallback
-  private let onTurnState: ((SessionState) -> Void)?
+  private let onTurnState: (@MainActor (SessionState) -> Void)?
   private let workingDirectory: String
   /// Symlink-resolved `workingDirectory`, matched against each rollout's
   /// (also resolved) `session_meta.cwd` — codex records its getcwd realpath,
@@ -178,7 +180,7 @@ final class CodexUsageWatcher: UsageWatcher {
   init(
     workingDirectory: String,
     sessionsRoot: String = NSHomeDirectory() + "/.codex/sessions",
-    onTurnState: ((SessionState) -> Void)? = nil,
+    onTurnState: (@MainActor (SessionState) -> Void)? = nil,
     onUpdate: @escaping SessionJSONLWatcher.UpdateCallback
   ) {
     self.workingDirectory = workingDirectory
@@ -331,7 +333,9 @@ final class CodexUsageWatcher: UsageWatcher {
     let lifeIn = lifetimeBaseTokensIn + totalTokensIn
     let lifeOut = lifetimeBaseTokensOut + totalTokensOut
     DispatchQueue.main.async { [weak self] in
-      self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
+      MainActor.assumeIsolated {
+        self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
+      }
     }
   }
 
@@ -339,7 +343,9 @@ final class CodexUsageWatcher: UsageWatcher {
     guard let state = latestTurnState, state != lastReportedTurnState else { return }
     lastReportedTurnState = state
     DispatchQueue.main.async { [weak self] in
-      self?.onTurnState?(state)
+      MainActor.assumeIsolated {
+        self?.onTurnState?(state)
+      }
     }
   }
 

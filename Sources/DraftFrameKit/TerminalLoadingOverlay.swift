@@ -59,7 +59,7 @@ final class TerminalLoadingOverlay: NSView {
   }
 
   /// Fade out, detach from the view hierarchy, then run `completion`.
-  func fadeOut(completion: @escaping () -> Void) {
+  func fadeOut(completion: @escaping @MainActor @Sendable () -> Void) {
     NSAnimationContext.runAnimationGroup(
       { ctx in
         ctx.duration = 0.22
@@ -67,8 +67,11 @@ final class TerminalLoadingOverlay: NSView {
         animator().alphaValue = 0
       },
       completionHandler: { [weak self] in
-        self?.removeFromSuperview()
-        completion()
+        // Animation completions run on the main thread.
+        MainActor.assumeIsolated {
+          self?.removeFromSuperview()
+          completion()
+        }
       })
   }
 

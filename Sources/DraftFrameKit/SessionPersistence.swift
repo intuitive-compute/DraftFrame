@@ -2,6 +2,8 @@ import Foundation
 
 /// Saves and restores session names and worktree paths across app launches.
 /// Persists to ~/.config/draftframe/sessions.json.
+/// Main-actor isolated: reads and mutates SessionManager state.
+@MainActor
 final class SessionPersistence {
   static let shared = SessionPersistence()
 

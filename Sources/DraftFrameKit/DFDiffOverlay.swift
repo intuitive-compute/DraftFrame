@@ -25,7 +25,9 @@ final class DFDiffOverlay: NSView {
   private var currentIndex = 0
 
   /// Local key monitor that catches Esc / Up / Down while the overlay is visible.
-  private var keyMonitor: Any?
+  /// `nonisolated(unsafe)` so the (never-raced) removal in deinit compiles;
+  /// every other access is on the main actor.
+  private nonisolated(unsafe) var keyMonitor: Any?
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -167,7 +169,9 @@ final class DFDiffOverlay: NSView {
     }
   }
 
-  private func removeKeyMonitor() {
+  /// `nonisolated` so deinit can call it; NSEvent.removeMonitor is
+  /// thread-safe and `keyMonitor` is nonisolated(unsafe) for the same reason.
+  private nonisolated func removeKeyMonitor() {
     if let m = keyMonitor {
       NSEvent.removeMonitor(m)
       keyMonitor = nil

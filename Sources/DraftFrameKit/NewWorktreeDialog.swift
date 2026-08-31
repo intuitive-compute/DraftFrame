@@ -10,6 +10,7 @@ import AppKit
 ///   session's kickoff prompt.
 /// - Existing Branch: a single field naming a branch to check out into a
 ///   worktree. Opens a session in it with no kickoff prompt.
+@MainActor
 enum NewWorktreeDialog {
   enum Mode {
     case newBranch
@@ -80,6 +81,7 @@ enum NewWorktreeDialog {
 
   /// The themed sheet window plus its controls. Instances keep themselves
   /// alive in `active` while presented.
+  @MainActor
   private final class Sheet: NSObject, NSTextFieldDelegate {
     private static var active: [Sheet] = []
 

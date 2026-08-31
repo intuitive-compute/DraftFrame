@@ -1,7 +1,9 @@
 import Foundation
 
 /// Watches a Claude Code JSONL session log and accumulates token usage/cost.
-final class SessionJSONLWatcher {
+/// `@unchecked Sendable`: mutable state is confined to the tailer's serial
+/// queue, except the assistant-text pair, which is lock-guarded.
+final class SessionJSONLWatcher: @unchecked Sendable {
 
   // MARK: - Model pricing per token (derived from per-1M-token rates)
 
@@ -28,7 +30,9 @@ final class SessionJSONLWatcher {
 
   // MARK: - Public state
 
-  typealias UpdateCallback = (
+  /// Delivered on the main queue (the values are snapshots taken on the
+  /// tailer's queue), feeding main-actor session state.
+  typealias UpdateCallback = @MainActor (
     _ cost: Double,
     _ tokensIn: Int,
     _ tokensOut: Int,
@@ -203,7 +207,9 @@ final class SessionJSONLWatcher {
       let lifeIn = lifetimeTokensIn
       let lifeOut = lifetimeTokensOut
       DispatchQueue.main.async { [weak self] in
-        self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
+        MainActor.assumeIsolated {
+          self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
+        }
       }
     }
   }

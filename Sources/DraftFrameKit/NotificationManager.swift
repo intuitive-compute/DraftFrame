@@ -3,6 +3,10 @@ import UserNotifications
 
 /// Manages macOS notifications for session state transitions.
 /// Sends alerts when background sessions need attention or finish generating.
+/// Main-actor isolated; the UNUserNotificationCenter delegate callbacks are
+/// `nonisolated` (the framework calls them on its own queue) and hop to the
+/// main actor where they touch session state.
+@MainActor
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   static let shared = NotificationManager()
 
@@ -27,9 +31,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     )
   }
 
-  deinit {
-    NotificationCenter.default.removeObserver(self)
-  }
+  // No deinit: the shared singleton never deallocates, so observer removal
+  // there would be dead code.
 
   // MARK: - Authorization
 
@@ -121,12 +124,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   // MARK: - Dock Badge
 
   private func updateDockBadge(count: Int) {
-    DispatchQueue.main.async {
-      if count > 0 {
-        NSApp.dockTile.badgeLabel = "\(count)"
-      } else {
-        NSApp.dockTile.badgeLabel = nil
-      }
+    if count > 0 {
+      NSApp.dockTile.badgeLabel = "\(count)"
+    } else {
+      NSApp.dockTile.badgeLabel = nil
     }
   }
 
@@ -134,7 +135,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Show notifications even when the app is in the foreground (but we filter
   /// to background sessions above, so this is a safety net).
-  func userNotificationCenter(
+  nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
@@ -143,7 +144,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// When user clicks a notification, switch to the relevant session.
-  func userNotificationCenter(
+  nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
@@ -153,11 +154,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let components = identifier.split(separator: "-", maxSplits: 1)
     if components.count == 2, let uuid = UUID(uuidString: String(components[1])) {
       DispatchQueue.main.async {
-        let sessions = SessionManager.shared.sessions
-        if let idx = sessions.firstIndex(where: { $0.id == uuid }) {
-          SessionManager.shared.switchTo(index: idx)
+        MainActor.assumeIsolated {
+          let sessions = SessionManager.shared.sessions
+          if let idx = sessions.firstIndex(where: { $0.id == uuid }) {
+            SessionManager.shared.switchTo(index: idx)
+          }
+          NSApp.activate(ignoringOtherApps: true)
         }
-        NSApp.activate(ignoringOtherApps: true)
       }
     }
     completionHandler()

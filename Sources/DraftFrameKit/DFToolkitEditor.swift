@@ -2,6 +2,7 @@ import AppKit
 
 /// In-app editor window for the toolkit JSON config.
 /// Singleton — reuses the same window across show/hide cycles.
+@MainActor
 final class DFToolkitEditor: NSObject, NSTextFieldDelegate, NSWindowDelegate {
   static let shared = DFToolkitEditor()
 

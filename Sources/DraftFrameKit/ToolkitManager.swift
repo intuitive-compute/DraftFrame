@@ -13,6 +13,7 @@ import Foundation
 /// survive worktree cleanup and `git clean`. The active config path is
 /// re-evaluated whenever the project directory changes. A file watcher
 /// auto-reloads on save.
+@MainActor
 final class ToolkitManager {
   static let shared = ToolkitManager()
 
@@ -60,10 +61,8 @@ final class ToolkitManager {
     )
   }
 
-  deinit {
-    fileWatcherSource?.cancel()
-    NotificationCenter.default.removeObserver(self)
-  }
+  // No deinit: the shared singleton never deallocates, so watcher/observer
+  // cleanup there would be dead code.
 
   /// Re-evaluate which toolkit.json to use when the active session changes.
   /// Keyed by the project dir (not the session's worktree) so every session
