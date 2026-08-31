@@ -2,6 +2,9 @@ import XCTest
 
 @testable import DraftFrameKit
 
+// XCTest runs test methods on the main thread, matching the analyzer's
+// main-actor isolation.
+@MainActor
 final class PTYStreamAnalyzerTests: XCTestCase {
 
   private var analyzer: PTYStreamAnalyzer!

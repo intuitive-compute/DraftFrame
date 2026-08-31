@@ -4,6 +4,7 @@ import AppKit
 /// above the status bar. Fades in, auto-dismisses after `duration` seconds,
 /// and can be dismissed early with a click. Showing a new toast replaces any
 /// toast currently on screen.
+@MainActor
 enum DFToast {
   private static weak var current: ToastView?
 
@@ -84,7 +85,10 @@ enum DFToast {
           animator().alphaValue = 0
         },
         completionHandler: { [weak self] in
-          self?.removeFromSuperview()
+          // Animation completions run on the main thread.
+          MainActor.assumeIsolated {
+            self?.removeFromSuperview()
+          }
         })
     }
   }

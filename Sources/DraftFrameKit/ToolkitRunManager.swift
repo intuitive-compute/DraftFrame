@@ -3,6 +3,7 @@ import AppKit
 /// A single execution of a toolkit command, owning the process and its
 /// streamed output. Runs outlive the popover that displays them, so closing
 /// the (transient) popover mid-run doesn't lose the process or its log.
+@MainActor
 final class ToolkitRun {
   let id = UUID()
   let commandKey: String
@@ -39,6 +40,7 @@ final class ToolkitRun {
 /// Owns all toolkit runs and their processes, decoupled from the popover UI.
 /// Output is streamed in as it's produced and broadcast via notifications;
 /// any view can attach to a run at any point in its lifecycle.
+@MainActor
 final class ToolkitRunManager {
   static let shared = ToolkitRunManager()
 
@@ -90,19 +92,29 @@ final class ToolkitRunManager {
         return
       }
       guard let chunk = String(data: data, encoding: .utf8) else { return }
+      // Immutable bindings so the main-queue hop captures lets, not the
+      // handler closure's weak vars (a Swift 6 sendability error).
+      let manager = self
+      let target = run
       DispatchQueue.main.async {
-        guard let self = self, let run = run else { return }
-        self.append(chunk, to: run)
+        MainActor.assumeIsolated {
+          guard let manager, let target else { return }
+          manager.append(chunk, to: target)
+        }
       }
     }
 
     proc.terminationHandler = { [weak run] p in
+      let status = p.terminationStatus
+      let target = run
       DispatchQueue.main.async {
-        guard let run = run else { return }
-        run.exitCode = p.terminationStatus
-        run.process = nil
-        NotificationCenter.default.post(
-          name: .toolkitRunStateDidChange, object: nil, userInfo: ["runID": run.id])
+        MainActor.assumeIsolated {
+          guard let run = target else { return }
+          run.exitCode = status
+          run.process = nil
+          NotificationCenter.default.post(
+            name: .toolkitRunStateDidChange, object: nil, userInfo: ["runID": run.id])
+        }
       }
     }
 

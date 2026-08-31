@@ -1,5 +1,6 @@
 import AppKit
 
+@MainActor
 public final class DFAppDelegate: NSObject, NSApplicationDelegate {
   var windowController: DFWindowController?
 

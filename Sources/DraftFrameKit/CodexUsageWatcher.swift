@@ -17,7 +17,9 @@ import Foundation
 ///     session's working/idle state.
 ///   - `turn_context`: the model in effect for the turn (users can switch
 ///     mid-session with /model).
-final class CodexUsageWatcher: UsageWatcher {
+/// `@unchecked Sendable`: mutable state is confined to the tailer's serial
+/// queue, except the assistant-text pair, which is lock-guarded.
+final class CodexUsageWatcher: UsageWatcher, @unchecked Sendable {
 
   // MARK: - Model pricing per token (derived from per-1M-token rates)
 
@@ -129,8 +131,13 @@ final class CodexUsageWatcher: UsageWatcher {
   private(set) var parsedMaxContextTokens: Int = 0
 
   /// Most recent assistant message, for the dashboard's summary view.
-  private(set) var latestAssistantText: String?
-  private(set) var latestAssistantAt: Date?
+  /// Written on the tailer's queue but read from the main thread, so access
+  /// goes through a lock (same rationale as SessionJSONLWatcher's pair).
+  var latestAssistantText: String? { assistantTextLock.withLock { _latestAssistantText } }
+  var latestAssistantAt: Date? { assistantTextLock.withLock { _latestAssistantAt } }
+  private let assistantTextLock = NSLock()
+  private var _latestAssistantText: String?
+  private var _latestAssistantAt: Date?
 
   /// Session state derived from the rollout's persisted turn lifecycle
   /// events (`turn_started` → generating, `turn_complete`/`turn_aborted` →
@@ -143,8 +150,12 @@ final class CodexUsageWatcher: UsageWatcher {
   // MARK: - Private
 
   private let onUpdate: SessionJSONLWatcher.UpdateCallback
-  private let onTurnState: ((SessionState) -> Void)?
+  private let onTurnState: (@MainActor (SessionState) -> Void)?
   private let workingDirectory: String
+  /// Symlink-resolved `workingDirectory`, matched against each rollout's
+  /// (also resolved) `session_meta.cwd` — codex records its getcwd realpath,
+  /// while the session may hold an unresolved spelling like /tmp.
+  private let resolvedWorkingDirectory: String
   /// Root of codex's session store (`~/.codex/sessions` in production).
   private let sessionsRoot: String
   private var tailer: JSONLTailer?
@@ -169,10 +180,12 @@ final class CodexUsageWatcher: UsageWatcher {
   init(
     workingDirectory: String,
     sessionsRoot: String = NSHomeDirectory() + "/.codex/sessions",
-    onTurnState: ((SessionState) -> Void)? = nil,
+    onTurnState: (@MainActor (SessionState) -> Void)? = nil,
     onUpdate: @escaping SessionJSONLWatcher.UpdateCallback
   ) {
     self.workingDirectory = workingDirectory
+    self.resolvedWorkingDirectory =
+      URL(fileURLWithPath: workingDirectory).resolvingSymlinksInPath().path
     self.sessionsRoot = sessionsRoot
     self.onTurnState = onTurnState
     self.onUpdate = onUpdate
@@ -235,7 +248,7 @@ final class CodexUsageWatcher: UsageWatcher {
           let mod = try? url.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate,
           mod > newestDate,
-          rolloutCwd(of: url.path) == workingDirectory
+          rolloutCwd(of: url.path) == resolvedWorkingDirectory
         else { continue }
         newestDate = mod
         newest = url.path
@@ -274,8 +287,12 @@ final class CodexUsageWatcher: UsageWatcher {
         cwd = obj["cwd"] as? String
       }
     }
-    cwdCache[path] = cwd
-    return cwd
+    // Cache the symlink-resolved spelling so the compare against
+    // `resolvedWorkingDirectory` matches regardless of which spelling
+    // codex recorded (its getcwd writes the realpath).
+    let resolved = cwd.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+    cwdCache[path] = resolved
+    return resolved
   }
 
   // MARK: - Line processing
@@ -316,7 +333,9 @@ final class CodexUsageWatcher: UsageWatcher {
     let lifeIn = lifetimeBaseTokensIn + totalTokensIn
     let lifeOut = lifetimeBaseTokensOut + totalTokensOut
     DispatchQueue.main.async { [weak self] in
-      self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
+      MainActor.assumeIsolated {
+        self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
+      }
     }
   }
 
@@ -324,7 +343,9 @@ final class CodexUsageWatcher: UsageWatcher {
     guard let state = latestTurnState, state != lastReportedTurnState else { return }
     lastReportedTurnState = state
     DispatchQueue.main.async { [weak self] in
-      self?.onTurnState?(state)
+      MainActor.assumeIsolated {
+        self?.onTurnState?(state)
+      }
     }
   }
 
@@ -414,8 +435,10 @@ final class CodexUsageWatcher: UsageWatcher {
     guard let message = payload["message"] as? String,
       !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return false }
-    latestAssistantText = message
-    latestAssistantAt = Date()
+    assistantTextLock.withLock {
+      _latestAssistantText = message
+      _latestAssistantAt = Date()
+    }
     return true
   }
 }

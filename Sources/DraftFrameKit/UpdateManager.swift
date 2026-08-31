@@ -41,6 +41,11 @@ struct UpdateError: LocalizedError {
 
 // MARK: - Update Manager
 
+/// Main-actor isolated: it drives alert and progress UI. The URLSession
+/// delegate callbacks are `nonisolated` to satisfy the protocol, but the
+/// download session is configured with `delegateQueue: .main`, so their
+/// bodies re-assert main-actor isolation.
+@MainActor
 final class UpdateManager: NSObject, URLSessionDownloadDelegate {
   static let shared = UpdateManager()
 
@@ -181,48 +186,58 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
 
   // MARK: - URLSessionDownloadDelegate
 
-  func urlSession(
+  nonisolated func urlSession(
     _ session: URLSession, downloadTask: URLSessionDownloadTask,
     didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
     totalBytesExpectedToWrite: Int64
   ) {
-    if totalBytesExpectedToWrite > 0 {
-      let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-      progressIndicator?.doubleValue = progress * 100
+    MainActor.assumeIsolated {
+      if totalBytesExpectedToWrite > 0 {
+        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        progressIndicator?.doubleValue = progress * 100
+      }
     }
   }
 
-  func urlSession(
+  nonisolated func urlSession(
     _ session: URLSession, downloadTask task: URLSessionDownloadTask,
     didFinishDownloadingTo location: URL
   ) {
-    dismissDownloadProgress()
+    // The file at `location` must be moved before this method returns, so
+    // everything stays synchronous inside the isolation assertion.
+    MainActor.assumeIsolated {
+      dismissDownloadProgress()
 
-    guard let asset = downloadingAsset else { return }
-    downloadingAsset = nil
+      guard let asset = downloadingAsset else { return }
+      downloadingAsset = nil
 
-    let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-    let dest = downloads.appendingPathComponent(asset.name)
+      let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+      let dest = downloads.appendingPathComponent(asset.name)
 
-    do {
-      try? FileManager.default.removeItem(at: dest)
-      try FileManager.default.moveItem(at: location, to: dest)
-      showReadyToInstallAlert(dmgPath: dest.path)
-    } catch {
-      showErrorAlert("Failed to save update: \(error.localizedDescription)")
+      do {
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.moveItem(at: location, to: dest)
+        showReadyToInstallAlert(dmgPath: dest.path)
+      } catch {
+        showErrorAlert("Failed to save update: \(error.localizedDescription)")
+      }
     }
   }
 
-  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-    if let error = error {
-      dismissDownloadProgress()
-      showErrorAlert("Download failed: \(error.localizedDescription)")
+  nonisolated func urlSession(
+    _ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?
+  ) {
+    MainActor.assumeIsolated {
+      if let error = error {
+        dismissDownloadProgress()
+        showErrorAlert("Download failed: \(error.localizedDescription)")
+      }
     }
   }
 
   // MARK: - Install
 
-  private static let expectedTeamID = "49V6GRJ827"
+  private nonisolated static let expectedTeamID = "49V6GRJ827"
 
   private func installUpdate(dmgPath: String) {
     showProgressPanel(label: "Installing update\u{2026}", indeterminate: true)
@@ -244,7 +259,7 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
 
   // Mounts the DMG, verifies the new app's signature, swaps it into place,
   // and cleans up. Returns the installed app path. Runs off the main thread.
-  private static func performInstall(dmgPath: String) throws -> String {
+  private nonisolated static func performInstall(dmgPath: String) throws -> String {
     let mountPoint = try mountDMG(dmgPath)
     defer { detachDMG(mountPoint) }
 
@@ -289,7 +304,7 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
 
   // The running bundle's location, unless it isn't a normal writable install
   // (translocated, on a DMG, or a dev build) — then fall back to /Applications.
-  private static func installDestination() -> URL {
+  private nonisolated static func installDestination() -> URL {
     let bundleURL = Bundle.main.bundleURL
     let path = bundleURL.path
     if path.hasSuffix(".app"),
@@ -303,7 +318,7 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
     return URL(fileURLWithPath: "/Applications/DraftFrame.app")
   }
 
-  private static func mountDMG(_ path: String) throws -> String {
+  private nonisolated static func mountDMG(_ path: String) throws -> String {
     let result = try run(
       "/usr/bin/hdiutil", ["attach", path, "-nobrowse", "-noautoopen", "-plist"])
     guard result.status == 0,
@@ -318,11 +333,11 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
     return mountPoint
   }
 
-  private static func detachDMG(_ mountPoint: String) {
+  private nonisolated static func detachDMG(_ mountPoint: String) {
     _ = try? run("/usr/bin/hdiutil", ["detach", mountPoint, "-force"])
   }
 
-  private static func verifySignature(of app: URL) throws {
+  private nonisolated static func verifySignature(of app: URL) throws {
     let verify = try run(
       "/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
     guard verify.status == 0 else {
@@ -350,7 +365,7 @@ final class UpdateManager: NSObject, URLSessionDownloadDelegate {
   }
 
   @discardableResult
-  private static func run(
+  private nonisolated static func run(
     _ tool: String, _ args: [String]
   ) throws -> (status: Int32, stdout: Data, stderr: String) {
     let proc = Process()

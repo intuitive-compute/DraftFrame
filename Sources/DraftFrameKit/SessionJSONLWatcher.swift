@@ -1,7 +1,9 @@
 import Foundation
 
 /// Watches a Claude Code JSONL session log and accumulates token usage/cost.
-final class SessionJSONLWatcher {
+/// `@unchecked Sendable`: mutable state is confined to the tailer's serial
+/// queue, except the assistant-text pair, which is lock-guarded.
+final class SessionJSONLWatcher: @unchecked Sendable {
 
   // MARK: - Model pricing per token (derived from per-1M-token rates)
 
@@ -28,17 +30,20 @@ final class SessionJSONLWatcher {
 
   // MARK: - Public state
 
-  typealias UpdateCallback = (
-    _ cost: Double,
-    _ tokensIn: Int,
-    _ tokensOut: Int,
-    _ model: String,
-    _ contextTokens: Int,
-    _ maxContextTokens: Int,
-    _ lifetimeCost: Double,
-    _ lifetimeTokensIn: Int,
-    _ lifetimeTokensOut: Int
-  ) -> Void
+  /// Delivered on the main queue (the values are snapshots taken on the
+  /// tailer's queue), feeding main-actor session state.
+  typealias UpdateCallback =
+    @MainActor (
+      _ cost: Double,
+      _ tokensIn: Int,
+      _ tokensOut: Int,
+      _ model: String,
+      _ contextTokens: Int,
+      _ maxContextTokens: Int,
+      _ lifetimeCost: Double,
+      _ lifetimeTokensIn: Int,
+      _ lifetimeTokensOut: Int
+    ) -> Void
 
   /// Cost/tokens for the CURRENT claude run only (the session file we're
   /// watching now). Reset when we switch to a newer session file, so these
@@ -66,13 +71,17 @@ final class SessionJSONLWatcher {
   /// detected.
   private(set) var parsedMaxContextTokens: Int = 0
 
-  /// Most recent assistant text response parsed from the JSONL stream.
-  /// Used by the dashboard's cross-session summary view. Nil until the
-  /// session has produced its first text-bearing assistant message.
-  private(set) var latestAssistantText: String?
-
-  /// Timestamp of the most recent assistant text.
-  private(set) var latestAssistantAt: Date?
+  /// Most recent assistant text response parsed from the JSONL stream, and
+  /// its timestamp. Nil until the session has produced its first
+  /// text-bearing assistant message. Written on the tailer's queue but read
+  /// from the main thread by the dashboard's summary view, so access goes
+  /// through a lock — unlike the other counters, these aren't delivered as
+  /// snapshots via the main-dispatched `onUpdate`.
+  var latestAssistantText: String? { assistantTextLock.withLock { _latestAssistantText } }
+  var latestAssistantAt: Date? { assistantTextLock.withLock { _latestAssistantAt } }
+  private let assistantTextLock = NSLock()
+  private var _latestAssistantText: String?
+  private var _latestAssistantAt: Date?
 
   // MARK: - Private
 
@@ -127,13 +136,25 @@ final class SessionJSONLWatcher {
 
   private func claudeProjectDir() -> String? {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let encoded = Self.encodePath(workingDirectory)
-    let dir = "\(home)/.claude/projects/\(encoded)"
-    var isDir: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else {
-      return nil
+    // Claude Code encodes its own getcwd — the symlink-RESOLVED path
+    // (/private/tmp, not /tmp) — while the session may hold the unresolved
+    // spelling. Try the resolved spelling first, then the raw one, so
+    // cost/tokens don't silently stay at zero for symlinked project paths.
+    // POSIX realpath, NOT Foundation's resolvingSymlinksInPath: the latter
+    // strips the /private prefix back off, which un-does exactly the
+    // resolution we need to mirror here.
+    var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let resolved =
+      workingDirectory.withCString { realpath($0, &buf) != nil }
+      ? String(cString: buf) : workingDirectory
+    for candidate in [resolved, workingDirectory] {
+      let dir = "\(home)/.claude/projects/\(Self.encodePath(candidate))"
+      var isDir: ObjCBool = false
+      if FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue {
+        return dir
+      }
     }
-    return dir
+    return nil
   }
 
   private func findLatestJSONL() -> String? {
@@ -187,7 +208,9 @@ final class SessionJSONLWatcher {
       let lifeIn = lifetimeTokensIn
       let lifeOut = lifetimeTokensOut
       DispatchQueue.main.async { [weak self] in
-        self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
+        MainActor.assumeIsolated {
+          self?.onUpdate(cost, tIn, tOut, model, ctx, maxCtx, lifeCost, lifeIn, lifeOut)
+        }
       }
     }
   }
@@ -248,8 +271,10 @@ final class SessionJSONLWatcher {
     if let text = Self.extractText(from: message["content"]),
       !text.isEmpty
     {
-      latestAssistantText = text
-      latestAssistantAt = Date()
+      assistantTextLock.withLock {
+        _latestAssistantText = text
+        _latestAssistantAt = Date()
+      }
     }
 
     // Accumulate usage once per API response, not once per JSONL line —

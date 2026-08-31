@@ -2,6 +2,7 @@ import Foundation
 
 /// Manages the list of opened projects and their expanded/collapsed state.
 /// Persists to ~/.config/draftframe/projects.json.
+@MainActor
 final class ProjectManager {
   static let shared = ProjectManager()
 
@@ -49,7 +50,7 @@ final class ProjectManager {
     Self.sort(projects, by: sortOrder, activeProjectPaths: activeProjectPaths)
   }
 
-  static func sort(
+  nonisolated static func sort(
     _ projects: [Project], by order: SortOrder, activeProjectPaths: Set<String>
   ) -> [Project] {
     switch order {

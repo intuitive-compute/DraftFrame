@@ -22,7 +22,10 @@ import Foundation
 ///
 /// `findLatest`, `onSwitch`, and `onLines` are all invoked on the tailer's
 /// private queue.
-final class JSONLTailer {
+/// `@unchecked Sendable`: every piece of mutable state is confined to the
+/// private serial `queue`; the conformance lets dispatch-source handlers
+/// capture `self` without per-site ceremony.
+final class JSONLTailer: @unchecked Sendable {
 
   private let findLatest: () -> String?
   /// Called when a newer file replaces the tracked one, before any of the

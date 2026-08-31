@@ -1125,9 +1125,12 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     // as [Image #N], and attaches other files as context.
     let text = paths.joined(separator: " ")
     if terminal.bracketedPasteMode {
-      send(data: EscapeSequences.bracketedPasteStart[0...])
+      // ESC [ 200~ … ESC [ 201~ — inlined rather than referencing
+      // SwiftTerm's EscapeSequences statics, which are declared as mutable
+      // global state and trip strict-concurrency checking.
+      send(data: Array("\u{1b}[200~".utf8)[0...])
       send(txt: text)
-      send(data: EscapeSequences.bracketedPasteEnd[0...])
+      send(data: Array("\u{1b}[201~".utf8)[0...])
     } else {
       send(txt: text)
     }

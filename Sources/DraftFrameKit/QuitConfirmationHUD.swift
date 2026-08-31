@@ -5,6 +5,7 @@ import AppKit
 /// after the confirmation window lapses. Purely visual — the double-press logic
 /// lives in `DFAppDelegate.requestQuit`; this just mirrors that window on screen
 /// so a second press lands while the hint is still up.
+@MainActor
 final class QuitConfirmationHUD {
   static let shared = QuitConfirmationHUD()
 
@@ -46,8 +47,11 @@ final class QuitConfirmationHUD {
         panel.animator().alphaValue = 0
       },
       completionHandler: { [weak self] in
-        panel.orderOut(nil)
-        self?.panel = nil
+        // Animation completions run on the main thread.
+        MainActor.assumeIsolated {
+          panel.orderOut(nil)
+          self?.panel = nil
+        }
       })
   }
 

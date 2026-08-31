@@ -3,14 +3,15 @@ import UserNotifications
 
 /// Manages macOS notifications for session state transitions.
 /// Sends alerts when background sessions need attention or finish generating.
+/// Main-actor isolated; the UNUserNotificationCenter delegate callbacks are
+/// `nonisolated` (the framework calls them on its own queue) and hop to the
+/// main actor where they touch session state.
+@MainActor
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   static let shared = NotificationManager()
 
   /// Whether we can use UNUserNotificationCenter (requires app bundle).
   private let canUseNotifications = Bundle.main.bundleIdentifier != nil
-
-  /// Tracks previous state per session ID so we can detect transitions.
-  private var previousStates: [UUID: SessionState] = [:]
 
   private override init() {
     super.init()
@@ -20,14 +21,18 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     NotificationCenter.default.addObserver(
-      self, selector: #selector(sessionsChanged),
-      name: .sessionsDidChange, object: nil
+      self, selector: #selector(sessionStateChanged(_:)),
+      name: .sessionStateDidChange, object: nil
+    )
+    // A needs-attention session being closed shrinks the badge count.
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(sessionListChanged),
+      name: .sessionListDidChange, object: nil
     )
   }
 
-  deinit {
-    NotificationCenter.default.removeObserver(self)
-  }
+  // No deinit: the shared singleton never deallocates, so observer removal
+  // there would be dead code.
 
   // MARK: - Authorization
 
@@ -44,53 +49,43 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - Session State Observation
 
-  @objc private func sessionsChanged() {
-    let sessions = SessionManager.shared.sessions
-    let activeSession = SessionManager.shared.activeSession
-
-    var needsAttentionCount = 0
-
-    for session in sessions {
-      let previous = previousStates[session.id] ?? .idle
-      let current = session.state
-
-      // Count sessions needing attention for badge
-      if current == .needsAttention {
-        needsAttentionCount += 1
-      }
-
+  /// The typed event carries the transition, so there's no per-session state
+  /// diffing (or its cleanup) here anymore.
+  @objc private func sessionStateChanged(_ note: Notification) {
+    if let change = SessionEvents.stateChange(note),
+      let session = SessionManager.shared.sessions.first(where: { $0.id == change.id }),
       // Only notify for non-active (background) sessions
-      let isActive = session.id == activeSession?.id
-      if !isActive && previous != current {
-        // Transition to .needsAttention
-        if current == .needsAttention {
-          sendNotification(
-            title: "Session needs attention",
-            body: "\(session.name) \u{2014} permission prompt or error",
-            identifier: "needsAttention-\(session.id.uuidString)"
-          )
-        }
-
-        // Transition from non-idle to .userInput (the agent finished)
-        if current == .userInput && previous != .idle {
-          sendNotification(
-            title: "\(session.agent.displayName) finished",
-            body: "\(session.name) is waiting for input",
-            identifier: "finished-\(session.id.uuidString)"
-          )
-        }
+      session.id != SessionManager.shared.activeSession?.id
+    {
+      // Transition to .needsAttention
+      if change.new == .needsAttention {
+        sendNotification(
+          title: "Session needs attention",
+          body: "\(session.name) \u{2014} permission prompt or error",
+          identifier: "needsAttention-\(session.id.uuidString)"
+        )
       }
 
-      // Update tracked state
-      previousStates[session.id] = current
+      // Transition from non-idle to .userInput (the agent finished)
+      if change.new == .userInput && change.old != .idle {
+        sendNotification(
+          title: "\(session.agent.displayName) finished",
+          body: "\(session.name) is waiting for input",
+          identifier: "finished-\(session.id.uuidString)"
+        )
+      }
     }
 
-    // Clean up states for removed sessions
-    let activeIDs = Set(sessions.map { $0.id })
-    previousStates = previousStates.filter { activeIDs.contains($0.key) }
+    refreshDockBadge()
+  }
 
-    // Update dock badge
-    updateDockBadge(count: needsAttentionCount)
+  @objc private func sessionListChanged() {
+    refreshDockBadge()
+  }
+
+  private func refreshDockBadge() {
+    let count = SessionManager.shared.sessions.filter { $0.state == .needsAttention }.count
+    updateDockBadge(count: count)
   }
 
   // MARK: - Public API for Watchdogs
@@ -129,12 +124,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   // MARK: - Dock Badge
 
   private func updateDockBadge(count: Int) {
-    DispatchQueue.main.async {
-      if count > 0 {
-        NSApp.dockTile.badgeLabel = "\(count)"
-      } else {
-        NSApp.dockTile.badgeLabel = nil
-      }
+    if count > 0 {
+      NSApp.dockTile.badgeLabel = "\(count)"
+    } else {
+      NSApp.dockTile.badgeLabel = nil
     }
   }
 
@@ -142,7 +135,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Show notifications even when the app is in the foreground (but we filter
   /// to background sessions above, so this is a safety net).
-  func userNotificationCenter(
+  nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
@@ -151,7 +144,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// When user clicks a notification, switch to the relevant session.
-  func userNotificationCenter(
+  nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
@@ -161,11 +154,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let components = identifier.split(separator: "-", maxSplits: 1)
     if components.count == 2, let uuid = UUID(uuidString: String(components[1])) {
       DispatchQueue.main.async {
-        let sessions = SessionManager.shared.sessions
-        if let idx = sessions.firstIndex(where: { $0.id == uuid }) {
-          SessionManager.shared.switchTo(index: idx)
+        MainActor.assumeIsolated {
+          let sessions = SessionManager.shared.sessions
+          if let idx = sessions.firstIndex(where: { $0.id == uuid }) {
+            SessionManager.shared.switchTo(index: idx)
+          }
+          NSApp.activate(ignoringOtherApps: true)
         }
-        NSApp.activate(ignoringOtherApps: true)
       }
     }
     completionHandler()

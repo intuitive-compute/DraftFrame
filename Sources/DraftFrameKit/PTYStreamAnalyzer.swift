@@ -3,6 +3,12 @@ import Foundation
 /// Analyzes raw PTY byte stream in real-time to detect agent session state.
 /// Strips ANSI escape sequences and tracks alternate buffer mode, frame boundaries,
 /// and content patterns.
+///
+/// Main-actor isolated: `feed` is driven by SwiftTerm's `dataReceived`,
+/// which arrives on the main queue, and the debounced frame analysis is
+/// scheduled there too. The annotation pins the contract so a future caller
+/// can't feed bytes from another thread and race the rolling buffer.
+@MainActor
 final class PTYStreamAnalyzer {
 
   /// Which agent's TUI this stream carries. Selects the marker set used for
@@ -10,20 +16,20 @@ final class PTYStreamAnalyzer {
   /// never misclassify the other's session.
   var agent: AgentKind = .claude
 
-  var onStateChange: ((SessionState) -> Void)?
-  var onContextWindowChange: ((Int) -> Void)?
+  var onStateChange: (@MainActor (SessionState) -> Void)?
+  var onContextWindowChange: (@MainActor (Int) -> Void)?
   /// Fired once, the first time we positively identify Claude Code's TUI in
   /// the stream — used to dismiss the startup loading overlay. Claude renders
   /// in the main screen buffer (no alternate-screen switch to key off of), so
   /// we detect it by the markers it paints: see `detectClaudeReady`.
-  var onClaudeReady: (() -> Void)?
+  var onClaudeReady: (@MainActor () -> Void)?
   /// Guards `onClaudeReady` so it fires at most once per (re)start.
   private var claudeReadyFired = false
   /// Fired when the TUI reveals the active model. Codex prints
   /// "model:   gpt-5.6-sol   /model to change" in its startup banner —
   /// the only model signal available before the first turn is written to
   /// the rollout. Fires only when `agent == .codex`.
-  var onModelDetected: ((String) -> Void)?
+  var onModelDetected: (@MainActor (String) -> Void)?
   private var lastDetectedModel: String?
 
   private(set) var state: SessionState = .idle
@@ -87,7 +93,10 @@ final class PTYStreamAnalyzer {
     // Debounce frame analysis — run 50ms after last data chunk
     frameTimer?.cancel()
     let work = DispatchWorkItem { [weak self] in
-      self?.analyzeFrame()
+      // Scheduled on the main queue below, matching this class's isolation.
+      MainActor.assumeIsolated {
+        self?.analyzeFrame()
+      }
     }
     frameTimer = work
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)

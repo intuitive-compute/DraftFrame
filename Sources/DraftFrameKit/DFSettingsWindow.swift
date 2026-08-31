@@ -4,6 +4,7 @@ import AppKit
 /// toggles (persisted across launches) and the PR automation config applied
 /// to worktrees the user hasn't configured individually in the sidebar.
 /// Singleton — reuses the same window across show/hide cycles.
+@MainActor
 final class DFSettingsWindow: NSObject, NSWindowDelegate {
   static let shared = DFSettingsWindow()
 

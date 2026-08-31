@@ -10,7 +10,10 @@ import Foundation
 /// Used to keep the sidebar CHANGES list live even when files are edited
 /// outside of agent activity (e.g. the user's own editor), which the
 /// notification-driven refresh alone would miss.
-final class DirectoryWatcher {
+/// `@unchecked Sendable`: `onChange` is immutable and `stream` is only
+/// touched in init/deinit; the conformance lets the FSEvents callback pass
+/// the unretained reference back to the main queue.
+final class DirectoryWatcher: @unchecked Sendable {
   private var stream: FSEventStreamRef?
   private let onChange: () -> Void
 

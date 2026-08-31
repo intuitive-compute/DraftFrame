@@ -4,6 +4,7 @@ import Speech
 
 /// Push-to-talk voice transcription using on-device SFSpeechRecognizer.
 /// Cmd+Shift+V starts listening; releasing stops and sends transcription to active session.
+@MainActor
 final class VoiceManager {
   static let shared = VoiceManager()
 

@@ -20,7 +20,9 @@ final class DFStatusBar: NSView {
   private var costLabel: NSTextField!
   private var modelLabel: NSTextField!
   private var micIndicator: NSImageView!
-  private var refreshTimer: Timer?
+  /// `nonisolated(unsafe)` so the (never-raced) invalidate in deinit
+  /// compiles; every other access is on the main actor.
+  private nonisolated(unsafe) var refreshTimer: Timer?
 
   // Concurrent so a git that hangs (dead network mount, wedged fsmonitor)
   // can't wedge the recovery lookup behind it on a serial queue.
@@ -39,9 +41,15 @@ final class DFStatusBar: NSView {
     layer?.backgroundColor = Theme.surface1.cgColor
     buildUI()
 
+    // Shows cost/token totals and the active session's model — usage and
+    // list events cover those; state flips don't change anything here.
     NotificationCenter.default.addObserver(
       self, selector: #selector(refresh),
-      name: .sessionsDidChange, object: nil
+      name: .sessionUsageDidChange, object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(refresh),
+      name: .sessionListDidChange, object: nil
     )
     NotificationCenter.default.addObserver(
       self, selector: #selector(refresh),
@@ -55,7 +63,10 @@ final class DFStatusBar: NSView {
 
     // Periodic refresh for git branch and token counts
     refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-      self?.refresh()
+      // Scheduled on the main run loop, matching the view's isolation.
+      MainActor.assumeIsolated {
+        self?.refresh()
+      }
     }
   }
 
@@ -144,7 +155,7 @@ final class DFStatusBar: NSView {
   }
 
   /// Resolve the branch off the main thread: `refresh()` runs on every
-  /// `.sessionsDidChange` tick (~40x/min while an agent works) and spawning
+  /// usage tick (roughly once a second while an agent works) and spawning
   /// git synchronously there blocks event delivery — on a cold or busy repo
   /// long enough to beachball. At most one lookup is in flight; ticks that
   /// arrive mid-lookup are dropped (the next tick re-checks anyway).
@@ -160,10 +171,11 @@ final class DFStatusBar: NSView {
     branchRefreshGeneration += 1
     let generation = branchRefreshGeneration
     let dir = SessionManager.shared.branchLookupDirectory
-    branchQueue.async { [weak self] in
-      let branch = SessionManager.shared.currentBranch(inDirectory: dir)
-      DispatchQueue.main.async {
-        guard let self else { return }
+    let bar = self
+    branchQueue.async {
+      let branch = SessionManager.currentBranch(inDirectory: dir)
+      DispatchQueue.main.async { [weak bar] in
+        guard let self = bar else { return }
         // A presumed-hung lookup that eventually returns must not clear a
         // newer lookup's flag or overwrite its result.
         guard generation == self.branchRefreshGeneration else { return }

@@ -80,9 +80,15 @@ final class DFTerminalPane: NSView {
     layer?.backgroundColor = Theme.bg.cgColor
     setupUI()
 
+    // Tabs render names (list) and state dots (state); usage ticks don't
+    // touch the tab strip.
     NotificationCenter.default.addObserver(
       self, selector: #selector(sessionsChanged),
-      name: .sessionsDidChange, object: nil
+      name: .sessionListDidChange, object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(sessionsChanged),
+      name: .sessionStateDidChange, object: nil
     )
     NotificationCenter.default.addObserver(
       self, selector: #selector(activeSessionChanged),
@@ -423,14 +429,19 @@ final class DFTerminalPane: NSView {
       load.revealTimer = Timer.scheduledTimer(
         withTimeInterval: Self.claudeRevealDelay, repeats: false
       ) { [weak self] _ in
-        self?.finishLoading(for: sessionID)
+        // Timers fire on the main run loop, matching the view's isolation.
+        MainActor.assumeIsolated {
+          self?.finishLoading(for: sessionID)
+        }
       }
     }
 
     load.maxTimer = Timer.scheduledTimer(
       withTimeInterval: Self.claudeMaxLoad, repeats: false
     ) { [weak self] _ in
-      self?.finishLoading(for: sessionID)
+      MainActor.assumeIsolated {
+        self?.finishLoading(for: sessionID)
+      }
     }
   }
 
@@ -497,7 +508,7 @@ final class DFTerminalPane: NSView {
       let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !newName.isEmpty else { return }
       session.name = newName
-      NotificationCenter.default.post(name: .sessionsDidChange, object: nil)
+      SessionEvents.postListChanged()
     }
   }
 

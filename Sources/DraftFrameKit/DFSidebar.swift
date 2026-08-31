@@ -51,36 +51,51 @@ final class DFSidebar: NSView {
     return img
   }()
 
-  /// Guard against reentrant calls to `refreshWorktrees()`.
-  /// `Process.waitUntilExit()` pumps the run loop, which can dispatch queued
-  /// notifications and re-enter this method mid-iteration — splicing one
-  /// project's worktree rows under another project's header.
-  private var isRefreshingWorktrees = false
+  /// Serial queue for `git worktree list` spawns. Enumeration used to run on
+  /// the main thread, where `Process.waitUntilExit()` both hitched the UI on
+  /// a cold/busy repo and pumped the run loop (which needed a reentrancy
+  /// guard to stop queued notifications from splicing rows mid-rebuild).
+  private let worktreeEnumQueue = DispatchQueue(
+    label: "com.draftframe.sidebar.worktree-enum", qos: .userInitiated)
 
-  /// Comparable snapshot of everything that affects the rendered worktree
-  /// rows. `.sessionsDidChange` fires every ~1.5s from JSONL/status pollers
-  /// regardless of whether projects, active dir, or worktrees actually
-  /// changed; we use this to skip the rebuild in those no-op cases. Excludes
-  /// `isExpanded` so collapse/expand can animate without rebuilding rows.
-  private struct WorktreesContentSnapshot: Equatable {
-    let projectPaths: [String]
-    let activeDir: String?
-    let pendingRemovals: Set<String>
-    let pullsInFlight: Set<String>
-    let worktreeSetupsInFlight: Set<String>
-    let worktreesPerProject: [String: [WorktreeKey]]
+  /// True while an enumeration pass is on `worktreeEnumQueue`. Further
+  /// `refreshWorktrees()` calls set `worktreeRefreshQueued` so at most one
+  /// pass runs at a time and bursts of refresh requests collapse
+  /// into a single trailing re-check (same pattern as `filesRefreshInFlight`).
+  private var worktreeRefreshInFlight = false
+  private var worktreeRefreshQueued = false
+
+  /// Slow poll catching worktree changes made outside the app.
+  /// `nonisolated(unsafe)` so the (never-raced) invalidate in deinit
+  /// compiles; every other access is on the main actor.
+  private nonisolated(unsafe) var externalWorktreeTimer: Timer?
+
+  /// Everything that affects ONE project's rendered section (header row +
+  /// worktree rows). Sections are compared individually so a change confined
+  /// to one project (a spinner appearing, a worktree created) rebuilds only
+  /// that project's rows — a full-stack rebuild visibly flashes the whole
+  /// list. Excludes `isExpanded` so collapse/expand can animate without
+  /// rebuilding rows.
+  private struct ProjectSectionKey: Equatable {
+    let path: String
+    let name: String
+    let isActive: Bool
+    let isPulling: Bool
+    let isSettingUp: Bool
+    let worktrees: [WorktreeKey]
   }
   private struct WorktreeKey: Equatable {
     let path: String
     let branch: String
     let isBare: Bool
   }
-  private var lastContentSnapshot: WorktreesContentSnapshot?
+  /// Section keys as last rendered, in stack order.
+  private var lastSectionKeys: [ProjectSectionKey] = []
 
   /// Comparable snapshot of the rendered CHANGES rows. `refreshFiles()` is
-  /// driven by `.sessionsDidChange`, which fires repeatedly while an agent
-  /// works; we use this to rebuild the rows only when the actual changed-file
-  /// set differs, instead of tearing the stack down on every notification.
+  /// driven by FSEvents and session state changes, which repeat while an
+  /// agent works; we use this to rebuild the rows only when the actual
+  /// changed-file set differs, instead of tearing the stack down every time.
   private struct FilesContentSnapshot: Equatable {
     let worktreeDir: String?
     let files: [ChangedFile]
@@ -106,8 +121,10 @@ final class DFSidebar: NSView {
   private var watchedFilesDir: String?
 
   /// Per-project view references so collapse/expand can animate `isHidden`
-  /// on existing rows instead of tearing the stack down and rebuilding.
+  /// on existing rows instead of tearing the stack down and rebuilding, and
+  /// so `rebuildSection` can splice one project's views in place.
   private var projectChevronViews: [String: NSImageView] = [:]
+  private var projectHeaderRows: [String: NSView] = [:]
   private var projectWorktreeRows: [String: [NSView]] = [:]
   private var lastExpansionStates: [String: Bool] = [:]
 
@@ -119,8 +136,25 @@ final class DFSidebar: NSView {
 
     NotificationCenter.default.addObserver(
       self, selector: #selector(refreshWorktrees),
-      name: .sessionsDidChange, object: nil
+      name: .sessionListDidChange, object: nil
     )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(refreshWorktrees),
+      name: .activeSessionDidChange, object: nil
+    )
+    // Worktrees created or removed outside the app (a plain `git worktree
+    // add` in a terminal) have no in-app event; the old catch-all
+    // notification used to pick those up incidentally. A slow poll covers
+    // them: the enumeration runs off-main and the snapshot guard makes a
+    // no-change pass free.
+    externalWorktreeTimer = Timer.scheduledTimer(
+      withTimeInterval: 10.0, repeats: true
+    ) { [weak self] _ in
+      // Scheduled on the main run loop, matching the view's isolation.
+      MainActor.assumeIsolated {
+        self?.refreshWorktrees()
+      }
+    }
     NotificationCenter.default.addObserver(
       self, selector: #selector(refreshWatchdogs),
       name: .watchdogsDidChange, object: nil
@@ -146,6 +180,7 @@ final class DFSidebar: NSView {
   required init?(coder: NSCoder) { fatalError() }
 
   deinit {
+    externalWorktreeTimer?.invalidate()
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -343,12 +378,12 @@ final class DFSidebar: NSView {
       self, selector: #selector(activeSessionChanged),
       name: .activeSessionDidChange, object: nil
     )
-    // Belt-and-braces fallback: also refresh whenever an agent advances (and
-    // on the ~1.5s status polls), in case FSEvents misses a change or hasn't
-    // started yet. The snapshot guard in refreshFiles() keeps no-ops cheap.
+    // Belt-and-braces fallback: also refresh when an agent's state flips
+    // (start/finish of a turn is when files change), in case FSEvents misses
+    // a change or hasn't started yet. The snapshot guard keeps no-ops cheap.
     NotificationCenter.default.addObserver(
       self, selector: #selector(refreshFiles),
-      name: .sessionsDidChange, object: nil
+      name: .sessionStateDidChange, object: nil
     )
 
     // Auto-refresh toolkit when config file changes
@@ -403,61 +438,122 @@ final class DFSidebar: NSView {
     refreshWorktrees()
   }
 
+  /// Listings from the most recent completed enumeration. Lets UI-only
+  /// changes (sort order, expand/collapse, active project) repaint in the
+  /// same frame instead of waiting a git round-trip.
+  private var lastEnumerated: [String: [WorktreeManager.Worktree]]?
+
   @objc func refreshWorktrees() {
-    // Process.waitUntilExit() inside getWorktrees(for:) pumps the run loop,
-    // which can dispatch a queued .sessionsDidChange notification and re-enter
-    // this method. The reentrant call clears the stack and rebuilds it, but
-    // then the original call resumes appending rows — splicing one project's
-    // worktrees under another project's header. Guard against that here;
-    // schedule a fresh pass after the current one finishes so the final state
-    // is always consistent.
-    guard !isRefreshingWorktrees else {
-      DispatchQueue.main.async { [weak self] in self?.refreshWorktrees() }
+    // Repaint synchronously from cached listings first — sort, collapse, and
+    // selection changes must land this frame to feel instant. The background
+    // enumeration below then re-applies only if git reports something
+    // different (the content snapshot guard makes it a no-op otherwise).
+    if let cached = lastEnumerated {
+      applyWorktreeResults(cached)
+    }
+
+    guard !worktreeRefreshInFlight else {
+      worktreeRefreshQueued = true
       return
     }
-    isRefreshingWorktrees = true
-    defer { isRefreshingWorktrees = false }
+    worktreeRefreshInFlight = true
+    // A fresh enumeration reads the latest state, so any queued request is
+    // satisfied by this run.
+    worktreeRefreshQueued = false
 
+    let projectPaths = ProjectManager.shared.projects.map { $0.path }
+    worktreeEnumQueue.async { [weak self] in
+      // Always fetch every project's worktrees, including collapsed ones, so
+      // the rows exist in the stack and can be hidden/shown via animator()
+      // without tearing the view down on every expand/collapse.
+      var worktreesPerProject: [String: [WorktreeManager.Worktree]] = [:]
+      for path in projectPaths {
+        worktreesPerProject[path] = Self.enumerateWorktrees(for: path)
+      }
+      // Immutable bindings so the main-queue hop captures lets, not the
+      // enclosing closure's vars (a Swift 6 sendability error).
+      let enumerated = worktreesPerProject
+      let sidebar = self
+      DispatchQueue.main.async {
+        guard let self = sidebar else { return }
+        self.worktreeRefreshInFlight = false
+        self.lastEnumerated = enumerated
+        self.applyWorktreeResults(enumerated)
+        if self.worktreeRefreshQueued {
+          self.worktreeRefreshQueued = false
+          self.refreshWorktrees()
+        }
+      }
+    }
+  }
+
+  /// Render enumeration results against CURRENT main-thread state: project
+  /// list/order, expansion, active dir, and the in-flight sets are all
+  /// re-read here, so anything that changed while git ran can't paint stale
+  /// rows. Only the worktree listings themselves come from the background
+  /// pass.
+  private func applyWorktreeResults(
+    _ enumerated: [String: [WorktreeManager.Worktree]]
+  ) {
     let projects = sortedProjects()
     let activeDir = SessionManager.shared.projectDir
 
-    // Always fetch every project's worktrees, including collapsed ones, so
-    // the rows exist in the stack and can be hidden/shown via animator()
-    // without tearing the view down on every expand/collapse.
+    // A project added while the enumeration ran has no listing yet — render
+    // it empty and queue a trailing pass so its rows appear right away
+    // instead of waiting for the next status tick.
+    if projects.contains(where: { enumerated[$0.path] == nil }) {
+      worktreeRefreshQueued = true
+    }
+
     var worktreesPerProject: [String: [WorktreeManager.Worktree]] = [:]
     for project in projects {
-      worktreesPerProject[project.path] = getWorktrees(for: project.path)
+      worktreesPerProject[project.path] = (enumerated[project.path] ?? [])
         .filter { !pendingRemovals.contains($0.path) }
     }
 
-    let snapshot = WorktreesContentSnapshot(
-      projectPaths: projects.map { $0.path },
-      activeDir: activeDir,
-      pendingRemovals: pendingRemovals,
-      pullsInFlight: pullsInFlight,
-      worktreeSetupsInFlight: worktreeSetupsInFlight,
-      worktreesPerProject: worktreesPerProject.mapValues { wts in
-        wts.map { WorktreeKey(path: $0.path, branch: $0.branch, isBare: $0.isBare) }
-      }
-    )
+    let sections = projects.map { project in
+      ProjectSectionKey(
+        path: project.path,
+        name: project.name,
+        isActive: project.path == activeDir,
+        isPulling: pullsInFlight.contains(project.path),
+        isSettingUp: worktreeSetupsInFlight.contains(project.path),
+        worktrees: (worktreesPerProject[project.path] ?? []).map {
+          WorktreeKey(path: $0.path, branch: $0.branch, isBare: $0.isBare)
+        })
+    }
     let expansionStates = projects.reduce(into: [String: Bool]()) {
       $0[$1.path] = $1.isExpanded
     }
 
-    let contentChanged = (snapshot != lastContentSnapshot)
+    let contentChanged = (sections != lastSectionKeys)
     let expansionChanged = (expansionStates != lastExpansionStates)
     if !contentChanged && !expansionChanged {
-      // Polling-driven .sessionsDidChange lands here ~40x/min — nothing
+      // The external-changes poll and no-op event bursts land here — nothing
       // visible has changed, so skip the rebuild and the resulting flash.
       return
     }
 
     if contentChanged {
-      rebuildWorktreeRows(
-        projects: projects,
-        activeDir: activeDir,
-        worktreesPerProject: worktreesPerProject)
-      lastContentSnapshot = snapshot
+      if sections.map(\.path) == lastSectionKeys.map(\.path), !sections.isEmpty {
+        // Membership and order unchanged — replace only the sections whose
+        // content differs, leaving every other project's rows untouched.
+        // Worktree creation flows through here three times (spinner on,
+        // spinner off + new row, session highlight); confining each pass to
+        // the one affected project keeps the rest of the list from flashing.
+        for (idx, section) in sections.enumerated() where section != lastSectionKeys[idx] {
+          rebuildSection(
+            project: projects[idx],
+            activeDir: activeDir,
+            worktrees: worktreesPerProject[section.path] ?? [])
+        }
+      } else {
+        rebuildWorktreeRows(
+          projects: projects,
+          activeDir: activeDir,
+          worktreesPerProject: worktreesPerProject)
+      }
+      lastSectionKeys = sections
       // Rows are freshly created; apply expansion state synchronously so
       // collapsed projects don't briefly flash their worktrees.
       applyExpansionStates(expansionStates, animated: false)
@@ -465,6 +561,28 @@ final class DFSidebar: NSView {
       applyExpansionStates(expansionStates, animated: !lastExpansionStates.isEmpty)
     }
     lastExpansionStates = expansionStates
+  }
+
+  /// Replace one project's header + worktree rows in place at their current
+  /// stack position. Callers guarantee the project already has a section
+  /// (same path set as the last render).
+  private func rebuildSection(
+    project: ProjectManager.Project,
+    activeDir: String?,
+    worktrees: [WorktreeManager.Worktree]
+  ) {
+    guard let oldHeader = projectHeaderRows[project.path],
+      let insertAt = worktreeStack.arrangedSubviews.firstIndex(of: oldHeader)
+    else { return }
+    for view in [oldHeader] + (projectWorktreeRows[project.path] ?? []) {
+      worktreeStack.removeArrangedSubview(view)
+      view.removeFromSuperview()
+    }
+    let views = buildProjectSection(
+      project: project, activeDir: activeDir, worktrees: worktrees)
+    for (offset, view) in views.enumerated() {
+      worktreeStack.insertArrangedSubview(view, at: insertAt + offset)
+    }
   }
 
   private func rebuildWorktreeRows(
@@ -477,6 +595,7 @@ final class DFSidebar: NSView {
       v.removeFromSuperview()
     }
     projectChevronViews.removeAll(keepingCapacity: true)
+    projectHeaderRows.removeAll(keepingCapacity: true)
     projectWorktreeRows.removeAll(keepingCapacity: true)
 
     if projects.isEmpty {
@@ -487,216 +606,236 @@ final class DFSidebar: NSView {
     }
 
     for project in projects {
-      let isActive = project.path == activeDir
-
-      // Project header row — clickable to expand/collapse. Chevron icon is
-      // set by applyExpansionStates so we don't need to rebuild on toggle.
-      let projectRow = makeClickableRow(
-        icon: "chevron.right", text: project.name,
-        detail: nil,
-        target: self, action: #selector(projectRowClicked(_:)))
-      projectRow.worktreePath = project.path
-      projectRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
-
-      if isActive, let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
-        lbl.font = Theme.mono(12, weight: .medium)
-        lbl.textColor = Theme.text1
+      let views = buildProjectSection(
+        project: project,
+        activeDir: activeDir,
+        worktrees: worktreesPerProject[project.path] ?? [])
+      for view in views {
+        worktreeStack.addArrangedSubview(view)
       }
-
-      if let chevron = projectRow.subviews.compactMap({ $0 as? NSImageView }).first {
-        projectChevronViews[project.path] = chevron
-      }
-
-      let addBtn = NSButton(title: "", target: self, action: #selector(addWorktreeForProject(_:)))
-      addBtn.image = Self.leafPlusBadge
-      addBtn.isBordered = false
-      addBtn.imageScaling = .scaleProportionallyDown
-      addBtn.contentTintColor = Theme.text3
-      addBtn.toolTip = "New worktree in \(project.name)"
-      addBtn.translatesAutoresizingMaskIntoConstraints = false
-      projectRow.addSubview(addBtn)
-      NSLayoutConstraint.activate([
-        addBtn.trailingAnchor.constraint(equalTo: projectRow.trailingAnchor),
-        addBtn.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
-        addBtn.widthAnchor.constraint(equalToConstant: 16),
-        addBtn.heightAnchor.constraint(equalToConstant: 16),
-      ])
-
-      // While a background default-branch pull or a worktree setup
-      // (base-branch pull + create) runs for this project, show a spinner
-      // next to the add button. Both sets are part of the snapshot, so the
-      // row rebuilds when either changes.
-      let isPulling = pullsInFlight.contains(project.path)
-      var trailingControl: NSView = addBtn
-      if isPulling || worktreeSetupsInFlight.contains(project.path) {
-        let spinner = NSProgressIndicator()
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isIndeterminate = true
-        spinner.isDisplayedWhenStopped = false
-        spinner.startAnimation(nil)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        projectRow.addSubview(spinner)
-        NSLayoutConstraint.activate([
-          spinner.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -6),
-          spinner.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
-          spinner.widthAnchor.constraint(equalToConstant: 16),
-          spinner.heightAnchor.constraint(equalToConstant: 16),
-        ])
-        trailingControl = spinner
-      }
-
-      // The row label has no trailing constraint of its own; in a narrow
-      // sidebar a long project name would run underneath the buttons. Pin it
-      // clear of them and truncate the name instead.
-      if let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
-        lbl.lineBreakMode = .byTruncatingTail
-        lbl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        lbl.trailingAnchor.constraint(
-          lessThanOrEqualTo: trailingControl.leadingAnchor, constant: -6
-        ).isActive = true
-      }
-
-      let menu = NSMenu()
-
-      // Pull the default branch from its remote — keeps new worktrees (which
-      // branch off the local default branch) from starting stale. Skipped
-      // when no default branch is resolvable (e.g. not a git repo).
-      if let defaultBranch = WorktreeManager.shared.defaultBranch(repoRoot: project.path) {
-        // A nil action leaves the item disabled while a pull is in flight.
-        let pullItem = NSMenuItem(
-          title: isPulling ? "Pulling \(defaultBranch)…" : "Pull \(defaultBranch)",
-          action: isPulling ? nil : #selector(pullDefaultBranch(_:)),
-          keyEquivalent: "")
-        pullItem.target = self
-        pullItem.representedObject = DefaultBranchPullRequest(
-          repoRoot: project.path, branch: defaultBranch)
-        menu.addItem(pullItem)
-      }
-
-      let switchItem = NSMenuItem(
-        title: "Switch to Project", action: #selector(switchToProject(_:)), keyEquivalent: "")
-      switchItem.target = self
-      switchItem.representedObject = project.path
-      menu.addItem(switchItem)
-
-      let showItem = NSMenuItem(
-        title: "Show in Finder", action: #selector(showWorktreeInFinder(_:)), keyEquivalent: "")
-      showItem.target = self
-      showItem.representedObject = project.path
-      menu.addItem(showItem)
-
-      let fromBranchItem = NSMenuItem(
-        title: "New Worktree from Branch", action: #selector(addWorktreeFromBranch(_:)),
-        keyEquivalent: "")
-      fromBranchItem.target = self
-      fromBranchItem.representedObject = project.path
-      menu.addItem(fromBranchItem)
-
-      menu.addItem(NSMenuItem.separator())
-      let removeItem = NSMenuItem(
-        title: "Remove from List", action: #selector(removeProjectFromList(_:)), keyEquivalent: "")
-      removeItem.target = self
-      removeItem.representedObject = project.path
-      menu.addItem(removeItem)
-
-      projectRow.menu = menu
-      worktreeStack.addArrangedSubview(projectRow)
-
-      // Build worktree rows for every project regardless of expansion. They
-      // start hidden; applyExpansionStates flips isHidden to reveal them.
-      let worktrees = worktreesPerProject[project.path] ?? []
-      var wtRows: [NSView] = []
-      if worktrees.isEmpty {
-        let mainRow = makeRow(icon: "arrow.triangle.branch", text: "  main", detail: "base")
-        mainRow.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        worktreeStack.addArrangedSubview(mainRow)
-        wtRows.append(mainRow)
-      } else {
-        for wt in worktrees {
-          let branchName = wt.branch.isEmpty ? "detached" : wt.branch
-          let isBase = wt.isBare
-          // The primary worktree is the project root itself (not a child
-          // under .claude/worktrees/). Compare symlink-resolved paths: git
-          // reports realpaths (e.g. /private/var) while the project may have
-          // been added under an unresolved spelling.
-          let resolvedProjectPath =
-            URL(fileURLWithPath: project.path).resolvingSymlinksInPath().path
-          let isPrimary =
-            !isBase
-            && URL(fileURLWithPath: wt.path).resolvingSymlinksInPath().path == resolvedProjectPath
-          let icon = isPrimary ? "circle.fill" : "arrow.triangle.branch"
-          let detail = isBase ? "base" : nil
-          let row = makeClickableRow(
-            icon: icon, text: "  \(branchName)",
-            detail: detail,
-            target: self, action: #selector(worktreeRowClicked(_:)))
-          if isPrimary {
-            row.toolTip = "Currently checked-out branch in \(project.name)"
-            if let img = row.subviews.compactMap({ $0 as? NSImageView }).first {
-              let config = NSImage.SymbolConfiguration(pointSize: 6, weight: .regular)
-              img.image = img.image?.withSymbolConfiguration(config)
-            }
-          }
-          row.worktreeName = branchName
-          row.worktreePath = wt.path
-          row.isBaseWorktree = isBase
-
-          let wtMenu = NSMenu()
-          let openItem = NSMenuItem(
-            title: "Open Session Here", action: #selector(openSessionFromMenu(_:)),
-            keyEquivalent: "")
-          openItem.target = self
-          openItem.representedObject = wt
-          wtMenu.addItem(openItem)
-          let branchItem = NSMenuItem(
-            title: "New Worktree from Here", action: #selector(addWorktreeFromWorktree(_:)),
-            keyEquivalent: "")
-          branchItem.target = self
-          // Carry the source worktree alongside the project's repo root so the
-          // action can base the new worktree's branch off this worktree.
-          branchItem.representedObject = WorktreeBranchRequest(source: wt, repoRoot: project.path)
-          wtMenu.addItem(branchItem)
-          if !isBase {
-            wtMenu.addItem(NSMenuItem.separator())
-            // Rename only applies to draftframe-managed worktrees — the
-            // primary checkout is the project root itself and can't be moved
-            // under .claude/worktrees/, and renaming a hand-made worktree
-            // would relocate it there out from under the user.
-            if !isPrimary && WorktreeManager.isManagedWorktree(wt.path) {
-              let renameItem = NSMenuItem(
-                title: "Rename Worktree", action: #selector(renameWorktreeFromMenu(_:)),
-                keyEquivalent: "")
-              renameItem.target = self
-              renameItem.representedObject = WorktreeRenameRequest(
-                worktree: wt, repoRoot: project.path)
-              wtMenu.addItem(renameItem)
-            }
-            let rmItem = NSMenuItem(
-              title: "Remove Worktree", action: #selector(removeWorktreeFromMenu(_:)),
-              keyEquivalent: "")
-            rmItem.target = self
-            // Carry the project's repo root alongside the worktree so the
-            // remove action can invoke git against the right repo (not
-            // DraftFrame's own repo via the singleton).
-            rmItem.representedObject = WorktreeRemovalRequest(worktree: wt, repoRoot: project.path)
-            wtMenu.addItem(rmItem)
-          }
-          wtMenu.addItem(NSMenuItem.separator())
-          let copyItem = NSMenuItem(
-            title: "Copy Path", action: #selector(copyWorktreePath(_:)), keyEquivalent: "")
-          copyItem.target = self
-          copyItem.representedObject = wt.path
-          wtMenu.addItem(copyItem)
-          row.menu = wtMenu
-
-          row.heightAnchor.constraint(equalToConstant: 26).isActive = true
-          worktreeStack.addArrangedSubview(row)
-          wtRows.append(row)
-        }
-      }
-      projectWorktreeRows[project.path] = wtRows
     }
+  }
+
+  /// Build one project's views — header row followed by its worktree rows —
+  /// registering them in the per-project reference maps. The caller decides
+  /// where the views land (appended on a full rebuild, spliced in place by
+  /// `rebuildSection`).
+  private func buildProjectSection(
+    project: ProjectManager.Project,
+    activeDir: String?,
+    worktrees: [WorktreeManager.Worktree]
+  ) -> [NSView] {
+    var views: [NSView] = []
+    let isActive = project.path == activeDir
+
+    // Project header row — clickable to expand/collapse. Chevron icon is
+    // set by applyExpansionStates so we don't need to rebuild on toggle.
+    let projectRow = makeClickableRow(
+      icon: "chevron.right", text: project.name,
+      detail: nil,
+      target: self, action: #selector(projectRowClicked(_:)))
+    projectRow.worktreePath = project.path
+    projectRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
+
+    if isActive, let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
+      lbl.font = Theme.mono(12, weight: .medium)
+      lbl.textColor = Theme.text1
+    }
+
+    if let chevron = projectRow.subviews.compactMap({ $0 as? NSImageView }).first {
+      projectChevronViews[project.path] = chevron
+    }
+
+    let addBtn = NSButton(title: "", target: self, action: #selector(addWorktreeForProject(_:)))
+    addBtn.image = Self.leafPlusBadge
+    addBtn.isBordered = false
+    addBtn.imageScaling = .scaleProportionallyDown
+    addBtn.contentTintColor = Theme.text3
+    addBtn.toolTip = "New worktree in \(project.name)"
+    addBtn.translatesAutoresizingMaskIntoConstraints = false
+    projectRow.addSubview(addBtn)
+    NSLayoutConstraint.activate([
+      addBtn.trailingAnchor.constraint(equalTo: projectRow.trailingAnchor),
+      addBtn.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
+      addBtn.widthAnchor.constraint(equalToConstant: 16),
+      addBtn.heightAnchor.constraint(equalToConstant: 16),
+    ])
+
+    // While a background default-branch pull or a worktree setup
+    // (base-branch pull + create) runs for this project, show a spinner
+    // next to the add button. Both sets are part of the snapshot, so the
+    // row rebuilds when either changes.
+    let isPulling = pullsInFlight.contains(project.path)
+    var trailingControl: NSView = addBtn
+    if isPulling || worktreeSetupsInFlight.contains(project.path) {
+      let spinner = NSProgressIndicator()
+      spinner.style = .spinning
+      spinner.controlSize = .small
+      spinner.isIndeterminate = true
+      spinner.isDisplayedWhenStopped = false
+      spinner.startAnimation(nil)
+      spinner.translatesAutoresizingMaskIntoConstraints = false
+      projectRow.addSubview(spinner)
+      NSLayoutConstraint.activate([
+        spinner.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -6),
+        spinner.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
+        spinner.widthAnchor.constraint(equalToConstant: 16),
+        spinner.heightAnchor.constraint(equalToConstant: 16),
+      ])
+      trailingControl = spinner
+    }
+
+    // The row label has no trailing constraint of its own; in a narrow
+    // sidebar a long project name would run underneath the buttons. Pin it
+    // clear of them and truncate the name instead.
+    if let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
+      lbl.lineBreakMode = .byTruncatingTail
+      lbl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+      lbl.trailingAnchor.constraint(
+        lessThanOrEqualTo: trailingControl.leadingAnchor, constant: -6
+      ).isActive = true
+    }
+
+    let menu = NSMenu()
+
+    // Pull the default branch from its remote — keeps new worktrees (which
+    // branch off the local default branch) from starting stale. Skipped
+    // when no default branch is resolvable (e.g. not a git repo).
+    if let defaultBranch = WorktreeManager.shared.defaultBranch(repoRoot: project.path) {
+      // A nil action leaves the item disabled while a pull is in flight.
+      let pullItem = NSMenuItem(
+        title: isPulling ? "Pulling \(defaultBranch)…" : "Pull \(defaultBranch)",
+        action: isPulling ? nil : #selector(pullDefaultBranch(_:)),
+        keyEquivalent: "")
+      pullItem.target = self
+      pullItem.representedObject = DefaultBranchPullRequest(
+        repoRoot: project.path, branch: defaultBranch)
+      menu.addItem(pullItem)
+    }
+
+    let switchItem = NSMenuItem(
+      title: "Switch to Project", action: #selector(switchToProject(_:)), keyEquivalent: "")
+    switchItem.target = self
+    switchItem.representedObject = project.path
+    menu.addItem(switchItem)
+
+    let showItem = NSMenuItem(
+      title: "Show in Finder", action: #selector(showWorktreeInFinder(_:)), keyEquivalent: "")
+    showItem.target = self
+    showItem.representedObject = project.path
+    menu.addItem(showItem)
+
+    let fromBranchItem = NSMenuItem(
+      title: "New Worktree from Branch", action: #selector(addWorktreeFromBranch(_:)),
+      keyEquivalent: "")
+    fromBranchItem.target = self
+    fromBranchItem.representedObject = project.path
+    menu.addItem(fromBranchItem)
+
+    menu.addItem(NSMenuItem.separator())
+    let removeItem = NSMenuItem(
+      title: "Remove from List", action: #selector(removeProjectFromList(_:)), keyEquivalent: "")
+    removeItem.target = self
+    removeItem.representedObject = project.path
+    menu.addItem(removeItem)
+
+    projectRow.menu = menu
+    views.append(projectRow)
+    projectHeaderRows[project.path] = projectRow
+
+    // Build worktree rows for every project regardless of expansion. They
+    // start hidden; applyExpansionStates flips isHidden to reveal them.
+    var wtRows: [NSView] = []
+    if worktrees.isEmpty {
+      let mainRow = makeRow(icon: "arrow.triangle.branch", text: "  main", detail: "base")
+      mainRow.heightAnchor.constraint(equalToConstant: 26).isActive = true
+      views.append(mainRow)
+      wtRows.append(mainRow)
+    } else {
+      for wt in worktrees {
+        let branchName = wt.branch.isEmpty ? "detached" : wt.branch
+        let isBase = wt.isBare
+        // The primary worktree is the project root itself (not a child
+        // under .claude/worktrees/). Compare symlink-resolved paths: git
+        // reports realpaths (e.g. /private/var) while the project may have
+        // been added under an unresolved spelling.
+        let resolvedProjectPath =
+          URL(fileURLWithPath: project.path).resolvingSymlinksInPath().path
+        let isPrimary =
+          !isBase
+          && URL(fileURLWithPath: wt.path).resolvingSymlinksInPath().path == resolvedProjectPath
+        let icon = isPrimary ? "circle.fill" : "arrow.triangle.branch"
+        let detail = isBase ? "base" : nil
+        let row = makeClickableRow(
+          icon: icon, text: "  \(branchName)",
+          detail: detail,
+          target: self, action: #selector(worktreeRowClicked(_:)))
+        if isPrimary {
+          row.toolTip = "Currently checked-out branch in \(project.name)"
+          if let img = row.subviews.compactMap({ $0 as? NSImageView }).first {
+            let config = NSImage.SymbolConfiguration(pointSize: 6, weight: .regular)
+            img.image = img.image?.withSymbolConfiguration(config)
+          }
+        }
+        row.worktreeName = branchName
+        row.worktreePath = wt.path
+        row.isBaseWorktree = isBase
+
+        let wtMenu = NSMenu()
+        let openItem = NSMenuItem(
+          title: "Open Session Here", action: #selector(openSessionFromMenu(_:)),
+          keyEquivalent: "")
+        openItem.target = self
+        openItem.representedObject = wt
+        wtMenu.addItem(openItem)
+        let branchItem = NSMenuItem(
+          title: "New Worktree from Here", action: #selector(addWorktreeFromWorktree(_:)),
+          keyEquivalent: "")
+        branchItem.target = self
+        // Carry the source worktree alongside the project's repo root so the
+        // action can base the new worktree's branch off this worktree.
+        branchItem.representedObject = WorktreeBranchRequest(source: wt, repoRoot: project.path)
+        wtMenu.addItem(branchItem)
+        if !isBase {
+          wtMenu.addItem(NSMenuItem.separator())
+          // Rename only applies to draftframe-managed worktrees — the
+          // primary checkout is the project root itself and can't be moved
+          // under .claude/worktrees/, and renaming a hand-made worktree
+          // would relocate it there out from under the user.
+          if !isPrimary && WorktreeManager.isManagedWorktree(wt.path) {
+            let renameItem = NSMenuItem(
+              title: "Rename Worktree", action: #selector(renameWorktreeFromMenu(_:)),
+              keyEquivalent: "")
+            renameItem.target = self
+            renameItem.representedObject = WorktreeRenameRequest(
+              worktree: wt, repoRoot: project.path)
+            wtMenu.addItem(renameItem)
+          }
+          let rmItem = NSMenuItem(
+            title: "Remove Worktree", action: #selector(removeWorktreeFromMenu(_:)),
+            keyEquivalent: "")
+          rmItem.target = self
+          // Carry the project's repo root alongside the worktree so the
+          // remove action can invoke git against the right repo (not
+          // DraftFrame's own repo via the singleton).
+          rmItem.representedObject = WorktreeRemovalRequest(worktree: wt, repoRoot: project.path)
+          wtMenu.addItem(rmItem)
+        }
+        wtMenu.addItem(NSMenuItem.separator())
+        let copyItem = NSMenuItem(
+          title: "Copy Path", action: #selector(copyWorktreePath(_:)), keyEquivalent: "")
+        copyItem.target = self
+        copyItem.representedObject = wt.path
+        wtMenu.addItem(copyItem)
+        row.menu = wtMenu
+
+        row.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        views.append(row)
+        wtRows.append(row)
+      }
+    }
+    projectWorktreeRows[project.path] = wtRows
+    return views
   }
 
   private func applyExpansionStates(_ states: [String: Bool], animated: Bool) {
@@ -859,8 +998,11 @@ final class DFSidebar: NSView {
     NSPasteboard.general.setString(path, forType: .string)
   }
 
-  /// Get worktrees for a specific project directory.
-  private func getWorktrees(for projectPath: String) -> [WorktreeManager.Worktree] {
+  /// Get worktrees for a specific project directory. Spawns git and blocks
+  /// until it exits — call from `worktreeEnumQueue`, never the main thread.
+  private nonisolated static func enumerateWorktrees(for projectPath: String)
+    -> [WorktreeManager.Worktree]
+  {
     // Scrub GIT_* env vars so a stray GIT_DIR/GIT_WORK_TREE inherited from
     // the launching session doesn't redirect git to the wrong repo.
     let env = ProcessInfo.processInfo.environment
@@ -937,8 +1079,9 @@ final class DFSidebar: NSView {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let error = WorktreeManager.shared.pullDefaultBranch(
         repoRoot: req.repoRoot, branch: req.branch)
+      let sidebar = self
       DispatchQueue.main.async {
-        guard let self = self else { return }
+        guard let self = sidebar else { return }
         self.pullsInFlight.remove(req.repoRoot)
         self.refreshWorktrees()
         if let error = error {
@@ -1126,8 +1269,9 @@ final class DFSidebar: NSView {
 
     gitStatusQueue.async { [weak self] in
       let changedFiles = worktreeDir.map { Self.gitChangedFiles(in: $0) } ?? []
+      let sidebar = self
       DispatchQueue.main.async {
-        guard let self = self else { return }
+        guard let self = sidebar else { return }
         self.filesRefreshInFlight = false
 
         // The active scope can change while git runs (session switch); the
@@ -1151,9 +1295,9 @@ final class DFSidebar: NSView {
   }
 
   private func applyChangedFiles(_ changedFiles: [ChangedFile], worktreeDir: String?) {
-    // `.sessionsDidChange` lands here repeatedly while an agent works; skip the
-    // teardown/rebuild (and the hover/click disruption it causes) unless the
-    // changed-file set actually differs from what's already rendered.
+    // FSEvents and state changes land here repeatedly while an agent works;
+    // skip the teardown/rebuild (and the hover/click disruption it causes)
+    // unless the changed-file set actually differs from what's rendered.
     let snapshot = FilesContentSnapshot(worktreeDir: worktreeDir, files: changedFiles)
     guard snapshot != lastFilesSnapshot else { return }
     lastFilesSnapshot = snapshot
@@ -1234,7 +1378,7 @@ final class DFSidebar: NSView {
     let path: String
   }
 
-  private static func gitChangedFiles(in dir: String) -> [ChangedFile] {
+  private nonisolated static func gitChangedFiles(in dir: String) -> [ChangedFile] {
     let env = ProcessInfo.processInfo.environment
       .filter { !$0.key.hasPrefix("GIT_") }
 
