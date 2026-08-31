@@ -43,10 +43,12 @@ final class SessionStatusRegistryTests: XCTestCase {
     let log = StateLog()
     let exp = expectation(description: "reported")
     let id = UUID()
-    await registry.subscribe(id: id, cwd: cwd, isActive: { true }) { state in
-      log.append(state)
-      exp.fulfill()
-    }
+    await registry.subscribe(
+      id: id, cwd: cwd, isActive: { true },
+      onUpdate: { state in
+        log.append(state)
+        exp.fulfill()
+      })
     await fulfillment(of: [exp], timeout: 5)
     XCTAssertEqual(log.states, [.generating])
     await registry.unsubscribe(id: id)
@@ -57,10 +59,12 @@ final class SessionStatusRegistryTests: XCTestCase {
     let log = StateLog()
     let exp = expectation(description: "reported")
     let id = UUID()
-    await registry.subscribe(id: id, cwd: "/tmp/df-nowhere", isActive: { true }) { state in
-      log.append(state)
-      exp.fulfill()
-    }
+    await registry.subscribe(
+      id: id, cwd: "/tmp/df-nowhere", isActive: { true },
+      onUpdate: { state in
+        log.append(state)
+        exp.fulfill()
+      })
     await fulfillment(of: [exp], timeout: 5)
     XCTAssertEqual(log.states, [.idle])
     await registry.unsubscribe(id: id)
@@ -75,10 +79,12 @@ final class SessionStatusRegistryTests: XCTestCase {
     let log = StateLog()
     let exp = expectation(description: "reported")
     let id = UUID()
-    await registry.subscribe(id: id, cwd: cwd, isActive: { true }) { state in
-      log.append(state)
-      exp.fulfill()
-    }
+    await registry.subscribe(
+      id: id, cwd: cwd, isActive: { true },
+      onUpdate: { state in
+        log.append(state)
+        exp.fulfill()
+      })
     await fulfillment(of: [exp], timeout: 5)
     XCTAssertEqual(log.states, [.needsAttention])
     await registry.unsubscribe(id: id)
@@ -92,9 +98,11 @@ final class SessionStatusRegistryTests: XCTestCase {
     let log = StateLog()
     // A handle stopped before its subscribe hop lands (stop() racing init)
     // presents an isActive that already answers false.
-    await registry.subscribe(id: UUID(), cwd: cwd, isActive: { false }) { state in
-      log.append(state)
-    }
+    await registry.subscribe(
+      id: UUID(), cwd: cwd, isActive: { false },
+      onUpdate: { state in
+        log.append(state)
+      })
     // Give any (incorrect) callback time to land on main.
     try await Task.sleep(nanoseconds: 200_000_000)
     XCTAssertEqual(log.states, [])
@@ -117,10 +125,12 @@ final class SessionStatusRegistryTests: XCTestCase {
     let log = StateLog()
     let exp = expectation(description: "reported")
     let id = UUID()
-    await registry.subscribe(id: id, cwd: cwd, isActive: { true }) { state in
-      log.append(state)
-      exp.fulfill()
-    }
+    await registry.subscribe(
+      id: id, cwd: cwd, isActive: { true },
+      onUpdate: { state in
+        log.append(state)
+        exp.fulfill()
+      })
     await fulfillment(of: [exp], timeout: 5)
     XCTAssertEqual(log.states, [.generating])
     await registry.unsubscribe(id: id)
@@ -138,10 +148,12 @@ final class SessionStatusRegistryTests: XCTestCase {
     let log = StateLog()
     let exp = expectation(description: "reported")
     let id = UUID()
-    await registry.subscribe(id: id, cwd: cwd, isActive: { true }) { state in
-      log.append(state)
-      exp.fulfill()
-    }
+    await registry.subscribe(
+      id: id, cwd: cwd, isActive: { true },
+      onUpdate: { state in
+        log.append(state)
+        exp.fulfill()
+      })
     await fulfillment(of: [exp], timeout: 5)
     // The only pid file for this cwd is dead, so the cwd has no live claude.
     XCTAssertEqual(log.states, [.idle])

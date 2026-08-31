@@ -307,7 +307,9 @@ import SwiftTerm
     /// Text of the session's visible terminal screen — what a human QA would
     /// see. `ClaudeTerminalView` pins the viewport to the live screen, so this
     /// tracks program output. `requestedLines` keeps only the last N rows.
-    @MainActor private func readBuffer(tv: ClaudeTerminalView, requestedLines: Int?) -> [String: Any] {
+    @MainActor private func readBuffer(tv: ClaudeTerminalView, requestedLines: Int?)
+      -> [String: Any]
+    {
       let term = tv.getTerminal()
       var lines: [String] = []
       for row in 0..<term.rows {

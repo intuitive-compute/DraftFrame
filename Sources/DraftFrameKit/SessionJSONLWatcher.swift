@@ -32,17 +32,18 @@ final class SessionJSONLWatcher: @unchecked Sendable {
 
   /// Delivered on the main queue (the values are snapshots taken on the
   /// tailer's queue), feeding main-actor session state.
-  typealias UpdateCallback = @MainActor (
-    _ cost: Double,
-    _ tokensIn: Int,
-    _ tokensOut: Int,
-    _ model: String,
-    _ contextTokens: Int,
-    _ maxContextTokens: Int,
-    _ lifetimeCost: Double,
-    _ lifetimeTokensIn: Int,
-    _ lifetimeTokensOut: Int
-  ) -> Void
+  typealias UpdateCallback =
+    @MainActor (
+      _ cost: Double,
+      _ tokensIn: Int,
+      _ tokensOut: Int,
+      _ model: String,
+      _ contextTokens: Int,
+      _ maxContextTokens: Int,
+      _ lifetimeCost: Double,
+      _ lifetimeTokensIn: Int,
+      _ lifetimeTokensOut: Int
+    ) -> Void
 
   /// Cost/tokens for the CURRENT claude run only (the session file we're
   /// watching now). Reset when we switch to a newer session file, so these
