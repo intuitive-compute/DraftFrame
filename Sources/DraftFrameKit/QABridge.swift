@@ -278,6 +278,7 @@ import SwiftTerm
           "contextTokens": s.contextTokens,
           "maxContextTokens": s.maxContextTokens,
           "worktreePath": s.worktreePath ?? NSNull(),
+          "agentSessionId": s.agentSessionId ?? NSNull(),
           "active": i == mgr.activeSessionIndex,
         ]
       }

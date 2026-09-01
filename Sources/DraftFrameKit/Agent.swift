@@ -107,9 +107,17 @@ enum AgentKind: String, CaseIterable {
   /// Full command line that launches this agent with the given model
   /// (empty = the CLI's own default) and, optionally, an initial prompt the
   /// agent starts working on immediately. Both CLIs take the prompt as a
-  /// positional argument.
-  func launchCommand(binPath: String, modelId: String, initialPrompt: String? = nil) -> String {
+  /// positional argument. `resumeSessionId` continues a previous
+  /// conversation instead of starting fresh — Claude Code only; Codex
+  /// sessions always relaunch fresh.
+  func launchCommand(
+    binPath: String, modelId: String, initialPrompt: String? = nil,
+    resumeSessionId: String? = nil
+  ) -> String {
     var cmd = modelId.isEmpty ? binPath : "\(binPath) --model \(modelId)"
+    if self == .claude, let resume = resumeSessionId, !resume.isEmpty {
+      cmd += " --resume \(shellSingleQuote(resume))"
+    }
     if let prompt = initialPrompt, !prompt.isEmpty {
       cmd += " \(shellSingleQuote(prompt))"
     }
@@ -135,7 +143,15 @@ enum AgentPreference {
 protocol UsageWatcher: AnyObject {
   var latestAssistantText: String? { get }
   var latestAssistantAt: Date? { get }
+  /// The agent CLI's own session id, when the watcher can learn it from the
+  /// transcript — what `claude --resume` takes. Nil until known, and always
+  /// nil for agents whose sessions DraftFrame can't resume (Codex).
+  var agentSessionId: String? { get }
   func stop()
+}
+
+extension UsageWatcher {
+  var agentSessionId: String? { nil }
 }
 
 extension SessionJSONLWatcher: UsageWatcher {}

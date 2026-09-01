@@ -83,6 +83,24 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   private var _latestAssistantText: String?
   private var _latestAssistantAt: Date?
 
+  /// Claude Code's own session id, read from the transcript's `sessionId`
+  /// field. This is what `claude --resume` takes, so it's what session
+  /// persistence saves. Same cross-thread access pattern as the assistant
+  /// text: written on the tailer's queue, read from the main thread.
+  var agentSessionId: String? { assistantTextLock.withLock { _agentSessionId } }
+  private var _agentSessionId: String?
+
+  /// Gate on the id capture: the watcher tails whatever transcript in the
+  /// shared per-cwd folder is newest, which for a fresh tab in a directory
+  /// with prior history is some EARLIER run's conversation. Persisting that
+  /// id would make the tab resume a conversation it never had, so ids are
+  /// trusted only from a transcript written during this watcher's lifetime.
+  /// Maintained by `findLatestJSONL` and read by `parseLine`, both on the
+  /// tailer's queue. Internal (and defaulting to true) for direct
+  /// `parseLine` tests.
+  var captureSessionIds = true
+  private let watcherStartedAt = Date()
+
   // MARK: - Private
 
   private let onUpdate: UpdateCallback
@@ -135,6 +153,10 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   }
 
   private func claudeProjectDir() -> String? {
+    Self.claudeProjectDir(forWorkingDirectory: workingDirectory)
+  }
+
+  static func claudeProjectDir(forWorkingDirectory workingDirectory: String) -> String? {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     // Claude Code encodes its own getcwd — the symlink-RESOLVED path
     // (/private/tmp, not /tmp) — while the session may hold the unresolved
@@ -157,6 +179,13 @@ final class SessionJSONLWatcher: @unchecked Sendable {
     return nil
   }
 
+  /// Whether Claude Code still has a transcript for `sessionId` launched from
+  /// `workingDirectory` — the precondition for `claude --resume <sessionId>`.
+  static func transcriptExists(sessionId: String, workingDirectory: String) -> Bool {
+    guard let dir = claudeProjectDir(forWorkingDirectory: workingDirectory) else { return false }
+    return FileManager.default.fileExists(atPath: "\(dir)/\(sessionId).jsonl")
+  }
+
   private func findLatestJSONL() -> String? {
     guard let dir = claudeProjectDir() else { return nil }
     let fm = FileManager.default
@@ -174,6 +203,13 @@ final class SessionJSONLWatcher: @unchecked Sendable {
         newestDate = mod
         newest = full
       }
+    }
+    if newest != nil {
+      // A transcript untouched since before this watcher existed belongs to
+      // an earlier run: read it for usage/cost as always, but don't let its
+      // session id be persisted as this tab's conversation. Re-evaluated on
+      // every rescan, so the flag flips on as soon as the agent writes.
+      captureSessionIds = newestDate >= watcherStartedAt
     }
     return newest
   }
@@ -220,9 +256,15 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   /// advanced. Internal for testing.
   func parseLine(_ line: String) -> Bool {
     guard let data = line.data(using: .utf8),
-      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let type = obj["type"] as? String
+      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return false }
+    // Every transcript line carries the session id, including types the
+    // switch below ignores — capture it before dispatching (unless the
+    // watched file predates this watcher; see `captureSessionIds`).
+    if captureSessionIds, let sid = obj["sessionId"] as? String, !sid.isEmpty {
+      assistantTextLock.withLock { _agentSessionId = sid }
+    }
+    guard let type = obj["type"] as? String else { return false }
     switch type {
     case "assistant": return parseAssistant(obj)
     case "user": return parseUser(obj)

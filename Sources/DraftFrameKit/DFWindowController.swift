@@ -40,9 +40,10 @@ final class DFWindowController: NSWindowController {
     buildLayout()
     setupShortcuts()
 
-    // Prompt user to open a project directory
+    // Reopen where the user left off; prompt only when there's nothing
+    // to reopen.
     DispatchQueue.main.async { [weak self] in
-      self?.promptOpenProject()
+      self?.openInitialProject()
     }
   }
 
@@ -284,6 +285,28 @@ final class DFWindowController: NSWindowController {
 
   // MARK: - Open Project
 
+  /// Launch-time project selection: reopen the last workspace so quitting
+  /// and relaunching needs no manual re-setup. Falls back to the most
+  /// recently used project, then to the open panel. QA runs keep the old
+  /// prompt-first behavior — the QA script opens its own throwaway project
+  /// through the bridge, and must never land in the user's real one.
+  func openInitialProject() {
+    if QABridge.isQAMode {
+      promptOpenProject()
+      return
+    }
+    let fm = FileManager.default
+    if let last = SessionPersistence.shared.lastProjectDir, fm.fileExists(atPath: last) {
+      openProject(at: last, restoreWithoutAsking: true)
+      return
+    }
+    if let recent = ProjectManager.shared.projects.first?.path, fm.fileExists(atPath: recent) {
+      openProject(at: recent)
+      return
+    }
+    promptOpenProject()
+  }
+
   func promptOpenProject() {
     let panel = NSOpenPanel()
     panel.title = "Open Project"
@@ -306,7 +329,19 @@ final class DFWindowController: NSWindowController {
     }
   }
 
-  func openProject(at path: String) {
+  /// Open a project directory. With `restoreWithoutAsking` (the launch
+  /// path), saved sessions come back silently — the whole point of
+  /// persistence is that relaunching needs no clicks. A manual mid-session
+  /// open keeps the restore-or-fresh prompt.
+  func openProject(at path: String, restoreWithoutAsking: Bool = false) {
+    // Re-opening the project that's already open must skip the restore/
+    // create flow below: autosave keeps sessions.json present for the open
+    // project, so falling through would re-offer the Restore prompt and
+    // duplicate every live session (each resuming a conversation another
+    // tab is still attached to).
+    let alreadyOpen =
+      SessionManager.shared.projectDir == path && !SessionManager.shared.sessions.isEmpty
+
     // Set the project directory
     SessionManager.shared.projectDir = path
     FileManager.default.changeCurrentDirectoryPath(path)
@@ -321,6 +356,8 @@ final class DFWindowController: NSWindowController {
     let dirName = (path as NSString).lastPathComponent
     window?.title = "DraftFrame — \(dirName)"
 
+    if alreadyOpen { return }
+
     // Check for saved sessions to restore. QA runs skip the prompt and
     // always start fresh, without clearing the user's saved sessions.
     if QABridge.isQAMode {
@@ -331,23 +368,34 @@ final class DFWindowController: NSWindowController {
     }
     var shouldRestore = false
     if SessionPersistence.shared.hasSavedSessions(for: path) {
-      let alert = NSAlert()
-      alert.messageText = "Restore previous sessions?"
-      alert.informativeText =
-        "Saved sessions were found for this project. Would you like to restore them?"
-      alert.addButton(withTitle: "Restore")
-      alert.addButton(withTitle: "Start Fresh")
-      shouldRestore = alert.runModal() == .alertFirstButtonReturn
+      if restoreWithoutAsking {
+        shouldRestore = true
+      } else {
+        let alert = NSAlert()
+        alert.messageText = "Restore previous sessions?"
+        alert.informativeText =
+          "Saved sessions were found for this project. Would you like to restore them?"
+        alert.addButton(withTitle: "Restore")
+        alert.addButton(withTitle: "Start Fresh")
+        shouldRestore = alert.runModal() == .alertFirstButtonReturn
+      }
     }
 
     // Create sessions AFTER modal returns so the run loop is free
     DispatchQueue.main.async { [weak self] in
       if shouldRestore {
-        SessionPersistence.shared.restoreSessions(for: path)
+        // Every saved entry can be stale (worktrees removed, transcripts
+        // gone); if nothing comes back, fall through to a fresh session so
+        // the project never opens empty.
+        if !SessionPersistence.shared.restoreSessions(for: path) {
+          self?.terminalPane.createNewSession(name: dirName, worktreePath: path)
+        }
       } else {
         SessionPersistence.shared.clearSavedSessions()
         self?.terminalPane.createNewSession(name: dirName, worktreePath: path)
       }
+      // Safe to begin autosaving now that the saved state has been consumed.
+      SessionPersistence.shared.startAutoSave()
     }
   }
 

@@ -139,6 +139,16 @@ final class Session {
   /// rollout JSONL) for cost/token updates.
   var usageWatcher: UsageWatcher?
 
+  /// The agent CLI's own session id, once the transcript watcher has seen
+  /// it. Saved across app restarts so the session can relaunch with
+  /// `claude --resume` instead of starting a fresh conversation. Until the
+  /// watcher has read a transcript, falls back to the id this session was
+  /// itself resumed from, so back-to-back restarts don't lose the thread.
+  var agentSessionId: String? { usageWatcher?.agentSessionId ?? resumedFromSessionId }
+
+  /// The id passed to `--resume` when this session was restored, if any.
+  var resumedFromSessionId: String?
+
   /// Watches `~/.claude/sessions/<pid>.json` for authoritative session state.
   /// Claude sessions only — Codex has no equivalent, so its state comes from
   /// the PTY stream analyzer instead.
@@ -374,10 +384,12 @@ final class SessionManager {
   /// with the agent it originally launched with. `initialPrompt` is handed
   /// to the agent CLI as a positional argument so the session starts working
   /// on it immediately (used for ticket-linked worktrees).
+  /// `resumeSessionId` relaunches the agent into a previous conversation
+  /// (`claude --resume`) — used when restoring saved sessions.
   @discardableResult
   func createSession(
     name: String? = nil, command: String? = nil, worktreePath: String? = nil,
-    agent: AgentKind? = nil, initialPrompt: String? = nil
+    agent: AgentKind? = nil, initialPrompt: String? = nil, resumeSessionId: String? = nil
   )
     -> Session
   {
@@ -388,6 +400,7 @@ final class SessionManager {
     let sessionName = name ?? "session-\(sessions.count + 1)"
     let session = Session(
       name: sessionName, worktreePath: worktreePath, agent: agent, launchModelId: modelId)
+    session.resumedFromSessionId = resumeSessionId
 
     // Create the terminal view (ClaudeTerminalView intercepts PTY data).
     // Use a zero frame — autolayout will resize to the real visible area
@@ -450,7 +463,8 @@ final class SessionManager {
     // on the spawned login shell re-sourcing PATH correctly.
     let agentBin = SessionManager.resolveAgentPath(agent: agent, augmentedPath: composedPath)
     let agentCmd = agent.launchCommand(
-      binPath: agentBin, modelId: modelId, initialPrompt: initialPrompt)
+      binPath: agentBin, modelId: modelId, initialPrompt: initialPrompt,
+      resumeSessionId: resumeSessionId)
 
     // Start transcript/status watchers for cost/token/state tracking.
     let watchDir = worktreePath ?? projectDir ?? FileManager.default.currentDirectoryPath
@@ -534,6 +548,11 @@ final class SessionManager {
       })
     else { return }
     session.name = newName
+    // Carry the resume id across the watcher swap: the replacement watcher
+    // starts blank, and the autosave triggered by the list change below
+    // would otherwise persist nil for this session. Read before
+    // stopWatchers() while the old watcher still holds the id.
+    session.resumedFromSessionId = session.agentSessionId
     session.worktreePath = newPath
     session.stopWatchers()
     session.startWatchers(directory: newPath)
