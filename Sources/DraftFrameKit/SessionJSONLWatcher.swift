@@ -83,6 +83,13 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   private var _latestAssistantText: String?
   private var _latestAssistantAt: Date?
 
+  /// Claude Code's own session id, read from the transcript's `sessionId`
+  /// field. This is what `claude --resume` takes, so it's what session
+  /// persistence saves. Same cross-thread access pattern as the assistant
+  /// text: written on the tailer's queue, read from the main thread.
+  var agentSessionId: String? { assistantTextLock.withLock { _agentSessionId } }
+  private var _agentSessionId: String?
+
   // MARK: - Private
 
   private let onUpdate: UpdateCallback
@@ -135,6 +142,10 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   }
 
   private func claudeProjectDir() -> String? {
+    Self.claudeProjectDir(forWorkingDirectory: workingDirectory)
+  }
+
+  static func claudeProjectDir(forWorkingDirectory workingDirectory: String) -> String? {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     // Claude Code encodes its own getcwd — the symlink-RESOLVED path
     // (/private/tmp, not /tmp) — while the session may hold the unresolved
@@ -155,6 +166,13 @@ final class SessionJSONLWatcher: @unchecked Sendable {
       }
     }
     return nil
+  }
+
+  /// Whether Claude Code still has a transcript for `sessionId` launched from
+  /// `workingDirectory` — the precondition for `claude --resume <sessionId>`.
+  static func transcriptExists(sessionId: String, workingDirectory: String) -> Bool {
+    guard let dir = claudeProjectDir(forWorkingDirectory: workingDirectory) else { return false }
+    return FileManager.default.fileExists(atPath: "\(dir)/\(sessionId).jsonl")
   }
 
   private func findLatestJSONL() -> String? {
@@ -220,9 +238,14 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   /// advanced. Internal for testing.
   func parseLine(_ line: String) -> Bool {
     guard let data = line.data(using: .utf8),
-      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let type = obj["type"] as? String
+      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return false }
+    // Every transcript line carries the session id, including types the
+    // switch below ignores — capture it before dispatching.
+    if let sid = obj["sessionId"] as? String, !sid.isEmpty {
+      assistantTextLock.withLock { _agentSessionId = sid }
+    }
+    guard let type = obj["type"] as? String else { return false }
     switch type {
     case "assistant": return parseAssistant(obj)
     case "user": return parseUser(obj)
