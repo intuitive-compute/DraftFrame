@@ -34,7 +34,9 @@ final class SessionPersistenceTests: XCTestCase {
   // MARK: - Session id capture from the transcript
 
   func testWatcherCapturesSessionIdFromAnyLineType() {
-    let watcher = SessionJSONLWatcher(workingDirectory: "/nonexistent") { _, _, _, _, _, _, _, _, _ in }
+    let watcher = SessionJSONLWatcher(workingDirectory: "/nonexistent") {
+      _, _, _, _, _, _, _, _, _ in
+    }
     defer { watcher.stop() }
     XCTAssertNil(watcher.agentSessionId)
 
@@ -45,7 +47,8 @@ final class SessionPersistenceTests: XCTestCase {
 
     // A newer line (e.g. after the tailer switches files) replaces it.
     _ = watcher.parseLine(
-      #"{"type":"user","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","message":{"content":"hi"}}"#)
+      #"{"type":"user","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","message":{"content":"hi"}}"#
+    )
     XCTAssertEqual(watcher.agentSessionId, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
     // Lines without the field leave the last-seen id in place.
