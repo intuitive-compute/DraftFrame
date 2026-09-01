@@ -334,6 +334,14 @@ final class DFWindowController: NSWindowController {
   /// persistence is that relaunching needs no clicks. A manual mid-session
   /// open keeps the restore-or-fresh prompt.
   func openProject(at path: String, restoreWithoutAsking: Bool = false) {
+    // Re-opening the project that's already open must skip the restore/
+    // create flow below: autosave keeps sessions.json present for the open
+    // project, so falling through would re-offer the Restore prompt and
+    // duplicate every live session (each resuming a conversation another
+    // tab is still attached to).
+    let alreadyOpen =
+      SessionManager.shared.projectDir == path && !SessionManager.shared.sessions.isEmpty
+
     // Set the project directory
     SessionManager.shared.projectDir = path
     FileManager.default.changeCurrentDirectoryPath(path)
@@ -347,6 +355,8 @@ final class DFWindowController: NSWindowController {
     // Update window title
     let dirName = (path as NSString).lastPathComponent
     window?.title = "DraftFrame — \(dirName)"
+
+    if alreadyOpen { return }
 
     // Check for saved sessions to restore. QA runs skip the prompt and
     // always start fresh, without clearing the user's saved sessions.

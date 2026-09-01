@@ -56,6 +56,43 @@ final class SessionPersistenceTests: XCTestCase {
     XCTAssertEqual(watcher.agentSessionId, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
   }
 
+  func testWatcherIgnoresSessionIdWhenCaptureDisabled() {
+    let watcher = SessionJSONLWatcher(workingDirectory: "/nonexistent") {
+      _, _, _, _, _, _, _, _, _ in
+    }
+    defer { watcher.stop() }
+
+    watcher.captureSessionIds = false
+    _ = watcher.parseLine(
+      #"{"type":"summary","sessionId":"11111111-2222-3333-4444-555555555555"}"#)
+    XCTAssertNil(watcher.agentSessionId)
+
+    watcher.captureSessionIds = true
+    _ = watcher.parseLine(
+      #"{"type":"summary","sessionId":"11111111-2222-3333-4444-555555555555"}"#)
+    XCTAssertEqual(watcher.agentSessionId, "11111111-2222-3333-4444-555555555555")
+  }
+
+  // MARK: - Resume id dedup
+
+  func testDedupingResumeIdsKeepsFirstOccurrence() {
+    let sessions = [
+      SessionPersistence.SavedSession(
+        name: "a", worktreePath: "/p", agent: "claude", agentSessionId: "id-1"),
+      SessionPersistence.SavedSession(
+        name: "b", worktreePath: "/p", agent: "claude", agentSessionId: "id-1"),
+      SessionPersistence.SavedSession(
+        name: "c", worktreePath: "/q", agent: "claude", agentSessionId: "id-2"),
+      SessionPersistence.SavedSession(
+        name: "d", worktreePath: "/r", agent: "claude", agentSessionId: nil),
+    ]
+    let deduped = SessionPersistence.dedupingResumeIds(sessions)
+    XCTAssertEqual(deduped.map { $0.agentSessionId }, ["id-1", nil, "id-2", nil])
+    // Everything else survives untouched.
+    XCTAssertEqual(deduped.map { $0.name }, ["a", "b", "c", "d"])
+    XCTAssertEqual(deduped[1].worktreePath, "/p")
+  }
+
   // MARK: - Saved-file format compatibility
 
   func testDecodesFileWrittenByOlderVersions() throws {

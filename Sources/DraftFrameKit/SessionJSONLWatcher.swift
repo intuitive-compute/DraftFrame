@@ -90,6 +90,17 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   var agentSessionId: String? { assistantTextLock.withLock { _agentSessionId } }
   private var _agentSessionId: String?
 
+  /// Gate on the id capture: the watcher tails whatever transcript in the
+  /// shared per-cwd folder is newest, which for a fresh tab in a directory
+  /// with prior history is some EARLIER run's conversation. Persisting that
+  /// id would make the tab resume a conversation it never had, so ids are
+  /// trusted only from a transcript written during this watcher's lifetime.
+  /// Maintained by `findLatestJSONL` and read by `parseLine`, both on the
+  /// tailer's queue. Internal (and defaulting to true) for direct
+  /// `parseLine` tests.
+  var captureSessionIds = true
+  private let watcherStartedAt = Date()
+
   // MARK: - Private
 
   private let onUpdate: UpdateCallback
@@ -193,6 +204,13 @@ final class SessionJSONLWatcher: @unchecked Sendable {
         newest = full
       }
     }
+    if newest != nil {
+      // A transcript untouched since before this watcher existed belongs to
+      // an earlier run: read it for usage/cost as always, but don't let its
+      // session id be persisted as this tab's conversation. Re-evaluated on
+      // every rescan, so the flag flips on as soon as the agent writes.
+      captureSessionIds = newestDate >= watcherStartedAt
+    }
     return newest
   }
 
@@ -241,8 +259,9 @@ final class SessionJSONLWatcher: @unchecked Sendable {
       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return false }
     // Every transcript line carries the session id, including types the
-    // switch below ignores — capture it before dispatching.
-    if let sid = obj["sessionId"] as? String, !sid.isEmpty {
+    // switch below ignores — capture it before dispatching (unless the
+    // watched file predates this watcher; see `captureSessionIds`).
+    if captureSessionIds, let sid = obj["sessionId"] as? String, !sid.isEmpty {
       assistantTextLock.withLock { _agentSessionId = sid }
     }
     guard let type = obj["type"] as? String else { return false }

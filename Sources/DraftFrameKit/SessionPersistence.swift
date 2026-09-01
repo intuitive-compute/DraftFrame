@@ -62,12 +62,13 @@ final class SessionPersistence {
       return
     }
 
-    let saved = sessions.map { session in
-      SavedSession(
-        name: session.name, worktreePath: session.worktreePath,
-        agent: session.agent.rawValue,
-        agentSessionId: session.agentSessionId)
-    }
+    let saved = Self.dedupingResumeIds(
+      sessions.map { session in
+        SavedSession(
+          name: session.name, worktreePath: session.worktreePath,
+          agent: session.agent.rawValue,
+          agentSessionId: session.agentSessionId)
+      })
 
     let file = SessionsFile(
       projectDir: projectDir, sessions: saved,
@@ -115,6 +116,19 @@ final class SessionPersistence {
     saveSessions()
   }
 
+  /// Drop duplicate resume ids, keeping the first occurrence. Two tabs
+  /// sharing a working directory can converge on the same newest transcript;
+  /// resuming one conversation from two sessions would put two claude
+  /// processes on one transcript, so later duplicates restore fresh instead.
+  nonisolated static func dedupingResumeIds(_ sessions: [SavedSession]) -> [SavedSession] {
+    var seen = Set<String>()
+    return sessions.map { s in
+      guard let id = s.agentSessionId, !seen.insert(id).inserted else { return s }
+      return SavedSession(
+        name: s.name, worktreePath: s.worktreePath, agent: s.agent, agentSessionId: nil)
+    }
+  }
+
   // MARK: - Restore
 
   /// The project directory the last saved state belongs to, or nil when
@@ -146,6 +160,16 @@ final class SessionPersistence {
       file.projectDir == projectDir, !file.sessions.isEmpty
     else { return false }
 
+    // The saved active index is relative to the saved list; sessions may
+    // already exist (another project's tabs), so offset by where the
+    // restored block begins.
+    let firstRestoredIndex = SessionManager.shared.sessions.count
+    // Never hand the same conversation to two sessions — two claude
+    // processes appending to one transcript corrupt it. Files written by
+    // current code are already deduped at save time; this covers older or
+    // hand-edited files.
+    var usedResumeIds = Set<String>()
+
     for entry in file.sessions {
       // Verify worktree path still exists if specified
       var wtPath = entry.worktreePath
@@ -161,10 +185,11 @@ final class SessionPersistence {
       // `claude --resume` with a stale id fails outright, which would leave
       // the restored tab sitting on an error.
       var resumeId: String?
-      if agent == .claude, let sid = entry.agentSessionId,
+      if agent == .claude, let sid = entry.agentSessionId, !usedResumeIds.contains(sid),
         SessionJSONLWatcher.transcriptExists(sessionId: sid, workingDirectory: workDir)
       {
         resumeId = sid
+        usedResumeIds.insert(sid)
       }
 
       SessionManager.shared.createSession(
@@ -174,8 +199,8 @@ final class SessionPersistence {
 
     // Reselect the session that was active at save time.
     let count = SessionManager.shared.sessions.count
-    if let idx = file.activeSessionIndex, idx >= 0, idx < count {
-      SessionManager.shared.switchTo(index: idx)
+    if let idx = file.activeSessionIndex, idx >= 0, firstRestoredIndex + idx < count {
+      SessionManager.shared.switchTo(index: firstRestoredIndex + idx)
     }
 
     // Rewrite the file from the live state (each restored session keeps its

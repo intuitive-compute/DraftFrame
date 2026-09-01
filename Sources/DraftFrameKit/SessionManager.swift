@@ -548,6 +548,11 @@ final class SessionManager {
       })
     else { return }
     session.name = newName
+    // Carry the resume id across the watcher swap: the replacement watcher
+    // starts blank, and the autosave triggered by the list change below
+    // would otherwise persist nil for this session. Read before
+    // stopWatchers() while the old watcher still holds the id.
+    session.resumedFromSessionId = session.agentSessionId
     session.worktreePath = newPath
     session.stopWatchers()
     session.startWatchers(directory: newPath)
