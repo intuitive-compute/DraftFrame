@@ -58,6 +58,9 @@ struct PRStatus {
   let url: String
   let checks: [PRCheck]
   let rollup: PRRollup
+  /// True when GitHub has an auto-merge request armed for the PR (the
+  /// "Queued to merge..." banner). Reported via `autoMergeRequest`.
+  var autoMergeQueued: Bool = false
 
   var passingCount: Int {
     checks.filter { $0.conclusion == .success }.count
@@ -69,6 +72,7 @@ struct PRStatus {
     case .merged: return "PR#\(number) merged"
     case .closed: return "PR#\(number) closed"
     case .open:
+      if autoMergeQueued && rollup != .failing { return "PR#\(number) queued to merge" }
       if checks.isEmpty { return "PR#\(number) no checks" }
       return "PR#\(number) \(rollup.label)"
     }
@@ -79,7 +83,9 @@ struct PRStatus {
     switch state {
     case .merged: return Theme.accent
     case .closed: return Theme.text3
-    case .open: return rollup.color
+    case .open:
+      if autoMergeQueued && rollup != .failing { return Theme.accent }
+      return rollup.color
     }
   }
 
@@ -88,6 +94,7 @@ struct PRStatus {
   func contentEquals(_ other: PRStatus) -> Bool {
     number == other.number && state == other.state
       && checks == other.checks && rollup == other.rollup
+      && autoMergeQueued == other.autoMergeQueued
   }
 }
 
@@ -259,7 +266,7 @@ final class PRMonitor {
     }
 
     let output = runGH(
-      args: ["pr", "view", "--json", "number,state,url,statusCheckRollup"],
+      args: ["pr", "view", "--json", "number,state,url,statusCheckRollup,autoMergeRequest"],
       cwd: worktreePath
     )
     guard let data = output.data(using: .utf8),
@@ -291,9 +298,13 @@ final class PRMonitor {
       )
     }
     let rollup = computeRollup(checks: checks)
+    // `autoMergeRequest` is a JSON object when auto-merge is armed and
+    // `null` otherwise (which JSONSerialization surfaces as NSNull).
+    let autoMergeQueued = obj["autoMergeRequest"] is [String: Any]
     let status = PRStatus(
       number: number, state: state, url: url,
-      checks: checks, rollup: rollup
+      checks: checks, rollup: rollup,
+      autoMergeQueued: autoMergeQueued
     )
 
     DispatchQueue.main.async { [weak self] in
@@ -341,6 +352,10 @@ final class PRMonitor {
 
     if newStatus.rollup != .passing {
       mergedAttempted.remove(sessionID)
+    }
+    // GitHub already has auto-merge armed; no need to request it again.
+    if newStatus.autoMergeQueued {
+      mergedAttempted.insert(sessionID)
     }
 
     let stateChanged = previousState != newStatus.state
