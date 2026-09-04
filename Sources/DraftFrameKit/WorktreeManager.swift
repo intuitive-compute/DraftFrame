@@ -8,7 +8,7 @@ final class WorktreeManager {
   // its long-standing cross-thread use.
   nonisolated(unsafe) static let shared = WorktreeManager()
 
-  struct Worktree {
+  struct Worktree: Equatable {
     let path: String
     let branch: String
     let head: String

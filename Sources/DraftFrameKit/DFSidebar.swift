@@ -29,6 +29,19 @@ final class DFSidebar: NSView {
   /// while its path is in here. Main-thread only.
   private var worktreeSetupsInFlight: Set<String> = []
 
+  /// Project paths with a merged-worktree sweep running, mapped to the
+  /// status shown in the row ("Scanning…", "Removing 3 of 12…"). The row's
+  /// broom is replaced by a spinner plus that text while its path is in
+  /// here. Part of the section snapshot so the row rebuilds as it changes.
+  /// Main-thread only.
+  private var sweepsInFlight: [String: String] = [:]
+  /// True only while a sweep is actually removing worktrees. Worktree-list
+  /// refreshes are deferred (see `refreshWorktrees`) so each closed session
+  /// and removed directory doesn't re-render the sidebar mid-sweep.
+  private var sweepRemovalPhase = false
+  /// Set when a refresh arrived during the removal phase; replayed after.
+  private var sweepDeferredRefresh = false
+
   /// Composed SF Symbol: leaf with a small "+" badge in the bottom-right.
   private static let leafPlusBadge: NSImage = {
     let size = NSSize(width: 16, height: 16)
@@ -82,6 +95,7 @@ final class DFSidebar: NSView {
     let isActive: Bool
     let isPulling: Bool
     let isSettingUp: Bool
+    let sweepStatus: String?
     let worktrees: [WorktreeKey]
   }
   private struct WorktreeKey: Equatable {
@@ -444,6 +458,12 @@ final class DFSidebar: NSView {
   private var lastEnumerated: [String: [WorktreeManager.Worktree]]?
 
   @objc func refreshWorktrees() {
+    // Mid-sweep, each closed session and removed worktree would otherwise
+    // trigger a rebuild; hold them until the sweep's summary lands.
+    if sweepRemovalPhase {
+      sweepDeferredRefresh = true
+      return
+    }
     // Repaint synchronously from cached listings first — sort, collapse, and
     // selection changes must land this frame to feel instant. The background
     // enumeration below then re-applies only if git reports something
@@ -518,6 +538,7 @@ final class DFSidebar: NSView {
         isActive: project.path == activeDir,
         isPulling: pullsInFlight.contains(project.path),
         isSettingUp: worktreeSetupsInFlight.contains(project.path),
+        sweepStatus: sweepsInFlight[project.path],
         worktrees: (worktreesPerProject[project.path] ?? []).map {
           WorktreeKey(path: $0.path, branch: $0.branch, isBare: $0.isBare)
         })
@@ -661,13 +682,39 @@ final class DFSidebar: NSView {
       addBtn.heightAnchor.constraint(equalToConstant: 16),
     ])
 
+    // While a merged-PR sweep (context menu) runs for this project, show a
+    // spinner and its progress text next to the add button.
+    var trailingControl: NSView = addBtn
+    if let status = sweepsInFlight[project.path] {
+      let spinner = NSProgressIndicator()
+      spinner.style = .spinning
+      spinner.controlSize = .small
+      spinner.isIndeterminate = true
+      spinner.isDisplayedWhenStopped = false
+      spinner.startAnimation(nil)
+      spinner.translatesAutoresizingMaskIntoConstraints = false
+      projectRow.addSubview(spinner)
+      let statusLabel = label(status, size: 9, color: Theme.text3)
+      statusLabel.translatesAutoresizingMaskIntoConstraints = false
+      projectRow.addSubview(statusLabel)
+      NSLayoutConstraint.activate([
+        spinner.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -6),
+        spinner.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
+        spinner.widthAnchor.constraint(equalToConstant: 16),
+        spinner.heightAnchor.constraint(equalToConstant: 16),
+        statusLabel.trailingAnchor.constraint(equalTo: spinner.leadingAnchor, constant: -4),
+        statusLabel.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
+      ])
+      trailingControl = statusLabel
+    }
+
     // While a background default-branch pull or a worktree setup
     // (base-branch pull + create) runs for this project, show a spinner
     // next to the add button. Both sets are part of the snapshot, so the
     // row rebuilds when either changes.
     let isPulling = pullsInFlight.contains(project.path)
-    var trailingControl: NSView = addBtn
     if isPulling || worktreeSetupsInFlight.contains(project.path) {
+      let anchorView = trailingControl
       let spinner = NSProgressIndicator()
       spinner.style = .spinning
       spinner.controlSize = .small
@@ -677,7 +724,7 @@ final class DFSidebar: NSView {
       spinner.translatesAutoresizingMaskIntoConstraints = false
       projectRow.addSubview(spinner)
       NSLayoutConstraint.activate([
-        spinner.trailingAnchor.constraint(equalTo: addBtn.leadingAnchor, constant: -6),
+        spinner.trailingAnchor.constraint(equalTo: anchorView.leadingAnchor, constant: -6),
         spinner.centerYAnchor.constraint(equalTo: projectRow.centerYAnchor),
         spinner.widthAnchor.constraint(equalToConstant: 16),
         spinner.heightAnchor.constraint(equalToConstant: 16),
@@ -731,6 +778,14 @@ final class DFSidebar: NSView {
     fromBranchItem.target = self
     fromBranchItem.representedObject = project.path
     menu.addItem(fromBranchItem)
+
+    menu.addItem(NSMenuItem.separator())
+    let sweepItem = NSMenuItem(
+      title: "Remove Merged Workspaces…",
+      action: #selector(sweepProjectFromMenu(_:)), keyEquivalent: "")
+    sweepItem.target = self
+    sweepItem.representedObject = project.path
+    menu.addItem(sweepItem)
 
     menu.addItem(NSMenuItem.separator())
     let removeItem = NSMenuItem(
@@ -941,6 +996,177 @@ final class DFSidebar: NSView {
           self.refreshWorktrees()
         }
       }
+    }
+  }
+
+  // MARK: - Sweep merged worktrees
+
+  @objc private func sweepProjectFromMenu(_ sender: NSMenuItem) {
+    guard let repoRoot = sender.representedObject as? String, !repoRoot.isEmpty,
+      sweepsInFlight[repoRoot] == nil
+    else { return }
+    let projectName = (repoRoot as NSString).lastPathComponent
+    setSweepStatus("Scanning…", for: repoRoot)
+
+    WorktreeSweeper.shared.scan(repoRoot: repoRoot) { [weak self] candidates in
+      guard let self = self else { return }
+      if candidates.isEmpty {
+        self.setSweepStatus(nil, for: repoRoot)
+        self.showInfoSheet(
+          title: "Nothing to Remove",
+          body: "No workspaces in \(projectName) have a merged pull request.")
+        return
+      }
+      // Keep the row busy behind the sheet so a second click can't start a
+      // parallel sweep of the same repo.
+      self.setSweepStatus("Confirm…", for: repoRoot)
+      self.confirmSweep(projectName: projectName, candidates: candidates) { selected in
+        guard !selected.isEmpty else {
+          self.setSweepStatus(nil, for: repoRoot)
+          return
+        }
+        self.runSweep(repoRoot: repoRoot, candidates: selected)
+      }
+    }
+  }
+
+  /// Confirmation sheet listing every candidate with a checkbox (all checked
+  /// by default). Calls `completion` with the checked subset, or an empty
+  /// array on cancel.
+  private func confirmSweep(
+    projectName: String, candidates: [SweepCandidate],
+    completion: @escaping ([SweepCandidate]) -> Void
+  ) {
+    guard let win = window else {
+      completion([])
+      return
+    }
+    let alert = NSAlert()
+    alert.messageText = "Remove Workspaces with Merged PRs in \(projectName)?"
+    alert.informativeText =
+      "These workspaces have merged pull requests. Checked workspaces will be removed, "
+      + "along with any sessions open on them. Uncommitted changes in them will be lost."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Remove")
+    alert.addButton(withTitle: "Cancel")
+
+    let list = NSStackView()
+    list.orientation = .vertical
+    list.alignment = .leading
+    list.spacing = 4
+    list.translatesAutoresizingMaskIntoConstraints = false
+    var checkboxes: [NSButton] = []
+    for candidate in candidates {
+      let branch =
+        candidate.worktree.branch == candidate.name ? "" : "  (\(candidate.worktree.branch))"
+      let box = NSButton(
+        checkboxWithTitle: "\(candidate.name)\(branch)  PR #\(candidate.prNumber)",
+        target: nil, action: nil)
+      box.state = .on
+      box.font = NSFont.systemFont(ofSize: 12)
+      box.lineBreakMode = .byTruncatingMiddle
+      list.addArrangedSubview(box)
+      checkboxes.append(box)
+    }
+
+    // Scroll once the list would push the sheet past a sane height.
+    let rowHeight: CGFloat = 22
+    let visibleRows = min(candidates.count, 12)
+    let scroll = NSScrollView(
+      frame: NSRect(x: 0, y: 0, width: 420, height: CGFloat(visibleRows) * rowHeight + 4))
+    scroll.hasVerticalScroller = candidates.count > visibleRows
+    scroll.drawsBackground = false
+    scroll.borderType = .noBorder
+    let doc = FlippedView(
+      frame: NSRect(x: 0, y: 0, width: 400, height: CGFloat(candidates.count) * rowHeight))
+    doc.addSubview(list)
+    NSLayoutConstraint.activate([
+      list.topAnchor.constraint(equalTo: doc.topAnchor),
+      list.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+      list.widthAnchor.constraint(equalTo: doc.widthAnchor),
+    ])
+    scroll.documentView = doc
+    alert.accessoryView = scroll
+
+    alert.beginSheetModal(for: win) { response in
+      guard response == .alertFirstButtonReturn else {
+        completion([])
+        return
+      }
+      let selected = zip(candidates, checkboxes)
+        .filter { $0.1.state == .on }
+        .map { $0.0 }
+      completion(selected)
+    }
+  }
+
+  private func runSweep(repoRoot: String, candidates: [SweepCandidate]) {
+    // Hide the doomed rows right away (painted from cache this frame), then
+    // freeze the list for the duration of the removals.
+    for c in candidates { pendingRemovals.insert(c.worktree.path) }
+    setSweepStatus("Removing 1 of \(candidates.count)…", for: repoRoot)
+    sweepRemovalPhase = true
+
+    WorktreeSweeper.shared.sweep(
+      repoRoot: repoRoot, candidates: candidates,
+      progress: { [weak self] index, total in
+        guard let self = self else { return }
+        // Bypass the refresh guard: repaint just this row from cache.
+        self.sweepsInFlight[repoRoot] = "Removing \(index) of \(total)…"
+        if let cached = self.lastEnumerated { self.applyWorktreeResults(cached) }
+      },
+      completion: { [weak self] result in
+        guard let self = self else { return }
+        for c in candidates { self.pendingRemovals.remove(c.worktree.path) }
+        self.sweepRemovalPhase = false
+        self.setSweepStatus(nil, for: repoRoot)
+        if self.sweepDeferredRefresh {
+          self.sweepDeferredRefresh = false
+          self.refreshWorktrees()
+        }
+
+        let removed = result.removed.count
+        let noun = removed == 1 ? "workspace" : "workspaces"
+        if result.failures.isEmpty {
+          NotificationManager.shared.sendWatchdogNotification(
+            title: "Removed \(removed) \(noun)",
+            body: result.removed.map { "\($0.name) (PR #\($0.prNumber))" }
+              .joined(separator: ", "))
+        } else {
+          let failed = result.failures.map { "\($0.candidate.name): \($0.message)" }
+            .joined(separator: "\n")
+          NotificationManager.shared.sendWatchdogNotification(
+            title: "Removed \(removed) \(noun), \(result.failures.count) failed",
+            body: failed)
+          self.showInfoSheet(
+            title: "Some Workspaces Couldn't Be Removed",
+            body: failed)
+        }
+      })
+  }
+
+  /// Set (or clear, with nil) the sweep status shown in a project's row and
+  /// repaint. Refreshes are guarded during the removal phase, so callers in
+  /// that phase repaint from cache themselves.
+  private func setSweepStatus(_ status: String?, for repoRoot: String) {
+    if let status = status {
+      sweepsInFlight[repoRoot] = status
+    } else {
+      sweepsInFlight.removeValue(forKey: repoRoot)
+    }
+    refreshWorktrees()
+  }
+
+  private func showInfoSheet(title: String, body: String) {
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = body
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "OK")
+    if let win = window {
+      alert.beginSheetModal(for: win)
+    } else {
+      alert.runModal()
     }
   }
 

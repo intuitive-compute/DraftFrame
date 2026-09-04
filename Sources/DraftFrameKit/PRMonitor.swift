@@ -150,8 +150,8 @@ final class PRMonitor {
   /// How often to hit `gh pr view` per session.
   private static let pollInterval: TimeInterval = 30
 
-  /// Cached PATH with Homebrew dirs prepended, computed once at init.
-  private let composedPATH: String = {
+  /// Cached PATH with Homebrew dirs prepended, computed once.
+  nonisolated private static let composedPATH: String = {
     let homebrewPaths = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
     let inherited = ProcessInfo.processInfo.environment["PATH"] ?? ""
     let parts = inherited.split(separator: ":").map(String.init)
@@ -265,7 +265,7 @@ final class PRMonitor {
       return
     }
 
-    let output = runGH(
+    let output = Self.runGH(
       args: ["pr", "view", "--json", "number,state,url,statusCheckRollup,autoMergeRequest"],
       cwd: worktreePath
     )
@@ -410,7 +410,7 @@ final class PRMonitor {
   private func fireAutoMerge(sessionID: UUID, worktreePath: String, status: PRStatus) {
     queue.async { [weak self] in
       guard let self = self else { return }
-      let output = self.runGH(
+      let output = Self.runGH(
         args: ["pr", "merge", "--squash", "--auto"],
         cwd: worktreePath
       )
@@ -472,7 +472,9 @@ final class PRMonitor {
 
   // MARK: - gh shell out
 
-  nonisolated private func runGH(args: [String], cwd: String) -> String {
+  /// Run `gh` with `args` in `cwd` and return its stdout. Blocks until gh
+  /// exits — never call from the main thread. Shared with `WorktreeSweeper`.
+  nonisolated static func runGH(args: [String], cwd: String) -> String {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     proc.arguments = ["gh"] + args
