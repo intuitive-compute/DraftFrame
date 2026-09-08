@@ -1229,10 +1229,7 @@ final class DFSidebar: NSView {
   private nonisolated static func enumerateWorktrees(for projectPath: String)
     -> [WorktreeManager.Worktree]
   {
-    // Scrub GIT_* env vars so a stray GIT_DIR/GIT_WORK_TREE inherited from
-    // the launching session doesn't redirect git to the wrong repo.
-    let env = ProcessInfo.processInfo.environment
-      .filter { !$0.key.hasPrefix("GIT_") }
+    let env = WorktreeManager.gitEnvironment()
 
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -1605,8 +1602,7 @@ final class DFSidebar: NSView {
   }
 
   private nonisolated static func gitChangedFiles(in dir: String) -> [ChangedFile] {
-    let env = ProcessInfo.processInfo.environment
-      .filter { !$0.key.hasPrefix("GIT_") }
+    let env = WorktreeManager.gitEnvironment()
 
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")

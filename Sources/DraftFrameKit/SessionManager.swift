@@ -610,6 +610,7 @@ final class SessionManager {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]
+    proc.environment = WorktreeManager.gitEnvironment()
     let pipe = Pipe()
     proc.standardOutput = pipe
     proc.standardError = Pipe()

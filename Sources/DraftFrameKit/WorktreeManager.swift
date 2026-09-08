@@ -50,6 +50,7 @@ final class WorktreeManager {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", path, "rev-parse", "--show-toplevel"]
+    proc.environment = Self.gitEnvironment()
     let pipe = Pipe()
     proc.standardOutput = pipe
     proc.standardError = Pipe()
@@ -98,6 +99,7 @@ final class WorktreeManager {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", dir, "rev-parse", "--show-toplevel"]
+    proc.environment = Self.gitEnvironment()
     let pipe = Pipe()
     proc.standardOutput = pipe
     proc.standardError = Pipe()
@@ -202,14 +204,24 @@ final class WorktreeManager {
     throw WorktreeError.creationFailed(localError)
   }
 
-  /// Environment for git subprocesses: GIT_* vars scrubbed (a stray
-  /// GIT_DIR/GIT_WORK_TREE inherited from the launching session would
-  /// redirect git to the wrong repo) and terminal prompting disabled so a
-  /// network command can never hang waiting for credentials.
-  private static func gitEnvironment() -> [String: String] {
+  /// Environment for every git subprocess the app spawns.
+  ///
+  /// - GIT_* vars are scrubbed: a stray GIT_DIR/GIT_WORK_TREE inherited from
+  ///   the launching session would redirect git to the wrong repo.
+  /// - GIT_TERMINAL_PROMPT=0 so a network command can never hang waiting for
+  ///   credentials.
+  /// - GIT_OPTIONAL_LOCKS=0 so read-only queries (`status`, `diff`,
+  ///   `worktree list`, `rev-parse`, ...) never take `.git/index.lock` to
+  ///   refresh the stat cache. The sidebar polls `git status` on every file
+  ///   change, which is exactly when Claude is about to `git add`/`commit` in
+  ///   the same worktree; an opportunistic lock there makes those commands
+  ///   fail with "Unable to create '.git/index.lock': File exists". Commands
+  ///   that actually mutate the index still take the mandatory lock as usual.
+  static func gitEnvironment() -> [String: String] {
     var env = ProcessInfo.processInfo.environment
       .filter { !$0.key.hasPrefix("GIT_") }
     env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_OPTIONAL_LOCKS"] = "0"
     return env
   }
 
@@ -304,6 +316,7 @@ final class WorktreeManager {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", dir, "branch", "--show-current"]
+    proc.environment = Self.gitEnvironment()
     let pipe = Pipe()
     proc.standardOutput = pipe
     proc.standardError = Pipe()
@@ -395,10 +408,7 @@ final class WorktreeManager {
   func removeWorktree(repoRoot root: String, path: String) throws {
     let name = (path as NSString).lastPathComponent
 
-    // Scrub GIT_* env vars so a stray GIT_DIR/GIT_WORK_TREE inherited from
-    // launchd doesn't redirect git to the wrong repo.
-    let env = ProcessInfo.processInfo.environment
-      .filter { !$0.key.hasPrefix("GIT_") }
+    let env = Self.gitEnvironment()
 
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -487,10 +497,7 @@ final class WorktreeManager {
   /// a diverged local branch fails with git's explanation instead of silently
   /// creating a merge commit.
   func pull(repoRoot root: String) throws {
-    // Scrub GIT_* env vars so a stray GIT_DIR/GIT_WORK_TREE inherited from
-    // the launching session doesn't redirect git to the wrong repo.
-    let env = ProcessInfo.processInfo.environment
-      .filter { !$0.key.hasPrefix("GIT_") }
+    let env = Self.gitEnvironment()
 
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
