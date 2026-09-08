@@ -865,8 +865,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["-C", dir, "remote", "get-url", "origin"]
-    proc.environment = ProcessInfo.processInfo.environment
-      .filter { !$0.key.hasPrefix("GIT_") }
+    proc.environment = WorktreeManager.gitEnvironment()
     let pipe = Pipe()
     proc.standardOutput = pipe
     proc.standardError = FileHandle.nullDevice

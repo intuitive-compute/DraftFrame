@@ -181,7 +181,7 @@ final class DFDiffOverlay: NSView {
   // MARK: - Git
 
   private static func gitDiff(relativePath: String, worktreeDir: String, status: String) -> String {
-    let env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }
+    let env = WorktreeManager.gitEnvironment()
     let args: [String]
     if status == "?" {
       // Untracked: diff against /dev/null so the whole file reads as added.
