@@ -1086,6 +1086,35 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     NSPasteboard.general.setString(text, forType: .string)
   }
 
+  // MARK: - Selection copy
+
+  /// Copy the selection as logical lines rather than visual rows.
+  ///
+  /// SwiftTerm's own copy already joins rows the terminal soft-wrapped (via
+  /// the buffer's `isWrapped` flag), but Claude Code wraps its output itself
+  /// and emits every visual row as a hard line, so a long command that wraps
+  /// on screen would otherwise paste into a shell as several broken commands.
+  /// `LogicalLineJoiner` re-joins those rows using the wrap column inferred
+  /// from the selection and the visible screen. Reached by Cmd+C (Edit menu)
+  /// and the context menu's Copy item alike.
+  override func copy(_ sender: Any) {
+    guard let raw = getSelection() else { return }
+    var text = raw
+    if joinsWrappedRowsOnCopy {
+      let term = getTerminal()
+      let screen = (0..<term.rows).map { renderedRow($0) }
+      text = LogicalLineJoiner.join(raw, columns: term.cols, screenRows: screen)
+    }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+  }
+
+  /// Whether `copy(_:)` re-joins rows Claude Code hard-wrapped. On for Claude
+  /// sessions; off for the Quick Terminal, whose shell relies on terminal
+  /// wrapping (which SwiftTerm already handles) and where the heuristic
+  /// would risk gluing independent lines of program output.
+  var joinsWrappedRowsOnCopy = true
+
   // MARK: - Drag and Drop
 
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
