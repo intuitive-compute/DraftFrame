@@ -220,18 +220,68 @@ final class LogicalLineJoinerTests: XCTestCase {
     var partial = rows
     partial[0] = String(rows[0].dropFirst("⏺ Bash(".count))
     XCTAssertEqual(join(partial, firstRowWidth: rows[0].count), command)
-    // The screen-driven entry point recovers that width itself.
+    // The screen-driven entry point recovers that width itself, anchored on
+    // the row below matching the second selected line.
     let screen: [String?] = ["  header"] + rows.map { Optional($0) } + [nil]
     XCTAssertEqual(
       LogicalLineJoiner.join(partial.joined(separator: "\n"), columns: 60, screenRows: screen),
       command)
   }
 
-  func testFullRowWidthRequiresWordBoundary() {
-    let rows: [String?] = ["  foo ls -la", "  something else"]
-    XCTAssertEqual(LogicalLineJoiner.fullRowWidth(endingWith: "ls -la", in: rows), 12)
-    XCTAssertNil(LogicalLineJoiner.fullRowWidth(endingWith: "s -la", in: rows))
-    XCTAssertNil(LogicalLineJoiner.fullRowWidth(endingWith: "  foo ls -la", in: rows))
+  func testFullRowWidthRequiresWordBoundaryAndAnchor() {
+    let rows: [String?] = ["  foo ls -la", "  something else", "  ls -la", "  other"]
+    let next = "  something else"
+    XCTAssertEqual(
+      LogicalLineJoiner.fullRowWidth(endingWith: "ls -la", followedBy: next, in: rows), 12)
+    // Mid-word match is refused.
+    XCTAssertNil(LogicalLineJoiner.fullRowWidth(endingWith: "s -la", followedBy: next, in: rows))
+    // A line that already is the whole row needs no recovery.
+    XCTAssertNil(
+      LogicalLineJoiner.fullRowWidth(endingWith: "  foo ls -la", followedBy: next, in: rows))
+    // The row below must be the second selected line: the third row here also
+    // ends with the tail but is followed by "other", so it is not taken.
+    XCTAssertNil(
+      LogicalLineJoiner.fullRowWidth(endingWith: "ls -la", followedBy: "  nope", in: rows))
+  }
+
+  func testDecoyRowElsewhereOnScreenDoesNotInflateFirstLine() {
+    // The selection is two complete short lines. Another row on screen ends
+    // with the same word "done"; it must not lend its width to the first line.
+    let selection = "done\nNext independent line"
+    let screen: [String?] = [
+      "⏺ Bash(make && make test && echo done", "  ⎿  ok", "", "done", "Next independent line",
+    ]
+    XCTAssertEqual(
+      LogicalLineJoiner.join(selection, columns: 60, screenRows: screen), selection)
+  }
+
+  func testChromeRowInsideSelectionDoesNotHideHardSplit() {
+    // A drag across a turn boundary picks up the full-width rule row. It must
+    // not become the "widest row" and stop the URL seam from closing.
+    let url = "https://example.com/" + String(repeating: "a", count: 60) + "/bbb.tar.gz"
+    let command = "curl -fsSL \(url) -o out.tgz"
+    let rows =
+      inkRows(command, width: wrap, firstIndent: "  ", indent: "  ")
+      + [String(repeating: "─", count: 60)]
+    XCTAssertEqual(join(rows), "  " + command + "\n" + String(repeating: "─", count: 60))
+  }
+
+  func testMarkdownTableRowsStaySeparate() {
+    let rows = [
+      "  | id    | UUID   | Stable identifier for the session row |",
+      "  |-------|--------|---------------------------------------|",
+      "  | title | String | Display name shown in the sidebar lst |",
+    ]
+    XCTAssertEqual(join(rows), rows.joined(separator: "\n"))
+  }
+
+  func testDiffGutterRowsStaySeparate() {
+    let rows = [
+      "     12 +    let value = computeSomething(from: input, o)",
+      "     13 +    return value",
+      "     14      }",
+    ]
+    XCTAssertEqual(join(rows), rows.joined(separator: "\n"))
   }
 
   func testWrapColumnIgnoresInputBoxRowWithText() {

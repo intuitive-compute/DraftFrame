@@ -628,10 +628,6 @@ final class DFQuickTerminal {
   /// Build a fresh terminal pane and start its shell.
   private func makePane(sessionID: UUID, workingDirectory: String?) -> QTPane {
     let tv = ClaudeTerminalView(frame: .zero)
-    // A plain shell: the terminal does the wrapping here, and SwiftTerm's own
-    // copy already joins those rows. The Claude Code re-wrap heuristic would
-    // only risk gluing independent lines of program output.
-    tv.joinsWrappedRowsOnCopy = false
     tv.translatesAutoresizingMaskIntoConstraints = false
     tv.nativeForegroundColor = Theme.text1
     tv.nativeBackgroundColor = Theme.bg

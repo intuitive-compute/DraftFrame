@@ -1100,20 +1100,32 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   override func copy(_ sender: Any) {
     guard let raw = getSelection() else { return }
     var text = raw
-    if joinsWrappedRowsOnCopy {
+    // Single-row selections have nothing to join; skip the screen scan.
+    if joinsWrappedRowsOnCopy, raw.contains("\n") {
       let term = getTerminal()
-      let screen = (0..<term.rows).map { renderedRow($0) }
+      let screen = (0..<term.rows).map { copyRow($0) }
       text = LogicalLineJoiner.join(raw, columns: term.cols, screenRows: screen)
     }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
   }
 
-  /// Whether `copy(_:)` re-joins rows Claude Code hard-wrapped. On for Claude
-  /// sessions; off for the Quick Terminal, whose shell relies on terminal
-  /// wrapping (which SwiftTerm already handles) and where the heuristic
-  /// would risk gluing independent lines of program output.
-  var joinsWrappedRowsOnCopy = true
+  /// A visible row as the selection text would render it: the zero-width
+  /// stub cell after each wide glyph is dropped (as SwiftTerm's copy does),
+  /// so widths and suffix matches line up with `getSelection()`. Unlike
+  /// `renderedRow`, which keeps one character per column for click mapping.
+  private func copyRow(_ row: Int) -> String? {
+    guard let line = getTerminal().getLine(row: row) else { return nil }
+    return line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
+      .replacingOccurrences(of: "\u{0}", with: " ")
+  }
+
+  /// Whether `copy(_:)` re-joins rows Claude Code hard-wrapped. Off by
+  /// default; `SessionManager` turns it on for Claude Code sessions only. A
+  /// plain shell (the Quick Terminal) or Codex relies on terminal wrapping,
+  /// which SwiftTerm already joins, and the heuristic would only risk gluing
+  /// independent lines of program output.
+  var joinsWrappedRowsOnCopy = false
 
   // MARK: - Drag and Drop
 

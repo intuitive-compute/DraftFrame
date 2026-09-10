@@ -414,6 +414,9 @@ final class SessionManager {
     tv.selectedTextBackgroundColor = Theme.selected
     tv.caretColor = Theme.accent
     tv.font = Theme.terminalMono(13)
+    // The copy re-wrap heuristic models Claude Code's Ink renderer; Codex
+    // draws its own full-screen TUI and gets SwiftTerm's plain copy.
+    tv.joinsWrappedRowsOnCopy = agent == .claude
     session.terminalView = tv
 
     // Wire PTY data stream to the analyzer for real-time state detection

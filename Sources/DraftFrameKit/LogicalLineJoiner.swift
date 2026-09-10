@@ -24,8 +24,12 @@ import Foundation
 /// Anything else stays a hard newline. In particular a row that starts a new
 /// list item or structural glyph, a row whose indent is shallower than the
 /// row above, or a blank row always breaks. The heuristic is necessarily
-/// ambiguous for two independent lines that happen to satisfy the width test,
-/// so it is only applied to Claude sessions, never to a plain shell.
+/// ambiguous for two independent lines that happen to satisfy the width test
+/// (a code line that nearly fills the width followed by a line whose first
+/// token would not have fit; a row that is exactly full and ends in a long
+/// token followed by another long token, which is byte-identical to a hard
+/// split), so it is only applied to Claude Code sessions, never to a plain
+/// shell or another agent's TUI.
 enum LogicalLineJoiner {
 
   /// The wrap column must reach this fraction of the terminal width before
@@ -39,13 +43,13 @@ enum LogicalLineJoiner {
   /// Ink's wrap column and to recover the full width of the first selected
   /// row when the drag began mid-row.
   static func join(_ text: String, columns: Int, screenRows: [String?]) -> String {
-    let firstLine =
-      text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
-      .first.map(String.init) ?? ""
+    let head = text.split(separator: "\n", maxSplits: 2, omittingEmptySubsequences: false)
+    guard head.count > 1 else { return text }
     return join(
       text, columns: columns,
       screenWrapColumn: wrapColumn(forScreenRows: screenRows),
-      firstRowWidth: fullRowWidth(endingWith: firstLine, in: screenRows))
+      firstRowWidth: fullRowWidth(
+        endingWith: String(head[0]), followedBy: String(head[1]), in: screenRows))
   }
 
   /// Core of `join`. `screenWrapColumn` is the wrap column inferred from the
@@ -66,7 +70,12 @@ enum LogicalLineJoiner {
     if let firstRowWidth, firstRowWidth > widths[0], firstRowWidth <= columns {
       widths[0] = firstRowWidth
     }
-    let selectionMax = widths.filter { $0 <= columns }.max() ?? 0
+    // Chrome rows (a rule between turns, a box border) span the full width
+    // and would otherwise stop any text row from counting as filled.
+    let selectionMax =
+      zip(lines, widths)
+      .filter { $0.1 <= columns && isTextRow($0.0) }
+      .map { $0.1 }.max() ?? 0
     let wrapColumn = max(selectionMax, min(screenWrapColumn ?? 0, columns))
     guard Double(wrapColumn) >= Double(columns) * minimumWrapFraction else { return text }
 
@@ -79,11 +88,12 @@ enum LogicalLineJoiner {
       switch decision {
       case .none:
         result.append(row)
-      case .word:
-        result[result.count - 1] =
-          trimTrailingBlank(result[result.count - 1]) + " " + content(of: row)
-      case .hardSplit:
-        result[result.count - 1] = trimTrailingBlank(result[result.count - 1]) + content(of: row)
+      case .word, .hardSplit:
+        var last = result.removeLast()
+        while let c = last.last, isBlank(c) { last.removeLast() }
+        if decision == .word { last.append(" ") }
+        last.append(content(of: row))
+        result.append(last)
       }
     }
     return result.joined(separator: "\n")
@@ -95,25 +105,41 @@ enum LogicalLineJoiner {
   /// ignored. Nil when nothing qualifies.
   static func wrapColumn(forScreenRows rows: [String?]) -> Int? {
     var best = 0
-    for case let row? in rows {
-      let trimmed = trimTrailingBlank(row)
-      guard trimmed.contains(where: isTextGlyph) else { continue }
-      if let first = trimmed.first(where: { !isBlank($0) }), isBoxDrawing(first) { continue }
-      if let last = trimmed.last, isBoxDrawing(last) { continue }
-      best = max(best, displayWidth(trimmed))
+    for case let row? in rows where isTextRow(row) {
+      best = max(best, displayWidth(trimTrailingBlank(row)))
     }
     return best > 0 ? best : nil
   }
 
-  /// Width of the on-screen row whose text ends with `line`, when `line` is
-  /// the tail of that row (the selection began mid-row). Nil when no row
-  /// matches or the match is not at a word boundary.
-  static func fullRowWidth(endingWith line: String, in rows: [String?]) -> Int? {
+  /// A row that carries text and is not chrome: rows bounded by box-drawing
+  /// (the input box, tool-call frames, the rule between turns) span the full
+  /// terminal width and say nothing about where Ink wrapped.
+  static func isTextRow(_ row: String) -> Bool {
+    let trimmed = trimTrailingBlank(row)
+    guard trimmed.contains(where: isTextGlyph) else { return false }
+    if let first = trimmed.first(where: { !isBlank($0) }), isBoxDrawing(first) { return false }
+    if let last = trimmed.last, isBoxDrawing(last) { return false }
+    return true
+  }
+
+  /// Width of the on-screen row the selection started on, when `line` (the
+  /// first selected line) is only the tail of that row because the drag began
+  /// mid-row. The match is anchored: the row must end with `line` at a word
+  /// boundary *and* be followed on screen by the second selected line, so an
+  /// unrelated row elsewhere that happens to end the same way is not taken.
+  /// Nil when the selection is not on screen or already starts at the row's
+  /// first column.
+  static func fullRowWidth(endingWith line: String, followedBy next: String, in rows: [String?])
+    -> Int?
+  {
     let tail = trimTrailingBlank(line)
+    let nextTrimmed = trimTrailingBlank(next)
     guard !tail.isEmpty, tail.contains(where: isTextGlyph) else { return nil }
-    for case let row? in rows {
+    for i in rows.indices.dropLast() {
+      guard let row = rows[i], let below = rows[i + 1] else { continue }
       let trimmed = trimTrailingBlank(row)
       guard trimmed.count > tail.count, trimmed.hasSuffix(tail) else { continue }
+      guard trimTrailingBlank(below) == nextTrimmed else { continue }
       let boundary = trimmed.index(trimmed.endIndex, offsetBy: -tail.count)
       let before = trimmed[trimmed.index(before: boundary)]
       guard isBlank(before) || !isTextGlyph(before) || !isTextGlyph(tail.first!) else { continue }
@@ -165,19 +191,22 @@ enum LogicalLineJoiner {
   // MARK: - Row anatomy
 
   /// Glyphs that open a new list item or structural row in Claude Code's
-  /// output. A row beginning with one of these is never a continuation.
-  /// Shell-significant characters (`>`, `#`, `|`, `&`) are deliberately
+  /// output: bullets, tool-call markers, checkboxes, the quote bar, and the
+  /// `|` of a Markdown table cell. A row beginning with one of these is never
+  /// a continuation. Shell-significant `>`, `#` and `&` are deliberately
   /// absent so a wrapped command whose continuation starts with a redirect
   /// or comment still joins.
-  private static let itemGlyphs: Set<Character> = [
-    "•", "◦", "▪", "⏺", "⎿", "☐", "☒", "✓", "✔", "✗", "✘", "›", "❯",
-    "▏", "▎", "▍", "▌", "▋", "▊", "▉",
-  ]
+  private static let itemGlyphs: Set<Character> = Set<Character>([
+    "•", "◦", "▪", "⏺", "⎿", "☐", "☒", "✓", "✔", "✗", "✘", "›", "❯", "|",
+  ]).union(BlockquoteScanner.barGlyphs)
 
-  private static let numberedItem = try! NSRegularExpression(pattern: "^[0-9]{1,3}[.)]\\s")
+  /// "1. item", "2) item", and the line-number gutter of an Edit-tool diff
+  /// ("12 +    let value = ..."), which is digits followed by whitespace.
+  private static let numberedItem = try! NSRegularExpression(pattern: "^[0-9]{1,4}(?:[.)])?\\s")
 
   /// True when `content` (indent already stripped) opens a list item, a
-  /// quote bar, a tool-call marker, or a box-drawing frame.
+  /// table cell, a diff gutter, a quote bar, a tool-call marker, or a
+  /// box-drawing frame.
   static func startsNewItem(_ content: String) -> Bool {
     guard let first = content.first else { return false }
     if itemGlyphs.contains(first) || isBoxDrawing(first) { return true }
@@ -194,7 +223,7 @@ enum LogicalLineJoiner {
   }
 
   private static func isBlank(_ c: Character) -> Bool {
-    c == " " || c == "\t" || c == "\u{0}"
+    BlockquoteScanner.isSkippable(c)
   }
 
   private static func isBoxDrawing(_ c: Character) -> Bool {

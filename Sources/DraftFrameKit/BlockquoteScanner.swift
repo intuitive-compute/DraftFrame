@@ -17,7 +17,7 @@ enum BlockquoteScanner {
   /// returns NUL (U+0000) for cells Claude Code hasn't written — a blockquote's
   /// indent often arrives as NUL cells before the bar glyph rather than spaces,
   /// so we must skip those too or the bar is never found.
-  private static func isSkippable(_ c: Character) -> Bool {
+  static func isSkippable(_ c: Character) -> Bool {
     c == " " || c == "\t" || c == "\u{0}"
   }
 
