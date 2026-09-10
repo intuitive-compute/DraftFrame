@@ -6,7 +6,7 @@ final class LogicalLineJoinerTests: XCTestCase {
 
   /// Wrap column of a 60-column terminal once Claude Code's right margin is
   /// taken off. Every fixture below is laid out against this width.
-  private let W = 58
+  private let wrap = 58
 
   /// Replay Ink's layout (`wrap-ansi`, `hard: true`) for one logical line:
   /// word-wrap into rows no wider than `width`, splitting a word inside only
@@ -53,7 +53,7 @@ final class LogicalLineJoinerTests: XCTestCase {
   }
 
   /// Join as `copy(_:)` would on a 60-column terminal whose screen estimate
-  /// resolved to `W`.
+  /// resolved to `wrap`.
   private func join(_ rows: [String], screenWrapColumn: Int? = 58, firstRowWidth: Int? = nil)
     -> String
   {
@@ -67,7 +67,7 @@ final class LogicalLineJoinerTests: XCTestCase {
   func testWordWrappedCommandJoinsWithSpace() {
     let command =
       "git commit --no-verify -m 'refactor the wrapper' && git push origin HEAD --force-with-lease"
-    let rows = inkRows(command, width: W, firstIndent: "⏺ Bash(", indent: "      ")
+    let rows = inkRows(command, width: wrap, firstIndent: "⏺ Bash(", indent: "      ")
     XCTAssertGreaterThan(rows.count, 1, "fixture must wrap")
     XCTAssertEqual(join(rows), "⏺ Bash(" + command)
   }
@@ -78,7 +78,7 @@ final class LogicalLineJoinerTests: XCTestCase {
       "  npm run build -- --configuration production --output-dir",
       "  --no-cache dist",
     ]
-    XCTAssertEqual(rows[0].count, W)
+    XCTAssertEqual(rows[0].count, wrap)
     XCTAssertEqual(
       join(rows),
       "  npm run build -- --configuration production --output-dir --no-cache dist")
@@ -92,17 +92,17 @@ final class LogicalLineJoinerTests: XCTestCase {
     // split token, and no heuristic can tell those apart.
     let url = "https://example.com/" + String(repeating: "a", count: 60) + "/bbb.tar.gz"
     let command = "curl -fsSL \(url) -o out.tgz"
-    let rows = inkRows(command, width: W, firstIndent: "  ", indent: "  ")
+    let rows = inkRows(command, width: wrap, firstIndent: "  ", indent: "  ")
     XCTAssertEqual(rows.count, 3, "fixture must hard-split the URL once, then word-wrap")
-    XCTAssertEqual(rows[0].count, W)
-    XCTAssertLessThan(rows[1].count, W)
+    XCTAssertEqual(rows[0].count, wrap)
+    XCTAssertLessThan(rows[1].count, wrap)
     XCTAssertEqual(join(rows), "  " + command)
   }
 
   func testSoftWrappedRowAlreadyJoinedBySwiftTermIsLeftAlone() {
     // A row wider than the wrap column can only come from SwiftTerm joining
     // terminal-wrapped rows; it is never the head of an Ink wrap.
-    let long = String(repeating: "x", count: W + 10)
+    let long = String(repeating: "x", count: wrap + 10)
     XCTAssertEqual(join([long, "next"]), long + "\nnext")
   }
 
@@ -113,8 +113,8 @@ final class LogicalLineJoinerTests: XCTestCase {
       "Terminals draw text into a fixed grid of cells, so any line longer than the grid is wrapped."
     let p2 = "Some programs wrap the text themselves before it ever reaches the terminal."
     let rows =
-      inkRows(p1, width: W, firstIndent: "  ", indent: "  ") + [""]
-      + inkRows(p2, width: W, firstIndent: "  ", indent: "  ")
+      inkRows(p1, width: wrap, firstIndent: "  ", indent: "  ") + [""]
+      + inkRows(p2, width: wrap, firstIndent: "  ", indent: "  ")
     XCTAssertEqual(join(rows), "  " + p1 + "\n\n  " + p2)
   }
 
@@ -126,7 +126,7 @@ final class LogicalLineJoinerTests: XCTestCase {
   func testListItemsStaySeparateButWrappedItemJoins() {
     let item1 = "Read the buffer line by line and note which rows carry the wrapped flag"
     let rows =
-      inkRows(item1, width: W, firstIndent: "  - ", indent: "    ")
+      inkRows(item1, width: wrap, firstIndent: "  - ", indent: "    ")
       + ["  - Short second item", "  1. Numbered item", "  2. Another one", "  • Bulleted"]
     XCTAssertGreaterThan(rows.count, 5)
     XCTAssertEqual(
@@ -156,9 +156,9 @@ final class LogicalLineJoinerTests: XCTestCase {
 
   func testBoxDrawingRowsNeverJoin() {
     let rows = [
-      "╭" + String(repeating: "─", count: W - 2) + "╮",
+      "╭" + String(repeating: "─", count: wrap - 2) + "╮",
       "│ > some prompt text                                      │",
-      "╰" + String(repeating: "─", count: W - 2) + "╯",
+      "╰" + String(repeating: "─", count: wrap - 2) + "╯",
     ]
     XCTAssertEqual(join(rows), rows.joined(separator: "\n"))
   }
@@ -176,22 +176,22 @@ final class LogicalLineJoinerTests: XCTestCase {
     // estimate, but the selection's own full row does.
     let command =
       "git commit --no-verify -m 'refactor the wrapper' && git push origin HEAD --force-with-lease"
-    let rows = inkRows(command, width: W, firstIndent: "⏺ Bash(", indent: "      ")
+    let rows = inkRows(command, width: wrap, firstIndent: "⏺ Bash(", indent: "      ")
     XCTAssertEqual(join(rows, screenWrapColumn: nil), "⏺ Bash(" + command)
   }
 
   // MARK: - Review scenarios
 
   func testHardSplitInsideIndentedBlockUsesBlockTextWidth() {
-    // Ink splits a word when it exceeds the block's text width (W minus the
+    // Ink splits a word when it exceeds the block's text width (wrap minus the
     // continuation indent), not the full wrap column. A 55-char URL in a
     // "⏺ Bash(" block (51 columns of text) is split; the seam must close.
     let url = "https://x.io/" + String(repeating: "a", count: 42)
     XCTAssertEqual(url.count, 55)
     let head = "⏺ Bash(curl -fsSL "
-    let a = head + String(url.prefix(W - head.count))
-    let b = "      " + String(url.dropFirst(W - head.count)) + " -o out"
-    XCTAssertEqual(a.count, W)
+    let a = head + String(url.prefix(wrap - head.count))
+    let b = "      " + String(url.dropFirst(wrap - head.count)) + " -o out"
+    XCTAssertEqual(a.count, wrap)
     XCTAssertEqual(join([a, b]), head + url + " -o out")
   }
 
@@ -214,7 +214,7 @@ final class LogicalLineJoinerTests: XCTestCase {
   func testSelectionStartingMidRowUsesFullRowWidth() {
     let command =
       "git commit --no-verify -m 'refactor the wrapper' && git push origin HEAD --force-with-lease"
-    let rows = inkRows(command, width: W, firstIndent: "⏺ Bash(", indent: "      ")
+    let rows = inkRows(command, width: wrap, firstIndent: "⏺ Bash(", indent: "      ")
     // The drag began at the "g" of "git": SwiftTerm hands us only the tail
     // of the first row.
     var partial = rows
@@ -236,11 +236,11 @@ final class LogicalLineJoinerTests: XCTestCase {
 
   func testWrapColumnIgnoresInputBoxRowWithText() {
     let screen: [String?] = [
-      "  " + String(repeating: "t", count: W - 2),
+      "  " + String(repeating: "t", count: wrap - 2),
       "│ > Try \"fix the bug\"" + String(repeating: " ", count: 60 - 22) + "│",
       "╭" + String(repeating: "─", count: 58) + "╮",
     ]
-    XCTAssertEqual(LogicalLineJoiner.wrapColumn(forScreenRows: screen), W)
+    XCTAssertEqual(LogicalLineJoiner.wrapColumn(forScreenRows: screen), wrap)
   }
 
   // MARK: - Wrap column estimate
@@ -249,12 +249,12 @@ final class LogicalLineJoinerTests: XCTestCase {
     let border = String(repeating: "─", count: 60)
     let screen: [String?] = [
       "  Some short text",
-      "  " + String(repeating: "t", count: W - 2),
+      "  " + String(repeating: "t", count: wrap - 2),
       border,
       "> ",
       nil,
     ]
-    XCTAssertEqual(LogicalLineJoiner.wrapColumn(forScreenRows: screen), W)
+    XCTAssertEqual(LogicalLineJoiner.wrapColumn(forScreenRows: screen), wrap)
   }
 
   func testWrapColumnIsNilForEmptyScreen() {
