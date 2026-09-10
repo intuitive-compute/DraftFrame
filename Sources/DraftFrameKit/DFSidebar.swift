@@ -92,7 +92,13 @@ final class DFSidebar: NSView {
   private struct ProjectSectionKey: Equatable {
     let path: String
     let name: String
+    /// Whether the active session lives in this project (header highlight).
     let isActive: Bool
+    /// Resolved path of the worktree the active session runs in, when it
+    /// belongs to this project; drives the worktree-row highlight. Nil for
+    /// inactive projects, so switching sessions re-renders only the
+    /// previously and newly active sections.
+    let activeWorktreePath: String?
     let isPulling: Bool
     let isSettingUp: Bool
     let sweepStatus: String?
@@ -152,10 +158,8 @@ final class DFSidebar: NSView {
       self, selector: #selector(refreshWorktrees),
       name: .sessionListDidChange, object: nil
     )
-    NotificationCenter.default.addObserver(
-      self, selector: #selector(refreshWorktrees),
-      name: .activeSessionDidChange, object: nil
-    )
+    // Session switches refresh the project list via activeSessionChanged(),
+    // which also re-roots the CHANGES watcher.
     // Worktrees created or removed outside the app (a plain `git worktree
     // add` in a terminal) have no in-app event; the old catch-all
     // notification used to pick those up incidentally. A slow poll covers
@@ -516,7 +520,7 @@ final class DFSidebar: NSView {
     _ enumerated: [String: [WorktreeManager.Worktree]]
   ) {
     let projects = sortedProjects()
-    let activeDir = SessionManager.shared.projectDir
+    let active = resolveActiveSelection(projects: projects)
 
     // A project added while the enumeration ran has no listing yet — render
     // it empty and queue a trailing pass so its rows appear right away
@@ -535,7 +539,8 @@ final class DFSidebar: NSView {
       ProjectSectionKey(
         path: project.path,
         name: project.name,
-        isActive: project.path == activeDir,
+        isActive: project.path == active.projectPath,
+        activeWorktreePath: project.path == active.projectPath ? active.worktreePath : nil,
         isPulling: pullsInFlight.contains(project.path),
         isSettingUp: worktreeSetupsInFlight.contains(project.path),
         sweepStatus: sweepsInFlight[project.path],
@@ -565,13 +570,13 @@ final class DFSidebar: NSView {
         for (idx, section) in sections.enumerated() where section != lastSectionKeys[idx] {
           rebuildSection(
             project: projects[idx],
-            activeDir: activeDir,
+            active: active,
             worktrees: worktreesPerProject[section.path] ?? [])
         }
       } else {
         rebuildWorktreeRows(
           projects: projects,
-          activeDir: activeDir,
+          active: active,
           worktreesPerProject: worktreesPerProject)
       }
       lastSectionKeys = sections
@@ -584,12 +589,70 @@ final class DFSidebar: NSView {
     lastExpansionStates = expansionStates
   }
 
+  /// Which project (and worktree within it) the active session runs in.
+  /// Paths are symlink-resolved so they compare equal to git's realpaths.
+  private struct ActiveSelection: Equatable {
+    /// Matches `ProjectManager.Project.path` (unresolved spelling).
+    let projectPath: String?
+    /// Resolved worktree path, or nil for a plain session in the project
+    /// root (the primary worktree row is highlighted in that case).
+    let worktreePath: String?
+  }
+
+  /// Derive the active project from the active session rather than
+  /// `SessionManager.projectDir`, which is set once at open and never
+  /// follows tab switches. Managed worktrees live under
+  /// `<project>/.claude/worktrees/`, so a prefix match covers them; a
+  /// hand-made worktree elsewhere falls back to asking git for its repo
+  /// root; a session with no worktree path falls back to `projectDir`.
+  private func resolveActiveSelection(projects: [ProjectManager.Project]) -> ActiveSelection {
+    func resolve(_ p: String) -> String {
+      URL(fileURLWithPath: p).resolvingSymlinksInPath().path
+    }
+    func project(owning resolved: String) -> ProjectManager.Project? {
+      // Longest prefix wins so a nested project (a worktree added as its own
+      // project) beats the outer repo that also contains it.
+      projects
+        .filter { proj in
+          let root = resolve(proj.path)
+          return resolved == root || resolved.hasPrefix(root + "/")
+        }
+        .max { resolve($0.path).count < resolve($1.path).count }
+    }
+
+    guard let sessionPath = SessionManager.shared.activeSession?.worktreePath else {
+      guard let dir = SessionManager.shared.projectDir else {
+        return ActiveSelection(projectPath: nil, worktreePath: nil)
+      }
+      let resolvedDir = resolve(dir)
+      if let proj = project(owning: resolvedDir) {
+        let isRoot = resolve(proj.path) == resolvedDir
+        return ActiveSelection(
+          projectPath: proj.path, worktreePath: isRoot ? nil : resolvedDir)
+      }
+      return ActiveSelection(projectPath: nil, worktreePath: nil)
+    }
+
+    let resolved = resolve(sessionPath)
+    if let proj = project(owning: resolved) {
+      return ActiveSelection(projectPath: proj.path, worktreePath: resolved)
+    }
+    // Hand-made worktree outside the project tree: its `.git` file points at
+    // the owning repo, which git resolves for us.
+    if let root = WorktreeManager.repoRoot(at: resolved),
+      let proj = project(owning: resolve(root))
+    {
+      return ActiveSelection(projectPath: proj.path, worktreePath: resolved)
+    }
+    return ActiveSelection(projectPath: nil, worktreePath: nil)
+  }
+
   /// Replace one project's header + worktree rows in place at their current
   /// stack position. Callers guarantee the project already has a section
   /// (same path set as the last render).
   private func rebuildSection(
     project: ProjectManager.Project,
-    activeDir: String?,
+    active: ActiveSelection,
     worktrees: [WorktreeManager.Worktree]
   ) {
     guard let oldHeader = projectHeaderRows[project.path],
@@ -600,7 +663,7 @@ final class DFSidebar: NSView {
       view.removeFromSuperview()
     }
     let views = buildProjectSection(
-      project: project, activeDir: activeDir, worktrees: worktrees)
+      project: project, active: active, worktrees: worktrees)
     for (offset, view) in views.enumerated() {
       worktreeStack.insertArrangedSubview(view, at: insertAt + offset)
     }
@@ -608,7 +671,7 @@ final class DFSidebar: NSView {
 
   private func rebuildWorktreeRows(
     projects: [ProjectManager.Project],
-    activeDir: String?,
+    active: ActiveSelection,
     worktreesPerProject: [String: [WorktreeManager.Worktree]]
   ) {
     for v in worktreeStack.arrangedSubviews {
@@ -629,7 +692,7 @@ final class DFSidebar: NSView {
     for project in projects {
       let views = buildProjectSection(
         project: project,
-        activeDir: activeDir,
+        active: active,
         worktrees: worktreesPerProject[project.path] ?? [])
       for view in views {
         worktreeStack.addArrangedSubview(view)
@@ -643,11 +706,13 @@ final class DFSidebar: NSView {
   /// `rebuildSection`).
   private func buildProjectSection(
     project: ProjectManager.Project,
-    activeDir: String?,
+    active: ActiveSelection,
     worktrees: [WorktreeManager.Worktree]
   ) -> [NSView] {
     var views: [NSView] = []
-    let isActive = project.path == activeDir
+    let isActive = project.path == active.projectPath
+    let resolvedProjectPath =
+      URL(fileURLWithPath: project.path).resolvingSymlinksInPath().path
 
     // Project header row — clickable to expand/collapse. Chevron icon is
     // set by applyExpansionStates so we don't need to rebuild on toggle.
@@ -658,9 +723,12 @@ final class DFSidebar: NSView {
     projectRow.worktreePath = project.path
     projectRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
-    if isActive, let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
-      lbl.font = Theme.mono(12, weight: .medium)
-      lbl.textColor = Theme.text1
+    if isActive {
+      projectRow.isSelected = true
+      if let lbl = projectRow.subviews.compactMap({ $0 as? NSTextField }).first {
+        lbl.font = Theme.mono(12, weight: .medium)
+        lbl.textColor = Theme.text1
+      }
     }
 
     if let chevron = projectRow.subviews.compactMap({ $0 as? NSImageView }).first {
@@ -814,11 +882,13 @@ final class DFSidebar: NSView {
         // under .claude/worktrees/). Compare symlink-resolved paths: git
         // reports realpaths (e.g. /private/var) while the project may have
         // been added under an unresolved spelling.
-        let resolvedProjectPath =
-          URL(fileURLWithPath: project.path).resolvingSymlinksInPath().path
-        let isPrimary =
-          !isBase
-          && URL(fileURLWithPath: wt.path).resolvingSymlinksInPath().path == resolvedProjectPath
+        let resolvedWtPath = URL(fileURLWithPath: wt.path).resolvingSymlinksInPath().path
+        let isPrimary = !isBase && resolvedWtPath == resolvedProjectPath
+        // Highlight the row the active session runs in. A plain session
+        // (no worktreePath) lives in the project root, i.e. the primary row.
+        let isSelected =
+          isActive
+          && (active.worktreePath.map { $0 == resolvedWtPath } ?? isPrimary)
         let icon = isPrimary ? "circle.fill" : "arrow.triangle.branch"
         let detail = isBase ? "base" : nil
         let row = makeClickableRow(
@@ -835,6 +905,7 @@ final class DFSidebar: NSView {
         row.worktreeName = branchName
         row.worktreePath = wt.path
         row.isBaseWorktree = isBase
+        row.isSelected = isSelected
 
         let wtMenu = NSMenu()
         let openItem = NSMenuItem(
@@ -1455,6 +1526,11 @@ final class DFSidebar: NSView {
   // MARK: - Files
 
   @objc private func activeSessionChanged() {
+    // Move the project/worktree highlight to the new active session. The
+    // cached-listing repaint inside refreshWorktrees makes this land in the
+    // same frame; the section-key diff confines the rebuild to the two
+    // affected projects.
+    refreshWorktrees()
     updateFilesWatcher()
     refreshFiles()
   }
@@ -2136,6 +2212,15 @@ final class ClickableRow: NSView {
   /// open the diff overlay at the right file.
   var diffIndex: Int = 0
 
+  /// Persistent selected state (e.g. the project/worktree the active session
+  /// runs in). Owns the row's resting background; hover and mouse-down paint
+  /// over it and restore to it rather than clearing.
+  var isSelected: Bool = false {
+    didSet { layer?.backgroundColor = restingColor.cgColor }
+  }
+
+  private var restingColor: NSColor { isSelected ? Theme.surface2 : .clear }
+
   init(target: AnyObject?, action: Selector?) {
     self.target = target
     self.action = action
@@ -2152,18 +2237,19 @@ final class ClickableRow: NSView {
   }
 
   override func mouseUp(with event: NSEvent) {
-    layer?.backgroundColor = NSColor.clear.cgColor
+    layer?.backgroundColor = restingColor.cgColor
     if let action = action {
       NSApp.sendAction(action, to: target, from: self)
     }
   }
 
   override func mouseEntered(with event: NSEvent) {
-    layer?.backgroundColor = Theme.surface2.cgColor
+    // Selected rows already sit at surface2; step up so hover stays visible.
+    layer?.backgroundColor = (isSelected ? Theme.surface3 : Theme.surface2).cgColor
   }
 
   override func mouseExited(with event: NSEvent) {
-    layer?.backgroundColor = NSColor.clear.cgColor
+    layer?.backgroundColor = restingColor.cgColor
   }
 
   override func updateTrackingAreas() {
