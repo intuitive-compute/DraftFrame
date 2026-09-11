@@ -1095,16 +1095,20 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   /// and emits every visual row as a hard line, so a long command that wraps
   /// on screen would otherwise paste into a shell as several broken commands.
   /// `LogicalLineJoiner` re-joins those rows using the wrap column inferred
-  /// from the selection and the visible screen. Reached by Cmd+C (Edit menu)
+  /// from the selection and the visible screen, then drops the gutter indent
+  /// Claude Code puts in front of its output. Reached by Cmd+C (Edit menu)
   /// and the context menu's Copy item alike.
   override func copy(_ sender: Any) {
     guard let raw = getSelection() else { return }
     var text = raw
-    // Single-row selections have nothing to join; skip the screen scan.
-    if joinsWrappedRowsOnCopy, raw.contains("\n") {
-      let term = getTerminal()
-      let screen = (0..<term.rows).map { copyRow($0) }
-      text = LogicalLineJoiner.join(raw, columns: term.cols, screenRows: screen)
+    if joinsWrappedRowsOnCopy {
+      // Single-row selections have nothing to join; skip the screen scan.
+      if raw.contains("\n") {
+        let term = getTerminal()
+        let screen = (0..<term.rows).map { copyRow($0) }
+        text = LogicalLineJoiner.join(raw, columns: term.cols, screenRows: screen)
+      }
+      text = LogicalLineJoiner.stripCommonIndent(text)
     }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)

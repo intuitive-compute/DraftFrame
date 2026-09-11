@@ -99,6 +99,17 @@ enum LogicalLineJoiner {
     return result.joined(separator: "\n")
   }
 
+  /// Drop the indent Claude Code's gutter adds to every row of its output,
+  /// so a pasted paragraph starts at its first word. Only the indent shared
+  /// by every non-blank line is removed, which keeps the relative indentation
+  /// of a code block intact.
+  static func stripCommonIndent(_ text: String) -> String {
+    let lines = text.components(separatedBy: "\n")
+    let indents = lines.filter { !$0.allSatisfy(isBlank) }.map(leadingBlankCount)
+    guard let common = indents.min(), common > 0 else { return text }
+    return lines.map { String($0.dropFirst(min(common, $0.count))) }.joined(separator: "\n")
+  }
+
   /// Estimate Ink's wrap column from the rows on screen: the widest row that
   /// carries text and is not part of the chrome. Rows bounded by box-drawing
   /// (the input box, tool-call frames) span the full terminal width and are

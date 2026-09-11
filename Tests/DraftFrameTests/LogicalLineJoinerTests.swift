@@ -319,4 +319,19 @@ final class LogicalLineJoinerTests: XCTestCase {
     // symbols, are two columns to Ink's string-width as well.
     XCTAssertEqual(LogicalLineJoiner.displayWidth("🚀✅⚡🙂日"), 10)
   }
+
+  // MARK: - Gutter indent
+
+  func testStripCommonIndentRemovesGutterButKeepsRelativeIndent() {
+    let text = "  guard x else {\n      return\n  }\n\n  done"
+    XCTAssertEqual(
+      LogicalLineJoiner.stripCommonIndent(text), "guard x else {\n    return\n}\n\ndone")
+  }
+
+  func testStripCommonIndentLeavesColumnZeroTextAlone() {
+    let text = "⏺ Bash(ls)\n  ⎿  out"
+    XCTAssertEqual(LogicalLineJoiner.stripCommonIndent(text), text)
+    XCTAssertEqual(LogicalLineJoiner.stripCommonIndent("  single line"), "single line")
+    XCTAssertEqual(LogicalLineJoiner.stripCommonIndent(""), "")
+  }
 }
