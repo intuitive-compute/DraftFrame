@@ -107,7 +107,9 @@ final class Session {
   /// `[1m]` variants). Resolved from Claude Code's startup banner via
   /// `PTYStreamAnalyzer.onContextWindowChange`.
   var maxContextTokens: Int
-  var worktreePath: String?
+  var worktreePath: String? {
+    didSet { if worktreePath != oldValue { cachedRepoRoot = nil } }
+  }
   var terminalView: ClaudeTerminalView?
 
   /// Label shown in the UI. When the session is on `main`/`master`, the bare
@@ -121,6 +123,36 @@ final class Session {
       return (projectRoot as NSString).lastPathComponent
     }
     return (path as NSString).lastPathComponent
+  }
+
+  /// Memoized `repoRoot`. `.some(nil)` records a lookup that found no repo so
+  /// the git spawn is not repeated every card rebuild; reset whenever
+  /// `worktreePath` changes.
+  private var cachedRepoRoot: String??
+
+  /// Root of the git repository that owns `worktreePath`, or nil when the
+  /// session has no worktree or the path is outside any repo. Managed
+  /// worktrees resolve by path alone; anything else asks git once and caches
+  /// the answer, so the once-a-second card refresh never spawns a process.
+  var repoRoot: String? {
+    if let cached = cachedRepoRoot { return cached }
+    let resolved: String? = {
+      guard let path = worktreePath else { return nil }
+      if let managed = WorktreeManager.managedRepoRoot(forWorktreePath: path) {
+        return managed
+      }
+      return WorktreeManager.repoRoot(at: path)
+    }()
+    cachedRepoRoot = .some(resolved)
+    return resolved
+  }
+
+  /// Folder name of `repoRoot` (e.g. `DraftFrame`), matching the project name
+  /// shown in the sidebar. Nil when there is no repo.
+  var repoName: String? {
+    guard let root = repoRoot else { return nil }
+    let name = (root as NSString).lastPathComponent
+    return name.isEmpty ? nil : name
   }
 
   /// Stable, unique-per-session seed for the generated avatar. Prefers the
