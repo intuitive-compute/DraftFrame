@@ -521,10 +521,26 @@ final class SessionCard: NSView {
       return label
     }()
 
+    // Repo the session lives in, bottom right. Branch names alone are
+    // ambiguous once several projects are open. Truncates from the head so
+    // the distinctive tail of a long name survives a narrow sidebar.
+    let repoLabel: NSTextField? = session.repoName.map { repoName in
+      let label = NSTextField(labelWithString: repoName)
+      label.font = Theme.mono(9)
+      label.textColor = Theme.text3
+      label.lineBreakMode = .byTruncatingHead
+      label.maximumNumberOfLines = 1
+      label.toolTip = session.repoRoot
+      label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+      label.translatesAutoresizingMaskIntoConstraints = false
+      return label
+    }
+
     for v in [avatar, nameLabel, dot, statusLabel, modelLabel, costLabel] as [NSView] {
       addSubview(v)
     }
     if let cl = contextLabel { addSubview(cl) }
+    if let rl = repoLabel { addSubview(rl) }
     if let badge = numberBadge { addSubview(badge) }
 
     // PR status pill (only if gh reports a PR for this worktree).
@@ -538,7 +554,14 @@ final class SessionCard: NSView {
       return label
     }
 
-    let cardHeight: CGFloat = contextLabel == nil ? 56 : 72
+    // The compact card grows to 64pt when a repo label is present: at 56pt
+    // the label would butt against the status/PR row.
+    let cardHeight: CGFloat
+    if contextLabel != nil {
+      cardHeight = 72
+    } else {
+      cardHeight = repoLabel == nil ? 56 : 64
+    }
 
     var constraints: [NSLayoutConstraint] = [
       heightAnchor.constraint(equalToConstant: cardHeight),
@@ -571,6 +594,23 @@ final class SessionCard: NSView {
         cl.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 8),
         cl.topAnchor.constraint(equalTo: dot.bottomAnchor, constant: 5),
       ])
+    }
+    if let rl = repoLabel {
+      constraints.append(rl.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10))
+      if let cl = contextLabel {
+        // Share the bottom row with the context label; the repo label yields
+        // width first (low compression resistance) so the context figure
+        // never gets pushed around.
+        constraints.append(contentsOf: [
+          rl.centerYAnchor.constraint(equalTo: cl.centerYAnchor),
+          cl.trailingAnchor.constraint(lessThanOrEqualTo: rl.leadingAnchor, constant: -8),
+        ])
+      } else {
+        constraints.append(contentsOf: [
+          rl.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+          rl.leadingAnchor.constraint(greaterThanOrEqualTo: avatar.trailingAnchor, constant: 8),
+        ])
+      }
     }
     if let pill = prPill {
       constraints.append(contentsOf: [
