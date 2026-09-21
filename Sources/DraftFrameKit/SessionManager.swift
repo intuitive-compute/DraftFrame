@@ -110,6 +110,9 @@ final class Session {
   var worktreePath: String? {
     didSet { if worktreePath != oldValue { cachedRepoRoot = nil } }
   }
+  /// The session group this session sits in, or nil when ungrouped. Set
+  /// through `SessionManager` so the display-order invariant holds.
+  var groupID: UUID?
   var terminalView: ClaudeTerminalView?
 
   /// Label shown in the UI. When the session is on `main`/`master`, the bare
@@ -305,6 +308,11 @@ final class SessionManager {
   private(set) var sessions: [Session] = []
   private(set) var activeSessionIndex: Int = -1
   var projectDir: String?
+
+  /// Session groups in display order. `sessions` is kept sorted to match
+  /// (each group's members contiguous, groups in this order, ungrouped
+  /// sessions last) so the Cmd+N index of a card equals its visual position.
+  private(set) var groups: [SessionGroup] = []
 
   var activeSession: Session? {
     guard activeSessionIndex >= 0, activeSessionIndex < sessions.count else { return nil }
@@ -613,6 +621,10 @@ final class SessionManager {
     let insertAt = to > from ? to - 1 : to
     sessions.insert(moved, at: insertAt)
 
+    // A plain reorder can't move a session across a group boundary; snap it
+    // back into its group's block.
+    normalizeOrder()
+
     if let id = activeID, let newIdx = sessions.firstIndex(where: { $0.id == id }) {
       activeSessionIndex = newIdx
     }
@@ -627,8 +639,154 @@ final class SessionManager {
   func restartSession(id: UUID) {
     guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
     let old = sessions[idx]
+    let groupID = old.groupID
     closeSession(at: idx)
-    createSession(name: old.name, worktreePath: old.worktreePath, agent: old.agent)
+    let fresh = createSession(name: old.name, worktreePath: old.worktreePath, agent: old.agent)
+    // Keep the restarted session where it was in the bar.
+    if let g = groupID, groups.contains(where: { $0.id == g }) {
+      move(sessionID: fresh.id, toGroup: g, at: idx)
+    } else {
+      move(sessionID: fresh.id, toGroup: nil, at: idx)
+    }
+  }
+
+  // MARK: - Session groups
+
+  func group(withID id: UUID) -> SessionGroup? {
+    groups.first { $0.id == id }
+  }
+
+  /// Members of `group`, in display order.
+  func sessions(in group: SessionGroup) -> [Session] {
+    sessions.filter { $0.groupID == group.id }
+  }
+
+  /// Sessions that belong to no group, in display order.
+  var ungroupedSessions: [Session] {
+    sessions.filter { s in
+      guard let g = s.groupID else { return true }
+      return !groups.contains { $0.id == g }
+    }
+  }
+
+  /// Create an empty group at the end of the group list.
+  @discardableResult
+  func createGroup(name: String, color: NSColor, id: UUID = UUID(), isCollapsed: Bool = false)
+    -> SessionGroup
+  {
+    let group = SessionGroup(id: id, name: name, color: color, isCollapsed: isCollapsed)
+    groups.append(group)
+    SessionEvents.postListChanged()
+    return group
+  }
+
+  func updateGroup(id: UUID, name: String, color: NSColor) {
+    guard let group = group(withID: id) else { return }
+    group.name = name
+    group.color = color
+    SessionEvents.postListChanged()
+  }
+
+  func setGroup(id: UUID, collapsed: Bool) {
+    guard let group = group(withID: id), group.isCollapsed != collapsed else { return }
+    group.isCollapsed = collapsed
+    SessionEvents.postListChanged()
+  }
+
+  /// Delete a group. Its sessions stay open and become ungrouped, keeping
+  /// their relative order.
+  func deleteGroup(id: UUID) {
+    guard groups.contains(where: { $0.id == id }) else { return }
+    groups.removeAll { $0.id == id }
+    for s in sessions where s.groupID == id { s.groupID = nil }
+    reorderPreservingActive { normalizeOrder() }
+  }
+
+  /// Move a session into `groupID` (nil = ungrouped), inserting at global
+  /// index `index` (the position in the display order, before removal).
+  /// The order is then normalized so the session lands inside its group's
+  /// block even if `index` pointed elsewhere.
+  func move(sessionID: UUID, toGroup groupID: UUID?, at index: Int) {
+    guard let from = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+    reorderPreservingActive {
+      let moved = sessions.remove(at: from)
+      let clamped = min(max(index, 0), sessions.count + 1)
+      let insertAt = min(clamped > from ? clamped - 1 : clamped, sessions.count)
+      sessions.insert(moved, at: insertAt)
+      moved.groupID = groupID
+      normalizeOrder()
+    }
+  }
+
+  /// Move a session to the end of a group (or of the ungrouped block).
+  func move(sessionID: UUID, toGroup groupID: UUID?) {
+    move(sessionID: sessionID, toGroup: groupID, at: sessions.count)
+  }
+
+  /// The Status preset: three lifecycle groups with random colors. Sessions
+  /// are left where they are for the user to sort.
+  func applyStatusPreset() {
+    let colors = SessionGrouping.randomColors(
+      count: SessionGrouping.statusPresetNames.count, avoiding: groups.map(\.color))
+    for (name, color) in zip(SessionGrouping.statusPresetNames, colors) {
+      groups.append(SessionGroup(name: name, color: color))
+    }
+    SessionEvents.postListChanged()
+  }
+
+  /// The Project preset: one group per repository, holding every session
+  /// that lives in it. Sessions outside any repo are grouped by their name.
+  /// Reuses an existing group with the same name rather than duplicating it.
+  func applyProjectPreset() {
+    var byName: [String: [Session]] = [:]
+    var nameOrder: [String] = []
+    for s in sessions {
+      let key = s.repoName ?? s.displayName
+      if byName[key] == nil { nameOrder.append(key) }
+      byName[key, default: []].append(s)
+    }
+    let newNames = nameOrder.filter { name in !groups.contains { $0.name == name } }
+    let colors = SessionGrouping.randomColors(count: newNames.count, avoiding: groups.map(\.color))
+    for (name, color) in zip(newNames, colors) {
+      groups.append(SessionGroup(name: name, color: color))
+    }
+    reorderPreservingActive {
+      for name in nameOrder {
+        guard let group = groups.first(where: { $0.name == name }) else { continue }
+        for s in byName[name] ?? [] { s.groupID = group.id }
+      }
+      normalizeOrder()
+    }
+  }
+
+  /// Replace the whole group list (used by session restore). Sessions
+  /// pointing at unknown groups are left ungrouped by `normalizeOrder`.
+  func restoreGroups(_ restored: [SessionGroup]) {
+    groups = restored
+    reorderPreservingActive { normalizeOrder() }
+  }
+
+  /// Re-sort `sessions` into the group display order without touching
+  /// `activeSessionIndex`; callers wrap in `reorderPreservingActive`.
+  private func normalizeOrder() {
+    let order = SessionGrouping.displayOrder(
+      groupIDs: sessions.map(\.groupID), groupOrder: groups.map(\.id))
+    sessions = order.map { sessions[$0] }
+  }
+
+  /// Run a reorder, then re-point `activeSessionIndex` at the same session
+  /// and post the list (and, if the index moved, active) notifications.
+  private func reorderPreservingActive(_ body: () -> Void) {
+    let activeID = activeSession?.id
+    let priorActiveIndex = activeSessionIndex
+    body()
+    if let id = activeID, let newIdx = sessions.firstIndex(where: { $0.id == id }) {
+      activeSessionIndex = newIdx
+    }
+    SessionEvents.postListChanged()
+    if activeSessionIndex != priorActiveIndex {
+      NotificationCenter.default.post(name: .activeSessionDidChange, object: nil)
+    }
   }
 
   /// Directory whose git branch the status bar should show. Read on the

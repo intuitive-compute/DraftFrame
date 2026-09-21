@@ -5,11 +5,48 @@ extension NSPasteboard.PasteboardType {
 }
 
 /// Right sidebar: session cards with live status, driven by SessionManager.
+/// Cards are laid out under collapsible group headers (see `SessionGroup`),
+/// with ungrouped sessions last.
 final class DFSessionBar: NSView {
 
   private let cardStack = NSStackView()
   private let dropIndicator = NSView()
   private var lastDropIndex: Int?
+  private weak var highlightedHeader: SessionGroupHeader?
+
+  /// What `cardStack` currently holds, top to bottom. Drag and drop maps a
+  /// pointer location onto this list to decide which group and index a
+  /// dropped card lands at.
+  private enum Entry {
+    case header(SessionGroup, SessionGroupHeader)
+    /// The "Ungrouped" label that opens the ungrouped block once any group
+    /// exists, so cards can be dragged back out of groups.
+    case ungroupedDivider(NSView)
+    /// `container` is the arranged view (the card itself, or the indented
+    /// row wrapping it inside a group); `index` is the session's index in
+    /// `SessionManager.sessions`.
+    case card(SessionCard, container: NSView, index: Int, groupID: UUID?)
+
+    var view: NSView {
+      switch self {
+      case .header(_, let v): return v
+      case .ungroupedDivider(let v): return v
+      case .card(_, let c, _, _): return c
+      }
+    }
+  }
+  private var entries: [Entry] = []
+
+  /// Where a drag would land: the group (nil = ungrouped), the global
+  /// insertion index, and how to draw it.
+  private struct DropTarget {
+    let groupID: UUID?
+    let index: Int
+    /// Entry position to draw the line before; `entries.count` = below all.
+    let lineBefore: Int
+    /// Header to highlight instead of a line (dropping onto a collapsed group).
+    let header: SessionGroupHeader?
+  }
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -54,14 +91,30 @@ final class DFSessionBar: NSView {
     refreshCards()
   }
 
+  private var allCards: [SessionCard] {
+    entries.compactMap { entry in
+      if case .card(let card, _, _, _) = entry { return card }
+      return nil
+    }
+  }
+
+  private var allHeaders: [SessionGroupHeader] {
+    entries.compactMap { entry in
+      if case .header(_, let header) = entry { return header }
+      return nil
+    }
+  }
+
   /// State/usage tick: refresh every card in place. Falls back to a full
   /// rebuild when a card reports a structural change (its context row
-  /// appearing for the first time).
+  /// appearing for the first time). Collapsed headers re-read their
+  /// members' states for the status dots.
   @objc private func sessionDynamicsChanged() {
     var needsRebuild = false
-    for case let card as SessionCard in cardStack.arrangedSubviews {
+    for card in allCards {
       if !card.refreshDynamic() { needsRebuild = true }
     }
+    for header in allHeaders { header.refreshDynamic() }
     if needsRebuild { refreshCards() }
   }
 
@@ -71,6 +124,18 @@ final class DFSessionBar: NSView {
     title.textColor = Theme.text3
     title.translatesAutoresizingMaskIntoConstraints = false
     addSubview(title)
+
+    // "+" opens the new-group sheet.
+    let addButton = NSButton(
+      image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Group") ?? NSImage(),
+      target: self, action: #selector(addGroupClicked))
+    addButton.isBordered = false
+    addButton.bezelStyle = .inline
+    addButton.contentTintColor = Theme.text3
+    addButton.toolTip = "New Session Group"
+    addButton.setAccessibilityLabel("New Session Group")
+    addButton.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(addButton)
 
     let sep = NSView()
     sep.wantsLayer = true
@@ -93,6 +158,10 @@ final class DFSessionBar: NSView {
     NSLayoutConstraint.activate([
       title.topAnchor.constraint(equalTo: topAnchor, constant: 38),
       title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+      addButton.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+      addButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      addButton.widthAnchor.constraint(equalToConstant: 18),
+      addButton.heightAnchor.constraint(equalToConstant: 18),
       sep.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 10),
       sep.leadingAnchor.constraint(equalTo: leadingAnchor),
       sep.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -103,17 +172,23 @@ final class DFSessionBar: NSView {
     ])
   }
 
+  private static let rowWidth: CGFloat = 284
+
   private func refreshCards() {
     // Remove existing cards
     for view in cardStack.arrangedSubviews {
       cardStack.removeArrangedSubview(view)
       view.removeFromSuperview()
     }
+    entries = []
+    highlightedHeader = nil
 
-    let sessions = SessionManager.shared.sessions
-    let activeIdx = SessionManager.shared.activeSessionIndex
+    let manager = SessionManager.shared
+    let sessions = manager.sessions
+    let activeIdx = manager.activeSessionIndex
+    let groups = manager.groups
 
-    if sessions.isEmpty {
+    if sessions.isEmpty && groups.isEmpty {
       let empty = NSTextField(labelWithString: "No sessions.\nCmd+T to create one.")
       empty.font = Theme.mono(10)
       empty.textColor = Theme.text3
@@ -123,15 +198,135 @@ final class DFSessionBar: NSView {
       return
     }
 
-    for (i, session) in sessions.enumerated() {
+    func indexOf(_ session: Session) -> Int {
+      sessions.firstIndex { $0 === session } ?? 0
+    }
+
+    func addCard(_ session: Session, in group: SessionGroup?) {
+      let i = indexOf(session)
       let card = SessionCard(session: session, isActive: i == activeIdx, index: i, bar: self)
       card.translatesAutoresizingMaskIntoConstraints = false
-      card.widthAnchor.constraint(equalToConstant: 284).isActive = true
-      cardStack.addArrangedSubview(card)
+      let container: NSView
+      if let group = group {
+        let row = GroupedCardRow(card: card, color: group.color)
+        row.widthAnchor.constraint(equalToConstant: Self.rowWidth).isActive = true
+        container = row
+      } else {
+        card.widthAnchor.constraint(equalToConstant: Self.rowWidth).isActive = true
+        container = card
+      }
+      cardStack.addArrangedSubview(container)
+      entries.append(.card(card, container: container, index: i, groupID: group?.id))
+    }
+
+    for group in groups {
+      let members = manager.sessions(in: group)
+      let containsActive = members.contains { indexOf($0) == activeIdx }
+      let header = SessionGroupHeader(
+        group: group, members: members, containsActive: containsActive, bar: self)
+      header.widthAnchor.constraint(equalToConstant: Self.rowWidth).isActive = true
+      cardStack.addArrangedSubview(header)
+      // Breathing room above every group but the first.
+      if let previous = entries.last?.view { cardStack.setCustomSpacing(12, after: previous) }
+      entries.append(.header(group, header))
+      cardStack.setCustomSpacing(4, after: header)
+      if group.isCollapsed { continue }
+      for session in members { addCard(session, in: group) }
+    }
+
+    let ungrouped = manager.ungroupedSessions
+    if !groups.isEmpty {
+      let divider = NSTextField(labelWithString: "UNGROUPED")
+      divider.font = Theme.mono(9, weight: .medium)
+      divider.textColor = Theme.text3
+      divider.translatesAutoresizingMaskIntoConstraints = false
+      let wrap = NSView()
+      wrap.translatesAutoresizingMaskIntoConstraints = false
+      wrap.addSubview(divider)
+      NSLayoutConstraint.activate([
+        wrap.widthAnchor.constraint(equalToConstant: Self.rowWidth),
+        wrap.heightAnchor.constraint(equalToConstant: 16),
+        divider.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
+        divider.centerYAnchor.constraint(equalTo: wrap.centerYAnchor),
+      ])
+      if let previous = entries.last?.view { cardStack.setCustomSpacing(12, after: previous) }
+      cardStack.addArrangedSubview(wrap)
+      entries.append(.ungroupedDivider(wrap))
+      cardStack.setCustomSpacing(4, after: wrap)
+    }
+    for session in ungrouped { addCard(session, in: nil) }
+  }
+
+  // MARK: - Group actions
+
+  @objc private func addGroupClicked() {
+    presentNewGroupDialog()
+  }
+
+  /// Open the new-group sheet (the "+" button; also reachable from the QA
+  /// bridge).
+  func presentNewGroupDialog() {
+    guard let win = window else { return }
+    SessionGroupDialog.presentCreate(on: win) { result in
+      Self.apply(result, editing: nil)
     }
   }
 
-  // MARK: - Drag & Drop reordering
+  private static func apply(_ result: SessionGroupDialog.Result, editing group: SessionGroup?) {
+    let manager = SessionManager.shared
+    switch result {
+    case .group(let name, let color):
+      if let group = group {
+        manager.updateGroup(id: group.id, name: name, color: color)
+      } else {
+        manager.createGroup(name: name, color: color)
+      }
+    case .statusPreset:
+      manager.applyStatusPreset()
+    case .projectPreset:
+      manager.applyProjectPreset()
+    }
+  }
+
+  /// Toggle a group's collapsed state (header click).
+  fileprivate func toggleCollapse(_ group: SessionGroup) {
+    SessionManager.shared.setGroup(id: group.id, collapsed: !group.isCollapsed)
+  }
+
+  fileprivate func runEditDialog(for group: SessionGroup) {
+    guard let win = window else { return }
+    SessionGroupDialog.presentEdit(on: win, group: group) { result in
+      Self.apply(result, editing: group)
+    }
+  }
+
+  private func groupPayload(from sender: NSMenuItem) -> SessionGroup? {
+    (sender.representedObject as? SessionGroupMenuPayload)?.group
+  }
+
+  @objc fileprivate func editGroupFromMenu(_ sender: NSMenuItem) {
+    guard let group = groupPayload(from: sender) else { return }
+    runEditDialog(for: group)
+  }
+
+  @objc fileprivate func toggleCollapseFromMenu(_ sender: NSMenuItem) {
+    guard let group = groupPayload(from: sender) else { return }
+    toggleCollapse(group)
+  }
+
+  @objc fileprivate func deleteGroupFromMenu(_ sender: NSMenuItem) {
+    guard let group = groupPayload(from: sender) else { return }
+    SessionManager.shared.deleteGroup(id: group.id)
+  }
+
+  /// "Move to Group" submenu item on a card: `representedObject` carries the
+  /// session and the destination group (nil = ungrouped).
+  @objc fileprivate func moveToGroupFromMenu(_ sender: NSMenuItem) {
+    guard let payload = payload(from: sender) else { return }
+    SessionManager.shared.move(sessionID: payload.session.id, toGroup: payload.targetGroupID)
+  }
+
+  // MARK: - Drag & Drop (reorder and regroup)
 
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
     sourceIndex(from: sender) == nil ? [] : .move
@@ -139,7 +334,7 @@ final class DFSessionBar: NSView {
 
   override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
     guard sourceIndex(from: sender) != nil else { return [] }
-    showDropIndicator(at: targetIndex(for: sender))
+    showDropIndicator(for: dropTarget(for: sender))
     return .move
   }
 
@@ -149,9 +344,12 @@ final class DFSessionBar: NSView {
 
   override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
     guard let from = sourceIndex(from: sender) else { return false }
-    let to = targetIndex(for: sender)
+    let sessions = SessionManager.shared.sessions
+    guard from >= 0, from < sessions.count else { return false }
+    let target = dropTarget(for: sender)
     hideDropIndicator()
-    SessionManager.shared.moveSession(from: from, to: to)
+    SessionManager.shared.move(
+      sessionID: sessions[from].id, toGroup: target.groupID, at: target.index)
     return true
   }
 
@@ -168,22 +366,85 @@ final class DFSessionBar: NSView {
     return idx
   }
 
-  /// Map the current drag location to an insertion index in `cardStack`.
-  /// Returns 0 if above the first card, `count` if below the last.
-  private func targetIndex(for info: NSDraggingInfo) -> Int {
-    let cards = cardStack.arrangedSubviews.compactMap { $0 as? SessionCard }
-    guard !cards.isEmpty else { return 0 }
-    let pointInStack = cardStack.convert(info.draggingLocation, from: nil)
-    for (i, card) in cards.enumerated() {
-      if pointInStack.y > card.frame.midY { return i }
+  /// First session index of `group`'s block in the display order, and the
+  /// index just past it.
+  private func block(of group: SessionGroup) -> (start: Int, end: Int) {
+    let manager = SessionManager.shared
+    var start = 0
+    for g in manager.groups {
+      let count = manager.sessions(in: g).count
+      if g.id == group.id { return (start, start + count) }
+      start += count
     }
-    return cards.count
+    return (start, start)
   }
 
-  private func showDropIndicator(at index: Int) {
+  /// Map the pointer to a drop target. Pointer over a collapsed group's
+  /// header drops into that group; otherwise the entry just above the
+  /// insertion gap decides the group, and the gap decides the index.
+  private func dropTarget(for info: NSDraggingInfo) -> DropTarget {
+    let manager = SessionManager.shared
+    let point = cardStack.convert(info.draggingLocation, from: nil)
+    let groupedCount = manager.groups.reduce(0) { $0 + manager.sessions(in: $1).count }
+
+    guard !entries.isEmpty else {
+      return DropTarget(groupID: nil, index: 0, lineBefore: 0, header: nil)
+    }
+
+    // Hovering a collapsed header: drop into that group.
+    for (i, entry) in entries.enumerated() {
+      if case .header(let group, let header) = entry, group.isCollapsed,
+        header.frame.contains(point)
+      {
+        return DropTarget(
+          groupID: group.id, index: block(of: group).end, lineBefore: i, header: header)
+      }
+    }
+
+    // The insertion gap: before the first entry whose midline the pointer
+    // is above; below everything otherwise.
+    let gap = entries.firstIndex { point.y > $0.view.frame.midY } ?? entries.count
+
+    guard gap > 0 else {
+      // Above everything: top of the first group, or top of the list.
+      if case .header(let group, _) = entries[0] {
+        return DropTarget(
+          groupID: group.id, index: block(of: group).start, lineBefore: 0, header: nil)
+      }
+      return DropTarget(groupID: nil, index: 0, lineBefore: 0, header: nil)
+    }
+
+    switch entries[gap - 1] {
+    case .header(let group, _):
+      let b = block(of: group)
+      return DropTarget(
+        groupID: group.id, index: group.isCollapsed ? b.end : b.start, lineBefore: gap,
+        header: nil)
+    case .ungroupedDivider:
+      return DropTarget(groupID: nil, index: groupedCount, lineBefore: gap, header: nil)
+    case .card(_, _, let index, let groupID):
+      return DropTarget(groupID: groupID, index: index + 1, lineBefore: gap, header: nil)
+    }
+  }
+
+  private func showDropIndicator(for target: DropTarget) {
+    if let header = target.header {
+      if highlightedHeader !== header {
+        highlightedHeader?.isDropHighlighted = false
+        header.isDropHighlighted = true
+        highlightedHeader = header
+      }
+      dropIndicator.isHidden = true
+      lastDropIndex = nil
+      return
+    }
+    highlightedHeader?.isDropHighlighted = false
+    highlightedHeader = nil
+
+    let index = target.lineBefore
     if !dropIndicator.isHidden, lastDropIndex == index { return }
-    let cards = cardStack.arrangedSubviews.compactMap { $0 as? SessionCard }
-    guard !cards.isEmpty else {
+    let views = entries.map(\.view)
+    guard !views.isEmpty else {
       hideDropIndicator()
       return
     }
@@ -191,12 +452,12 @@ final class DFSessionBar: NSView {
     let stackFrame = cardStack.frame
     let lineY: CGFloat
     if index <= 0 {
-      lineY = cards[0].frame.maxY + stackFrame.minY + 2
-    } else if index >= cards.count {
-      lineY = cards[cards.count - 1].frame.minY + stackFrame.minY - 3
+      lineY = views[0].frame.maxY + stackFrame.minY + 2
+    } else if index >= views.count {
+      lineY = views[views.count - 1].frame.minY + stackFrame.minY - 3
     } else {
-      let above = cards[index - 1]
-      let below = cards[index]
+      let above = views[index - 1]
+      let below = views[index]
       let gapMid = (above.frame.minY + below.frame.maxY) / 2
       lineY = gapMid + stackFrame.minY
     }
@@ -210,6 +471,8 @@ final class DFSessionBar: NSView {
   private func hideDropIndicator() {
     dropIndicator.isHidden = true
     lastDropIndex = nil
+    highlightedHeader?.isDropHighlighted = false
+    highlightedHeader = nil
   }
 
   // MARK: - Card context-menu actions
@@ -311,15 +574,232 @@ final class DFSessionBar: NSView {
   }
 }
 
+/// Payload for a group header's menu items (see the card payload below for
+/// why menu items target the bar and carry their subject).
+private final class SessionGroupMenuPayload: NSObject {
+  let group: SessionGroup
+  init(group: SessionGroup) { self.group = group }
+}
+
+// MARK: - Group header
+
+/// Collapsible header above a group's cards: chevron, color dot, name, and
+/// member count. Collapsed headers also show one status dot per member so
+/// a hidden session that needs attention still shows through. Click toggles
+/// collapse; double-click edits; right-click for edit/delete.
+final class SessionGroupHeader: NSView {
+  private let group: SessionGroup
+  private let members: [Session]
+  private let containsActive: Bool
+  private weak var bar: DFSessionBar?
+  private var statusDots: [(NSView, Session)] = []
+
+  /// Set by the bar while a card is dragged over a collapsed header.
+  var isDropHighlighted = false {
+    didSet { applyStyling() }
+  }
+
+  init(group: SessionGroup, members: [Session], containsActive: Bool, bar: DFSessionBar?) {
+    self.group = group
+    self.members = members
+    self.containsActive = containsActive
+    self.bar = bar
+    super.init(frame: .zero)
+    translatesAutoresizingMaskIntoConstraints = false
+    wantsLayer = true
+    layer?.cornerRadius = 6
+    layer?.borderWidth = 1
+    build()
+    applyStyling()
+
+    let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
+    addGestureRecognizer(click)
+    let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(doubleClicked))
+    doubleClick.numberOfClicksRequired = 2
+    addGestureRecognizer(doubleClick)
+
+    menu = makeContextMenu()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  private func build() {
+    let chevronName = group.isCollapsed ? "chevron.right" : "chevron.down"
+    let chevron = NSImageView(
+      image: NSImage(systemSymbolName: chevronName, accessibilityDescription: nil) ?? NSImage())
+    chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .bold)
+    chevron.contentTintColor = Theme.text3
+    chevron.translatesAutoresizingMaskIntoConstraints = false
+
+    let dot = NSView()
+    dot.wantsLayer = true
+    dot.layer?.backgroundColor = group.color.cgColor
+    dot.layer?.cornerRadius = 4
+    dot.translatesAutoresizingMaskIntoConstraints = false
+
+    let name = NSTextField(labelWithString: group.name)
+    name.font = Theme.mono(11, weight: .semibold)
+    name.textColor = Theme.text1
+    name.lineBreakMode = .byTruncatingTail
+    name.maximumNumberOfLines = 1
+    name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    name.translatesAutoresizingMaskIntoConstraints = false
+
+    let count = NSTextField(labelWithString: "\(members.count)")
+    count.font = Theme.mono(9, weight: .medium)
+    count.textColor = Theme.text3
+    count.alignment = .center
+    count.wantsLayer = true
+    count.layer?.backgroundColor = Theme.surface3.cgColor
+    count.layer?.cornerRadius = 3
+    count.translatesAutoresizingMaskIntoConstraints = false
+
+    for v in [chevron, dot, name, count] as [NSView] { addSubview(v) }
+
+    var constraints: [NSLayoutConstraint] = [
+      heightAnchor.constraint(equalToConstant: 26),
+      chevron.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
+      chevron.widthAnchor.constraint(equalToConstant: 10),
+      dot.leadingAnchor.constraint(equalTo: chevron.trailingAnchor, constant: 6),
+      dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+      dot.widthAnchor.constraint(equalToConstant: 8),
+      dot.heightAnchor.constraint(equalToConstant: 8),
+      name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+      name.centerYAnchor.constraint(equalTo: centerYAnchor),
+      count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      count.centerYAnchor.constraint(equalTo: centerYAnchor),
+      count.widthAnchor.constraint(greaterThanOrEqualToConstant: 16),
+      count.heightAnchor.constraint(equalToConstant: 13),
+    ]
+
+    if group.isCollapsed, !members.isEmpty {
+      // One status dot per hidden member, newest last, capped so a big group
+      // can't push the name off the header.
+      let dots = NSStackView()
+      dots.orientation = .horizontal
+      dots.spacing = 3
+      dots.translatesAutoresizingMaskIntoConstraints = false
+      for session in members.prefix(8) {
+        let d = NSView()
+        d.wantsLayer = true
+        d.layer?.cornerRadius = 2.5
+        d.layer?.backgroundColor = session.state.color.cgColor
+        d.translatesAutoresizingMaskIntoConstraints = false
+        d.widthAnchor.constraint(equalToConstant: 5).isActive = true
+        d.heightAnchor.constraint(equalToConstant: 5).isActive = true
+        dots.addArrangedSubview(d)
+        statusDots.append((d, session))
+      }
+      addSubview(dots)
+      constraints.append(contentsOf: [
+        dots.trailingAnchor.constraint(equalTo: count.leadingAnchor, constant: -8),
+        dots.centerYAnchor.constraint(equalTo: centerYAnchor),
+        name.trailingAnchor.constraint(lessThanOrEqualTo: dots.leadingAnchor, constant: -8),
+      ])
+    } else {
+      constraints.append(
+        name.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -8))
+    }
+    NSLayoutConstraint.activate(constraints)
+  }
+
+  /// Update the collapsed status dots in place on a state tick.
+  func refreshDynamic() {
+    for (dot, session) in statusDots {
+      dot.layer?.backgroundColor = session.state.color.cgColor
+    }
+  }
+
+  private func applyStyling() {
+    let tint = group.color
+    if isDropHighlighted {
+      layer?.backgroundColor =
+        (Theme.surface3.blended(withFraction: 0.35, of: tint) ?? Theme.surface3).cgColor
+      layer?.borderColor = tint.cgColor
+    } else {
+      layer?.backgroundColor =
+        (Theme.surface2.blended(withFraction: 0.18, of: tint) ?? Theme.surface2).cgColor
+      // A collapsed group hiding the active session keeps a colored ring so
+      // the user can still find it.
+      layer?.borderColor =
+        (group.isCollapsed && containsActive)
+        ? tint.withAlphaComponent(0.8).cgColor : NSColor.clear.cgColor
+    }
+  }
+
+  private func makeContextMenu() -> NSMenu {
+    let menu = NSMenu()
+    let payload = SessionGroupMenuPayload(group: group)
+    func add(_ title: String, _ action: Selector) {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = bar
+      item.representedObject = payload
+      menu.addItem(item)
+    }
+    add(
+      group.isCollapsed ? "Expand Group" : "Collapse Group",
+      #selector(DFSessionBar.toggleCollapseFromMenu(_:)))
+    add("Edit Group…", #selector(DFSessionBar.editGroupFromMenu(_:)))
+    menu.addItem(NSMenuItem.separator())
+    add("Delete Group", #selector(DFSessionBar.deleteGroupFromMenu(_:)))
+    return menu
+  }
+
+  @objc private func clicked() {
+    bar?.toggleCollapse(group)
+  }
+
+  @objc private func doubleClicked() {
+    bar?.runEditDialog(for: group)
+  }
+
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .pointingHand)
+  }
+}
+
+/// A grouped card, indented under its header with a rail in the group color.
+final class GroupedCardRow: NSView {
+  init(card: SessionCard, color: NSColor) {
+    super.init(frame: .zero)
+    translatesAutoresizingMaskIntoConstraints = false
+    let rail = NSView()
+    rail.wantsLayer = true
+    rail.layer?.backgroundColor = color.withAlphaComponent(0.7).cgColor
+    rail.layer?.cornerRadius = 1
+    rail.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(rail)
+    addSubview(card)
+    NSLayoutConstraint.activate([
+      rail.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+      rail.widthAnchor.constraint(equalToConstant: 2),
+      rail.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+      rail.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+      card.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+      card.trailingAnchor.constraint(equalTo: trailingAnchor),
+      card.topAnchor.constraint(equalTo: topAnchor),
+      card.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+}
+
 /// Payload stored on a session card's menu items so the action handler on
 /// DFSessionBar still knows which session (and PR) the user right-clicked
 /// after the originating card has been rebuilt.
 private final class SessionCardMenuPayload: NSObject {
   let session: Session
   let prURL: URL?
-  init(session: Session, prURL: URL?) {
+  /// Destination for a "Move to Group" item; nil = ungrouped.
+  let targetGroupID: UUID?
+  init(session: Session, prURL: URL?, targetGroupID: UUID? = nil) {
     self.session = session
     self.prURL = prURL
+    self.targetGroupID = targetGroupID
   }
 }
 
@@ -426,6 +906,26 @@ final class SessionCard: NSView {
     }
     add("Rename Session…", #selector(DFSessionBar.renameSessionFromMenu(_:)))
     add("Restart Session", #selector(DFSessionBar.restartSessionFromMenu(_:)))
+    let groups = SessionManager.shared.groups
+    if !groups.isEmpty {
+      let submenu = NSMenu()
+      func addTarget(_ title: String, groupID: UUID?) {
+        let item = NSMenuItem(
+          title: title, action: #selector(DFSessionBar.moveToGroupFromMenu(_:)),
+          keyEquivalent: "")
+        item.target = bar
+        item.representedObject = SessionCardMenuPayload(
+          session: session, prURL: prURL, targetGroupID: groupID)
+        item.state = session.groupID == groupID ? .on : .off
+        submenu.addItem(item)
+      }
+      for g in groups { addTarget(g.name, groupID: g.id) }
+      submenu.addItem(NSMenuItem.separator())
+      addTarget("No Group", groupID: nil)
+      let parent = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
+      parent.submenu = submenu
+      menu.addItem(parent)
+    }
     if prURL != nil || session.worktreePath != nil {
       menu.addItem(NSMenuItem.separator())
       if prURL != nil {
