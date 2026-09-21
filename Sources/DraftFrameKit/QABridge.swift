@@ -243,6 +243,58 @@ import SwiftTerm
         appDelegate?.windowController?.openProject(at: path)
         return ["ok": true]
 
+      case "groups":
+        return ["ok": true, "groups": groupList()]
+
+      case "new-group":
+        guard let name = params["name"] as? String else {
+          return ["ok": false, "error": "new-group requires \"name\""]
+        }
+        let color =
+          (params["color"] as? String).flatMap(SessionGrouping.color(fromHex:))
+          ?? SessionGrouping.randomColors(count: 1)[0]
+        SessionManager.shared.createGroup(name: name, color: color)
+        return ["ok": true, "groups": groupList()]
+
+      case "new-group-dialog":
+        // Opens the same sheet as the bar's "+" button, for screenshots.
+        appDelegate?.windowController?.sessionBar.presentNewGroupDialog()
+        return ["ok": true]
+
+      case "group-preset":
+        switch params["name"] as? String {
+        case "status": SessionManager.shared.applyStatusPreset()
+        case "project": SessionManager.shared.applyProjectPreset()
+        default: return ["ok": false, "error": "group-preset requires \"name\" status|project"]
+        }
+        return ["ok": true, "groups": groupList(), "sessions": sessionList()]
+
+      case "move-to-group":
+        guard let session = resolveSession(params) else {
+          return ["ok": false, "error": "no such session"]
+        }
+        let groupName = params["group"] as? String
+        let target = groupName.flatMap { n in SessionManager.shared.groups.first { $0.name == n } }
+        if groupName != nil, target == nil {
+          return ["ok": false, "error": "no such group"]
+        }
+        SessionManager.shared.move(sessionID: session.id, toGroup: target?.id)
+        return ["ok": true, "groups": groupList(), "sessions": sessionList()]
+
+      case "toggle-group":
+        guard let name = params["group"] as? String,
+          let group = SessionManager.shared.groups.first(where: { $0.name == name })
+        else { return ["ok": false, "error": "no such group"] }
+        SessionManager.shared.setGroup(id: group.id, collapsed: !group.isCollapsed)
+        return ["ok": true, "groups": groupList()]
+
+      case "delete-group":
+        guard let name = params["group"] as? String,
+          let group = SessionManager.shared.groups.first(where: { $0.name == name })
+        else { return ["ok": false, "error": "no such group"] }
+        SessionManager.shared.deleteGroup(id: group.id)
+        return ["ok": true, "groups": groupList(), "sessions": sessionList()]
+
       case "quit":
         DispatchQueue.main.async { NSApp.terminate(nil) }
         return ["ok": true]
@@ -263,6 +315,19 @@ import SwiftTerm
       return mgr.activeSession
     }
 
+    @MainActor private func groupList() -> [[String: Any]] {
+      let mgr = SessionManager.shared
+      return mgr.groups.map { g in
+        [
+          "id": g.id.uuidString,
+          "name": g.name,
+          "color": SessionGrouping.hexString(g.color),
+          "collapsed": g.isCollapsed,
+          "sessions": mgr.sessions(in: g).map(\.name),
+        ]
+      }
+    }
+
     @MainActor private func sessionList() -> [[String: Any]] {
       let mgr = SessionManager.shared
       return mgr.sessions.enumerated().map { i, s in
@@ -279,6 +344,7 @@ import SwiftTerm
           "maxContextTokens": s.maxContextTokens,
           "worktreePath": s.worktreePath ?? NSNull(),
           "agentSessionId": s.agentSessionId ?? NSNull(),
+          "group": s.groupID.flatMap { mgr.group(withID: $0)?.name } ?? NSNull(),
           "active": i == mgr.activeSessionIndex,
         ]
       }
@@ -345,6 +411,8 @@ import SwiftTerm
         win = DFQuickTerminal.shared.qaWindow
       case "key":
         win = NSApp.keyWindow
+      case "sheet":
+        win = appDelegate?.windowController?.window?.attachedSheet
       default:
         win = appDelegate?.windowController?.window
       }

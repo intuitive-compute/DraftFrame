@@ -14,7 +14,7 @@ import Foundation
 ///   dfqa close-session --index N
 ///   dfqa send --text STR [--index N] [--enter]
 ///   dfqa read [--index N] [--lines N]
-///   dfqa screenshot PATH [--window main|quick|key]
+///   dfqa screenshot PATH [--window main|quick|key|sheet]
 ///   dfqa menu "View>Toggle Dashboard"
 ///   dfqa raw '{"cmd": "..."}'
 
@@ -114,8 +114,13 @@ let usage = """
     close-session --index N
     send --text STR [--index N] [--enter]
     read [--index N] [--lines N]
-    screenshot PATH [--window main|quick|key]
+    screenshot PATH [--window main|quick|key|sheet]
     menu "View>Toggle Dashboard"
+    groups | new-group-dialog
+    new-group --name NAME [--color #RRGGBB]
+    group-preset --name status|project
+    move-to-group [--index N] [--group NAME]   (no --group = ungroup)
+    toggle-group --group NAME | delete-group --group NAME
     raw '{"cmd": "..."}'
   Socket: $DRAFTFRAME_QA_SOCKET (default /tmp/draftframe-qa.sock)
   """
@@ -126,10 +131,11 @@ let rest = Array(argv.dropFirst())
 
 var request: [String: Any]
 switch command {
-case "ping", "sessions", "state", "quit":
+case "ping", "sessions", "state", "quit", "groups", "new-group-dialog":
   request = ["cmd": command]
 
-case "new-session", "select", "close-session", "send", "read", "open-project":
+case "new-session", "select", "close-session", "send", "read", "open-project",
+  "new-group", "group-preset", "move-to-group", "toggle-group", "delete-group":
   let (opts, _) = parseOptions(rest, flags: ["enter"])
   request = opts
   request["cmd"] = command

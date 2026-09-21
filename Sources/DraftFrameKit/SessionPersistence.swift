@@ -34,6 +34,16 @@ final class SessionPersistence {
     /// Optional: unknown until the agent writes its transcript, and absent
     /// in files written by older app versions.
     let agentSessionId: String?
+    /// `SessionGroup.id` this session sits in; nil/absent = ungrouped.
+    var groupID: UUID? = nil
+  }
+
+  struct SavedGroup: Codable {
+    let id: UUID
+    let name: String
+    /// `#RRGGBB`.
+    let color: String
+    let isCollapsed: Bool
   }
 
   struct SessionsFile: Codable {
@@ -41,6 +51,8 @@ final class SessionPersistence {
     let sessions: [SavedSession]
     /// Which session was selected at save time. Optional for old files.
     let activeSessionIndex: Int?
+    /// Session groups in display order. Optional for old files.
+    var groups: [SavedGroup]? = nil
   }
 
   // MARK: - Save
@@ -67,12 +79,19 @@ final class SessionPersistence {
         SavedSession(
           name: session.name, worktreePath: session.worktreePath,
           agent: session.agent.rawValue,
-          agentSessionId: session.agentSessionId)
+          agentSessionId: session.agentSessionId,
+          groupID: session.groupID)
       })
+    let groups = SessionManager.shared.groups.map { g in
+      SavedGroup(
+        id: g.id, name: g.name, color: SessionGrouping.hexString(g.color),
+        isCollapsed: g.isCollapsed)
+    }
 
     let file = SessionsFile(
       projectDir: projectDir, sessions: saved,
-      activeSessionIndex: SessionManager.shared.activeSessionIndex)
+      activeSessionIndex: SessionManager.shared.activeSessionIndex,
+      groups: groups)
 
     let fm = FileManager.default
     let dir = SessionPersistence.configDir
@@ -125,7 +144,8 @@ final class SessionPersistence {
     return sessions.map { s in
       guard let id = s.agentSessionId, !seen.insert(id).inserted else { return s }
       return SavedSession(
-        name: s.name, worktreePath: s.worktreePath, agent: s.agent, agentSessionId: nil)
+        name: s.name, worktreePath: s.worktreePath, agent: s.agent, agentSessionId: nil,
+        groupID: s.groupID)
     }
   }
 
@@ -170,6 +190,15 @@ final class SessionPersistence {
     // hand-edited files.
     var usedResumeIds = Set<String>()
 
+    // Groups come back first so restored sessions can be slotted into them.
+    // Merged with any groups already present (another project's tabs).
+    let existingIDs = Set(SessionManager.shared.groups.map(\.id))
+    let restoredGroups = (file.groups ?? []).compactMap { g -> SessionGroup? in
+      guard !existingIDs.contains(g.id), let color = SessionGrouping.color(fromHex: g.color)
+      else { return nil }
+      return SessionGroup(id: g.id, name: g.name, color: color, isCollapsed: g.isCollapsed)
+    }
+
     for entry in file.sessions {
       // Verify worktree path still exists if specified
       var wtPath = entry.worktreePath
@@ -192,10 +221,15 @@ final class SessionPersistence {
         usedResumeIds.insert(sid)
       }
 
-      SessionManager.shared.createSession(
+      let session = SessionManager.shared.createSession(
         name: entry.name, worktreePath: workDir, agent: agent,
         resumeSessionId: resumeId)
+      session.groupID = entry.groupID
     }
+
+    // Installing the groups re-sorts sessions into their blocks. The saved
+    // list was already in that order, so this only fixes hand-edited files.
+    SessionManager.shared.restoreGroups(SessionManager.shared.groups + restoredGroups)
 
     // Reselect the session that was active at save time.
     let count = SessionManager.shared.sessions.count
