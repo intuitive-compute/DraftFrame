@@ -28,6 +28,11 @@
 - [x] Worktree auto-cleanup on quit
 - [x] Session persistence across restarts
 - [x] Quick terminal (Cmd+`) — floating shell rooted at the project directory
+- [x] Graph view — per-session live canvas of harness sub-agents in the dashboard (step 1 of docs/graph-engineering.md)
+
+## Remaining — Graph engineering (docs/graph-engineering.md)
+- [ ] **Graph spec + runner** — JSON graphs in `<repo>/.draftframe/graphs/` and `~/.config/draftframe/graphs/`; watchdogs become one-edge graphs
+- [ ] **Canvas editing** — add nodes and edges on the canvas, written back to the spec
 
 ## Remaining — Key Features
 - [ ] **Projects with worktrees** — Organize worktrees under projects. Projects are the directory/repo that worktrees belong to. Allow opening new projects via file navigator (like app launch). Add an "Open Project" button in the sidebar. Each project gets its own set of worktrees and sessions. Support switching between projects.

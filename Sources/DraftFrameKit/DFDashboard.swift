@@ -7,14 +7,29 @@ final class DFDashboard: NSView {
   private let scrollView = NSScrollView()
   private let gridContainer = NSView()
   private var cardViews: [DashboardCard] = []
+  private let graphCanvas = DFGraphCanvas()
+  /// Picks which session the Graph mode shows. Follows the active session
+  /// until the user chooses one explicitly.
+  private let graphSessionPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+  private var pinnedGraphSessionID: UUID?
   private let modeSelector = NSSegmentedControl(
-    labels: ["Grid", "Summary"], trackingMode: .selectOne, target: nil, action: nil)
+    labels: ["Grid", "Summary", "Graph"], trackingMode: .selectOne, target: nil, action: nil)
 
   enum Mode: Int {
     case grid = 0
     case summary = 1
+    /// Live graph of projects, sessions, PRs, and watchdogs.
+    /// See docs/graph-engineering.md.
+    case graph = 2
   }
   private(set) var mode: Mode = .grid
+
+  /// Switch modes programmatically (QA bridge, tests). Refreshes if visible.
+  func setMode(_ newMode: Mode) {
+    mode = newMode
+    modeSelector.selectedSegment = newMode.rawValue
+    if !isHidden { refresh() } else { needsRefresh = true }
+  }
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -27,7 +42,7 @@ final class DFDashboard: NSView {
     // three — but its handler is already a no-op while hidden.
     for name: Notification.Name in [
       .sessionListDidChange, .sessionStateDidChange, .sessionUsageDidChange,
-      .prStatusDidChange,
+      .prStatusDidChange, .activeSessionDidChange, .sessionGraphDidChange,
     ] {
       NotificationCenter.default.addObserver(
         self, selector: #selector(sessionsChanged),
@@ -91,6 +106,23 @@ final class DFDashboard: NSView {
 
     scrollView.documentView = gridContainer
 
+    graphCanvas.onSelectNode = { [weak self] node in
+      self?.graphNodeClicked(node)
+    }
+
+    graphSessionPicker.font = Theme.mono(11)
+    graphSessionPicker.isHidden = true
+    graphSessionPicker.target = self
+    graphSessionPicker.action = #selector(graphSessionPicked)
+    graphSessionPicker.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(graphSessionPicker)
+    NSLayoutConstraint.activate([
+      graphSessionPicker.centerYAnchor.constraint(equalTo: modeSelector.centerYAnchor),
+      graphSessionPicker.trailingAnchor.constraint(
+        equalTo: modeSelector.leadingAnchor, constant: -12),
+      graphSessionPicker.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
+    ])
+
     NSLayoutConstraint.activate([
       title.topAnchor.constraint(equalTo: topAnchor, constant: 40),
       title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 40),
@@ -118,6 +150,30 @@ final class DFDashboard: NSView {
     for sub in gridContainer.subviews { sub.removeFromSuperview() }
     cardViews.removeAll()
 
+    graphSessionPicker.isHidden = mode != .graph
+    if mode == .graph {
+      if scrollView.documentView !== graphCanvas {
+        scrollView.documentView = graphCanvas
+        scrollView.hasHorizontalScroller = true
+      }
+      let visible = CGSize(
+        width: max(scrollView.bounds.width, bounds.width - 60),
+        height: max(scrollView.bounds.height, bounds.height - 100))
+      let session = graphSession()
+      rebuildGraphSessionPicker(selected: session)
+      if let session {
+        SessionGraphSource.shared.refresh(session: session)
+        graphCanvas.update(model: GraphModelBuilder.liveModel(for: session), minimumSize: visible)
+      } else {
+        graphCanvas.update(model: GraphModel(), minimumSize: visible)
+      }
+      return
+    }
+    if scrollView.documentView !== gridContainer {
+      scrollView.documentView = gridContainer
+      scrollView.hasHorizontalScroller = false
+    }
+
     let sessions = SessionManager.shared.sessions
     if sessions.isEmpty {
       let empty = NSTextField(labelWithString: "No active sessions. Press Cmd+T to create one.")
@@ -135,6 +191,7 @@ final class DFDashboard: NSView {
     switch mode {
     case .grid: layoutGrid(sessions: sessions)
     case .summary: layoutSummary(sessions: sessions)
+    case .graph: break  // handled above
     }
   }
 
@@ -204,6 +261,61 @@ final class DFDashboard: NSView {
       x: 0, y: 0,
       width: containerWidth,
       height: max(totalHeight, visibleHeight))
+  }
+
+  // MARK: - Graph mode
+
+  /// The session the graph shows: the pinned one if it still exists,
+  /// otherwise the active session.
+  private func graphSession() -> Session? {
+    let sessions = SessionManager.shared.sessions
+    if let pinned = pinnedGraphSessionID, let s = sessions.first(where: { $0.id == pinned }) {
+      return s
+    }
+    pinnedGraphSessionID = nil
+    return SessionManager.shared.activeSession
+  }
+
+  private func rebuildGraphSessionPicker(selected: Session?) {
+    let sessions = SessionManager.shared.sessions
+    graphSessionPicker.removeAllItems()
+    for session in sessions {
+      let item = NSMenuItem(title: session.displayName, action: nil, keyEquivalent: "")
+      item.representedObject = session.id
+      graphSessionPicker.menu?.addItem(item)
+    }
+    graphSessionPicker.isEnabled = !sessions.isEmpty
+    if let selected, let idx = sessions.firstIndex(where: { $0.id == selected.id }) {
+      graphSessionPicker.selectItem(at: idx)
+    }
+  }
+
+  @objc private func graphSessionPicked(_ sender: NSPopUpButton) {
+    pinnedGraphSessionID = sender.selectedItem?.representedObject as? UUID
+    refresh()
+  }
+
+  /// Show the graph for a specific session (QA bridge, future sidebar hook).
+  func showGraph(for sessionID: UUID) {
+    pinnedGraphSessionID = sessionID
+    setMode(.graph)
+    if isHidden { toggle() }
+  }
+
+  private func graphNodeClicked(_ node: GraphNode) {
+    if let sessionID = node.sessionID,
+      let idx = SessionManager.shared.sessions.firstIndex(where: { $0.id == sessionID })
+    {
+      SessionManager.shared.switchTo(index: idx)
+      toggle()
+      return
+    }
+    if let path = node.filePath,
+      let wc = (NSApp.delegate as? DFAppDelegate)?.windowController
+    {
+      wc.showEditor()
+      wc.codeEditor.openFile(at: path)
+    }
   }
 
   /// Tracks whether a refresh is actually needed — prevents redundant full

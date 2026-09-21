@@ -32,7 +32,8 @@ Grab the latest DMG from [GitHub Releases](https://github.com/intuitive-compute/
 - **Configurable toolkit** — One-click commands (test, build, lint) with output popovers
 - **Voice transcription** — On-device speech-to-text via Apple Speech (Cmd+Shift+V)
 - **Quick terminal** — Floating per-session shell (Cmd+`) with tabs and tmux-style recursive splits
-- **Dashboard** — Full-screen session overview (Cmd+D)
+- **Dashboard** — Full-screen session overview (Cmd+D) with Grid, Summary, and Graph modes
+- **Graph view** — Live canvas of one session and the sub-agents its harness spawned, grouped by dispatching skill; click an agent to open its transcript (see [docs/graph-engineering.md](docs/graph-engineering.md))
 - **Session persistence** — Restore sessions across app restarts
 - **Keyboard shortcuts** — Cmd+T/W/1-9/D/N/O/E/` and more
 

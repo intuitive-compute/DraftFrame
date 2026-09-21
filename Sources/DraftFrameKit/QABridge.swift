@@ -225,7 +225,8 @@ import SwiftTerm
           return ["ok": false, "error": "screenshot requires \"path\""]
         }
         let which = params["window"] as? String ?? "main"
-        return screenshot(to: path, window: which)
+        let method = params["method"] as? String ?? "pixels"
+        return screenshot(to: path, window: which, method: method)
 
       case "menu":
         guard let titles = params["path"] as? [String], !titles.isEmpty else {
@@ -295,6 +296,30 @@ import SwiftTerm
         SessionManager.shared.deleteGroup(id: group.id)
         return ["ok": true, "groups": groupList(), "sessions": sessionList()]
 
+      case "dashboard-mode":
+        guard let name = params["mode"] as? String else {
+          return ["ok": false, "error": "dashboard-mode requires \"mode\" (grid|summary|graph)"]
+        }
+        let mode: DFDashboard.Mode
+        switch name {
+        case "grid": mode = .grid
+        case "summary": mode = .summary
+        case "graph": mode = .graph
+        default: return ["ok": false, "error": "unknown mode: \(name)"]
+        }
+        guard let dashboard = appDelegate?.windowController?.dashboard else {
+          return ["ok": false, "error": "no window"]
+        }
+        if mode == .graph, let idx = params["index"] as? Int,
+          idx >= 0, idx < SessionManager.shared.sessions.count
+        {
+          dashboard.showGraph(for: SessionManager.shared.sessions[idx].id)
+          return ["ok": true]
+        }
+        dashboard.setMode(mode)
+        if dashboard.isHidden { dashboard.toggle() }
+        return ["ok": true]
+
       case "quit":
         DispatchQueue.main.async { NSApp.terminate(nil) }
         return ["ok": true]
@@ -361,6 +386,7 @@ import SwiftTerm
       ]
       if let wc = appDelegate?.windowController {
         state["dashboardVisible"] = !wc.dashboard.isHidden
+        state["dashboardMode"] = ["grid", "summary", "graph"][wc.dashboard.mode.rawValue]
         if let frame = wc.window?.frame {
           state["windowFrame"] = [
             "x": frame.origin.x, "y": frame.origin.y,
@@ -404,7 +430,13 @@ import SwiftTerm
     /// Capture a window's actual pixels into a PNG via CGWindowListCreateImage.
     /// Capturing our own process's windows needs no screen-recording permission,
     /// and unlike `cacheDisplay` it includes SwiftTerm's terminal rendering.
-    @MainActor private func screenshot(to path: String, window which: String) -> [String: Any] {
+    /// `method` is "pixels" (default) or "cache": the latter renders the view
+    /// hierarchy with `cacheDisplay`, which misses SwiftTerm's terminal but
+    /// works when the window-list capture comes back blank (some display
+    /// configurations) and is fine for AppKit-only chrome like the dashboard.
+    @MainActor private func screenshot(
+      to path: String, window which: String, method: String = "pixels"
+    ) -> [String: Any] {
       let win: NSWindow?
       switch which {
       case "quick":
@@ -419,14 +451,25 @@ import SwiftTerm
       guard let window = win else {
         return ["ok": false, "error": "window \"\(which)\" not available"]
       }
-      guard
-        let cgImage = CGWindowListCreateImage(
-          .null, .optionIncludingWindow, CGWindowID(window.windowNumber),
-          [.boundsIgnoreFraming, .bestResolution])
-      else {
-        return ["ok": false, "error": "could not capture window"]
+      let rep: NSBitmapImageRep
+      if method == "cache" {
+        guard let view = window.contentView,
+          let cached = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        else {
+          return ["ok": false, "error": "could not cache window content"]
+        }
+        view.cacheDisplay(in: view.bounds, to: cached)
+        rep = cached
+      } else {
+        guard
+          let cgImage = CGWindowListCreateImage(
+            .null, .optionIncludingWindow, CGWindowID(window.windowNumber),
+            [.boundsIgnoreFraming, .bestResolution])
+        else {
+          return ["ok": false, "error": "could not capture window"]
+        }
+        rep = NSBitmapImageRep(cgImage: cgImage)
       }
-      let rep = NSBitmapImageRep(cgImage: cgImage)
       guard let png = rep.representation(using: .png, properties: [:]) else {
         return ["ok": false, "error": "could not encode PNG"]
       }

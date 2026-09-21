@@ -287,12 +287,13 @@ final class DFWindowController: NSWindowController {
 
   /// Launch-time project selection: reopen the last workspace so quitting
   /// and relaunching needs no manual re-setup. Falls back to the most
-  /// recently used project, then to the open panel. QA runs keep the old
-  /// prompt-first behavior — the QA script opens its own throwaway project
-  /// through the bridge, and must never land in the user's real one.
+  /// recently used project, and only prompts when nothing has ever been
+  /// opened. QA runs never prompt: the QA script opens its own throwaway
+  /// project through the bridge, must never land in the user's real one,
+  /// and the open panel would otherwise flash on the user's screen at
+  /// every QA launch.
   func openInitialProject() {
     if QABridge.isQAMode {
-      promptOpenProject()
       return
     }
     let fm = FileManager.default

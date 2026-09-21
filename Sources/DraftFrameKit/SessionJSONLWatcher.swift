@@ -7,7 +7,7 @@ final class SessionJSONLWatcher: @unchecked Sendable {
 
   // MARK: - Model pricing per token (derived from per-1M-token rates)
 
-  private struct ModelPricing {
+  struct ModelPricing {
     let inputPerToken: Double
     let outputPerToken: Double
     let cacheCreationPerToken: Double  // 1.25x input
@@ -21,7 +21,7 @@ final class SessionJSONLWatcher: @unchecked Sendable {
     }
   }
 
-  private static let pricing: [String: ModelPricing] = [
+  static let pricing: [String: ModelPricing] = [
     "fable": ModelPricing(inputPerMillion: 10, outputPerMillion: 50),
     "opus": ModelPricing(inputPerMillion: 5, outputPerMillion: 25),
     "sonnet": ModelPricing(inputPerMillion: 3, outputPerMillion: 15),

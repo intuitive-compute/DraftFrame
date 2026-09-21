@@ -14,7 +14,7 @@ import Foundation
 ///   dfqa close-session --index N
 ///   dfqa send --text STR [--index N] [--enter]
 ///   dfqa read [--index N] [--lines N]
-///   dfqa screenshot PATH [--window main|quick|key|sheet]
+///   dfqa screenshot PATH [--window main|quick|key|sheet] [--method pixels|cache]
 ///   dfqa menu "View>Toggle Dashboard"
 ///   dfqa raw '{"cmd": "..."}'
 
@@ -114,8 +114,9 @@ let usage = """
     close-session --index N
     send --text STR [--index N] [--enter]
     read [--index N] [--lines N]
-    screenshot PATH [--window main|quick|key|sheet]
+    screenshot PATH [--window main|quick|key|sheet] [--method pixels|cache]
     menu "View>Toggle Dashboard"
+    dashboard-mode grid|summary|graph [--index N]
     groups | new-group-dialog
     new-group --name NAME [--color #RRGGBB]
     group-preset --name status|project
@@ -159,6 +160,13 @@ case "menu":
     "cmd": "menu",
     "path": spec.split(separator: ">").map { $0.trimmingCharacters(in: .whitespaces) },
   ]
+
+case "dashboard-mode":
+  let (opts, positional) = parseOptions(rest, flags: [])
+  guard let mode = positional.first else { fail("dashboard-mode requires grid|summary|graph") }
+  request = opts
+  request["cmd"] = "dashboard-mode"
+  request["mode"] = mode
 
 case "raw":
   guard let json = rest.first,
