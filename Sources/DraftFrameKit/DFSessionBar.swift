@@ -222,7 +222,8 @@ final class DFSessionBar: NSView {
     for group in groups {
       let members = manager.sessions(in: group)
       let containsActive = members.contains { indexOf($0) == activeIdx }
-      let header = SessionGroupHeader(group: group, members: members, containsActive: containsActive, bar: self)
+      let header = SessionGroupHeader(
+        group: group, members: members, containsActive: containsActive, bar: self)
       header.widthAnchor.constraint(equalToConstant: Self.rowWidth).isActive = true
       cardStack.addArrangedSubview(header)
       // Breathing room above every group but the first.
@@ -407,7 +408,8 @@ final class DFSessionBar: NSView {
     guard gap > 0 else {
       // Above everything: top of the first group, or top of the list.
       if case .header(let group, _) = entries[0] {
-        return DropTarget(groupID: group.id, index: block(of: group).start, lineBefore: 0, header: nil)
+        return DropTarget(
+          groupID: group.id, index: block(of: group).start, lineBefore: 0, header: nil)
       }
       return DropTarget(groupID: nil, index: 0, lineBefore: 0, header: nil)
     }

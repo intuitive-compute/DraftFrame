@@ -45,7 +45,8 @@ final class SessionGroupingTests: XCTestCase {
       XCTAssertNotNil(back)
       XCTAssertEqual(back.map(SessionGrouping.hexString), hex)
     }
-    XCTAssertEqual(SessionGrouping.color(fromHex: "ff9500").map(SessionGrouping.hexString), "#FF9500")
+    XCTAssertEqual(
+      SessionGrouping.color(fromHex: "ff9500").map(SessionGrouping.hexString), "#FF9500")
     XCTAssertNil(SessionGrouping.color(fromHex: "nope"))
     XCTAssertNil(SessionGrouping.color(fromHex: "#FFF"))
   }
