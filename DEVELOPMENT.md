@@ -4,6 +4,11 @@
 
 - macOS 14.0+
 - Swift 5.9+ (included with Xcode 15+)
+- Xcode's Metal toolchain. SwiftTerm compiles a Metal shader, and Xcode 26+
+  ships without the Metal compiler. If `swift build` fails on
+  `CompileMetalFile ... Shaders.metal`, run
+  `xcodebuild -downloadComponent MetalToolchain` once (about 840 MB) and
+  build again. Expect this after every major Xcode upgrade.
 - [Claude Code](https://claude.ai/claude-code) installed (for runtime testing)
 
 ## Quick Start
