@@ -702,6 +702,24 @@ final class SessionManager {
     reorderPreservingActive { normalizeOrder() }
   }
 
+  /// Move the group at `from` so it sits at insertion index `to` of the
+  /// current group list (0 = first, `groups.count` = last, the same
+  /// convention as `moveSession`). The group's sessions travel with it in
+  /// their existing order, and the active session stays active. Ungrouped
+  /// sessions always render after every group, so a group can't be placed
+  /// below them.
+  func moveGroup(from: Int, to: Int) {
+    guard let reordered = SessionGrouping.moving(groups, from: from, to: to) else { return }
+    groups = reordered
+    reorderPreservingActive { normalizeOrder() }
+  }
+
+  /// `moveGroup(from:to:)` addressed by group ID.
+  func moveGroup(id: UUID, to: Int) {
+    guard let from = groups.firstIndex(where: { $0.id == id }) else { return }
+    moveGroup(from: from, to: to)
+  }
+
   /// Move a session into `groupID` (nil = ungrouped), inserting at global
   /// index `index` (the position in the display order, before removal).
   /// The order is then normalized so the session lands inside its group's

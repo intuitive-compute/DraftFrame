@@ -289,6 +289,17 @@ import SwiftTerm
         SessionManager.shared.setGroup(id: group.id, collapsed: !group.isCollapsed)
         return ["ok": true, "groups": groupList()]
 
+      case "move-group":
+        guard let name = params["group"] as? String,
+          let group = SessionManager.shared.groups.first(where: { $0.name == name })
+        else { return ["ok": false, "error": "no such group"] }
+        let to = (params["to"] as? Int) ?? (params["to"] as? String).flatMap { Int($0) }
+        guard let to = to else {
+          return ["ok": false, "error": "move-group requires \"to\" (group insertion index)"]
+        }
+        SessionManager.shared.moveGroup(id: group.id, to: to)
+        return ["ok": true, "groups": groupList(), "sessions": sessionList()]
+
       case "delete-group":
         guard let name = params["group"] as? String,
           let group = SessionManager.shared.groups.first(where: { $0.name == name })
