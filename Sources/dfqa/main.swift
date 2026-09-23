@@ -122,6 +122,7 @@ let usage = """
     group-preset --name status|project
     move-to-group [--index N] [--group NAME]   (no --group = ungroup)
     toggle-group --group NAME | delete-group --group NAME
+    move-group --group NAME --to N   (N = position in the group list, 0 = first)
     raw '{"cmd": "..."}'
   Socket: $DRAFTFRAME_QA_SOCKET (default /tmp/draftframe-qa.sock)
   """
@@ -136,7 +137,7 @@ case "ping", "sessions", "state", "quit", "groups", "new-group-dialog":
   request = ["cmd": command]
 
 case "new-session", "select", "close-session", "send", "read", "open-project",
-  "new-group", "group-preset", "move-to-group", "toggle-group", "delete-group":
+  "new-group", "group-preset", "move-to-group", "toggle-group", "delete-group", "move-group":
   let (opts, _) = parseOptions(rest, flags: ["enter"])
   request = opts
   request["cmd"] = command

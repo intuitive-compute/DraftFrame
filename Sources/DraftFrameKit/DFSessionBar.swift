@@ -2,6 +2,8 @@ import AppKit
 
 extension NSPasteboard.PasteboardType {
   fileprivate static let dfSessionDrag = NSPasteboard.PasteboardType("com.draftframe.sessiondrag")
+  /// A whole group (header plus members) being reordered; payload is the group ID.
+  fileprivate static let dfGroupDrag = NSPasteboard.PasteboardType("com.draftframe.groupdrag")
 }
 
 /// Right sidebar: session cards with live status, driven by SessionManager.
@@ -53,7 +55,7 @@ final class DFSessionBar: NSView {
     wantsLayer = true
     layer?.backgroundColor = Theme.surface1.cgColor
     buildUI()
-    registerForDraggedTypes([.dfSessionDrag])
+    registerForDraggedTypes([.dfSessionDrag, .dfGroupDrag])
 
     // Structural changes (membership, order, active card, PR pills) rebuild
     // the cards; state and usage ticks update the existing cards in place so
@@ -208,7 +210,7 @@ final class DFSessionBar: NSView {
       card.translatesAutoresizingMaskIntoConstraints = false
       let container: NSView
       if let group = group {
-        let row = GroupedCardRow(card: card, color: group.color)
+        let row = GroupedCardRow(card: card, group: group)
         row.widthAnchor.constraint(equalToConstant: Self.rowWidth).isActive = true
         container = row
       } else {
@@ -329,10 +331,18 @@ final class DFSessionBar: NSView {
   // MARK: - Drag & Drop (reorder and regroup)
 
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-    sourceIndex(from: sender) == nil ? [] : .move
+    (sourceIndex(from: sender) == nil && sourceGroupID(from: sender) == nil) ? [] : .move
   }
 
   override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    if let groupID = sourceGroupID(from: sender) {
+      if let target = groupDropTarget(for: sender, dragging: groupID) {
+        showDropLine(before: target.lineBefore)
+      } else {
+        hideDropIndicator()
+      }
+      return .move
+    }
     guard sourceIndex(from: sender) != nil else { return [] }
     showDropIndicator(for: dropTarget(for: sender))
     return .move
@@ -343,6 +353,13 @@ final class DFSessionBar: NSView {
   }
 
   override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    if let groupID = sourceGroupID(from: sender) {
+      let target = groupDropTarget(for: sender, dragging: groupID)
+      hideDropIndicator()
+      guard let target = target else { return false }
+      SessionManager.shared.moveGroup(id: groupID, to: target.toIndex)
+      return true
+    }
     guard let from = sourceIndex(from: sender) else { return false }
     let sessions = SessionManager.shared.sessions
     guard from >= 0, from < sessions.count else { return false }
@@ -364,6 +381,97 @@ final class DFSessionBar: NSView {
       let idx = Int(str)
     else { return nil }
     return idx
+  }
+
+  private func sourceGroupID(from info: NSDraggingInfo) -> UUID? {
+    guard
+      let items = info.draggingPasteboard.pasteboardItems,
+      let str = items.first?.string(forType: .dfGroupDrag)
+    else { return nil }
+    return UUID(uuidString: str)
+  }
+
+  // MARK: Group drags
+
+  /// Where a dragged group would land: the insertion index in
+  /// `SessionManager.groups` and the entry to draw the line before.
+  private struct GroupDropTarget {
+    let toIndex: Int
+    let lineBefore: Int
+  }
+
+  /// Entry ranges of each block in `entries`: one per group (header plus
+  /// its visible cards) followed, when groups exist, by the ungrouped block
+  /// (divider plus ungrouped cards). Group blocks are in `groups` order.
+  private func blockRanges() -> (groups: [Range<Int>], ungrouped: Range<Int>?) {
+    var starts: [Int] = []
+    var ungroupedStart: Int?
+    for (i, entry) in entries.enumerated() {
+      switch entry {
+      case .header: starts.append(i)
+      case .ungroupedDivider: ungroupedStart = i
+      case .card: break
+      }
+    }
+    var groups: [Range<Int>] = []
+    for (k, start) in starts.enumerated() {
+      let end = k + 1 < starts.count ? starts[k + 1] : (ungroupedStart ?? entries.count)
+      groups.append(start..<end)
+    }
+    return (groups, ungroupedStart.map { $0..<entries.count })
+  }
+
+  /// Map the pointer to a group insertion point. Groups never nest and
+  /// ungrouped sessions always come last, so the pointer snaps to the
+  /// nearest block boundary: above or below whichever group block it is
+  /// over, or above the ungrouped block. Returns nil when the drag can't
+  /// land anywhere (no group blocks laid out).
+  private func groupDropTarget(for info: NSDraggingInfo, dragging groupID: UUID)
+    -> GroupDropTarget?
+  {
+    let point = cardStack.convert(info.draggingLocation, from: nil)
+    let (groupBlocks, ungroupedBlock) = blockRanges()
+    guard !groupBlocks.isEmpty else { return nil }
+
+    func frame(of block: Range<Int>) -> NSRect {
+      block.map { entries[$0].view.frame }.reduce(NSRect.null) { $0.union($1) }
+    }
+
+    // Above every block: first position.
+    if point.y >= frame(of: groupBlocks[0]).maxY {
+      return GroupDropTarget(toIndex: 0, lineBefore: groupBlocks[0].lowerBound)
+    }
+    for (k, block) in groupBlocks.enumerated() {
+      let f = frame(of: block)
+      // Inside this block, or in the gap just below it (before the next
+      // block starts): the block's midline decides above vs. below.
+      let nextTop =
+        k + 1 < groupBlocks.count
+        ? frame(of: groupBlocks[k + 1]).maxY
+        : (ungroupedBlock.map { frame(of: $0).maxY } ?? -.greatestFiniteMagnitude)
+      guard point.y >= nextTop else { continue }
+      if point.y > f.midY {
+        return GroupDropTarget(toIndex: k, lineBefore: block.lowerBound)
+      }
+      return GroupDropTarget(toIndex: k + 1, lineBefore: block.upperBound)
+    }
+    // Over (or below) the ungrouped block: just above it.
+    return GroupDropTarget(
+      toIndex: groupBlocks.count, lineBefore: groupBlocks[groupBlocks.count - 1].upperBound)
+  }
+
+  /// Dim or restore every view that belongs to `groupID` (header and rows)
+  /// while the group is being dragged.
+  fileprivate func setGroupDimmed(_ groupID: UUID, _ dimmed: Bool) {
+    for entry in entries {
+      switch entry {
+      case .header(let group, let header) where group.id == groupID:
+        header.alphaValue = dimmed ? 0.3 : 1.0
+      case .card(_, let container, _, let gid) where gid == groupID:
+        container.alphaValue = dimmed ? 0.3 : 1.0
+      default: break
+      }
+    }
   }
 
   /// First session index of `group`'s block in the display order, and the
@@ -438,10 +546,14 @@ final class DFSessionBar: NSView {
       lastDropIndex = nil
       return
     }
+    showDropLine(before: target.lineBefore)
+  }
+
+  /// Draw the insertion line before entry `index` (`entries.count` = below all).
+  private func showDropLine(before index: Int) {
     highlightedHeader?.isDropHighlighted = false
     highlightedHeader = nil
 
-    let index = target.lineBefore
     if !dropIndicator.isHidden, lastDropIndex == index { return }
     let views = entries.map(\.view)
     guard !views.isEmpty else {
@@ -758,11 +870,95 @@ final class SessionGroupHeader: NSView {
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .pointingHand)
   }
+
+  // MARK: - Drag source (reorder the whole group)
+
+  private var mouseDownPoint: NSPoint?
+
+  override func mouseDown(with event: NSEvent) {
+    mouseDownPoint = event.locationInWindow
+    super.mouseDown(with: event)
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    guard let start = mouseDownPoint else {
+      super.mouseDragged(with: event)
+      return
+    }
+    let dx = event.locationInWindow.x - start.x
+    let dy = event.locationInWindow.y - start.y
+    // 4pt threshold so click (collapse) and double-click (edit) still register.
+    if dx * dx + dy * dy < 16 { return }
+    mouseDownPoint = nil
+    beginDrag(with: event)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    mouseDownPoint = nil
+    super.mouseUp(with: event)
+  }
+
+  private func beginDrag(with event: NSEvent) {
+    let item = NSPasteboardItem()
+    item.setString(group.id.uuidString, forType: .dfGroupDrag)
+    let dragItem = NSDraggingItem(pasteboardWriter: item)
+    let (frame, image) = dragSnapshot()
+    dragItem.setDraggingFrame(frame, contents: image)
+    let dragSession = beginDraggingSession(with: [dragItem], event: event, source: self)
+    dragSession.animatesToStartingPositionsOnCancelOrFail = true
+  }
+
+  /// Snapshot of the header together with its visible member rows, so the
+  /// drag image shows the whole block that is moving. Frame is in the
+  /// header's coordinates.
+  private func dragSnapshot() -> (NSRect, NSImage) {
+    guard let stack = superview else { return (bounds, snapshot(of: self, in: bounds)) }
+    var region = frame
+    for view in stack.subviews where view !== self {
+      if let row = view as? GroupedCardRow, row.groupID == group.id {
+        region = region.union(view.frame)
+      }
+    }
+    let image = snapshot(of: stack, in: region)
+    return (convert(region, from: stack), image)
+  }
+
+  private func snapshot(of view: NSView, in rect: NSRect) -> NSImage {
+    guard let rep = view.bitmapImageRepForCachingDisplay(in: rect) else { return NSImage() }
+    view.cacheDisplay(in: rect, to: rep)
+    let img = NSImage(size: rect.size)
+    img.addRepresentation(rep)
+    return img
+  }
+}
+
+extension SessionGroupHeader: NSDraggingSource {
+  func draggingSession(
+    _ session: NSDraggingSession,
+    sourceOperationMaskFor context: NSDraggingContext
+  ) -> NSDragOperation {
+    context == .withinApplication ? .move : []
+  }
+
+  func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+    bar?.setGroupDimmed(group.id, true)
+  }
+
+  func draggingSession(
+    _ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation
+  ) {
+    bar?.setGroupDimmed(group.id, false)
+  }
 }
 
 /// A grouped card, indented under its header with a rail in the group color.
 final class GroupedCardRow: NSView {
-  init(card: SessionCard, color: NSColor) {
+  /// The group this row belongs to, so a group drag can find its rows.
+  let groupID: UUID
+
+  init(card: SessionCard, group: SessionGroup) {
+    self.groupID = group.id
+    let color = group.color
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     let rail = NSView()

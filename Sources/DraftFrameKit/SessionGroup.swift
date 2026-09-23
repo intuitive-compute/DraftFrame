@@ -76,6 +76,20 @@ enum SessionGrouping {
     }
   }
 
+  /// `items` with the element at `from` moved so it sits at insertion index
+  /// `to` of the original list (0 = first, `items.count` = last), the same
+  /// convention `SessionManager.moveSession` uses. Returns nil when either
+  /// index is out of range or the move would leave the order unchanged.
+  static func moving<T>(_ items: [T], from: Int, to: Int) -> [T]? {
+    guard from >= 0, from < items.count, to >= 0, to <= items.count else { return nil }
+    // Inserting right before or right after itself is a no-op.
+    guard to != from, to != from + 1 else { return nil }
+    var result = items
+    let moved = result.remove(at: from)
+    result.insert(moved, at: to > from ? to - 1 : to)
+    return result
+  }
+
   // MARK: - Color <-> hex
 
   /// `#RRGGBB` for persistence.
