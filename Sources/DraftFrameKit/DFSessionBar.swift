@@ -11,8 +11,16 @@ extension NSPasteboard.PasteboardType {
 /// with ungrouped sessions last.
 final class DFSessionBar: NSView {
 
+  private let scrollView = NSScrollView()
+  /// Flipped document view so the stack pins to the top of the scroll area;
+  /// also hosts the drop line so it scrolls with the cards.
+  private let scrollContent = FlippedContentView()
   private let cardStack = NSStackView()
   private let dropIndicator = NSView()
+  /// Session whose card was last scrolled into view. A rebuild that keeps
+  /// the same active session restores the scroll offset instead, so a
+  /// status or PR refresh doesn't make the list jump.
+  private var lastRevealedSessionID: UUID?
   private var lastDropIndex: Int?
   private weak var highlightedHeader: SessionGroupHeader?
 
@@ -145,17 +153,32 @@ final class DFSessionBar: NSView {
     sep.translatesAutoresizingMaskIntoConstraints = false
     addSubview(sep)
 
+    // Everything below the separator scrolls: vertical only, overlay
+    // scroller like the other panes.
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
+    scrollView.autohidesScrollers = true
+    scrollView.drawsBackground = false
+    scrollView.borderType = .noBorder
+    scrollView.scrollerStyle = .overlay
+    scrollView.horizontalScrollElasticity = .none
+    addSubview(scrollView)
+
+    scrollContent.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.documentView = scrollContent
+
     cardStack.orientation = .vertical
     cardStack.spacing = 6
     cardStack.alignment = .leading
     cardStack.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(cardStack)
+    scrollContent.addSubview(cardStack)
 
     dropIndicator.wantsLayer = true
     dropIndicator.layer?.backgroundColor = Theme.accent.cgColor
     dropIndicator.layer?.cornerRadius = 1
     dropIndicator.isHidden = true
-    addSubview(dropIndicator)
+    scrollContent.addSubview(dropIndicator)
 
     NSLayoutConstraint.activate([
       title.topAnchor.constraint(equalTo: topAnchor, constant: 38),
@@ -168,15 +191,26 @@ final class DFSessionBar: NSView {
       sep.leadingAnchor.constraint(equalTo: leadingAnchor),
       sep.trailingAnchor.constraint(equalTo: trailingAnchor),
       sep.heightAnchor.constraint(equalToConstant: 1),
-      cardStack.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 8),
-      cardStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-      cardStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      scrollView.topAnchor.constraint(equalTo: sep.bottomAnchor),
+      scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      // The document tracks the clip view's width; its height comes from
+      // the stack so the scroll view knows how far it can scroll.
+      scrollContent.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+      scrollContent.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+      scrollContent.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+      cardStack.topAnchor.constraint(equalTo: scrollContent.topAnchor, constant: 8),
+      cardStack.leadingAnchor.constraint(equalTo: scrollContent.leadingAnchor, constant: 8),
+      cardStack.trailingAnchor.constraint(equalTo: scrollContent.trailingAnchor, constant: -8),
+      cardStack.bottomAnchor.constraint(equalTo: scrollContent.bottomAnchor, constant: -8),
     ])
   }
 
   private static let rowWidth: CGFloat = 284
 
   private func refreshCards() {
+    let savedOrigin = scrollView.contentView.bounds.origin
     // Remove existing cards
     for view in cardStack.arrangedSubviews {
       cardStack.removeArrangedSubview(view)
@@ -197,6 +231,7 @@ final class DFSessionBar: NSView {
       empty.maximumNumberOfLines = 2
       empty.translatesAutoresizingMaskIntoConstraints = false
       cardStack.addArrangedSubview(empty)
+      lastRevealedSessionID = nil
       return
     }
 
@@ -257,6 +292,61 @@ final class DFSessionBar: NSView {
       cardStack.setCustomSpacing(4, after: wrap)
     }
     for session in ungrouped { addCard(session, in: nil) }
+
+    settleScroll(restoring: savedOrigin, activeIndex: activeIdx)
+  }
+
+  // MARK: - Scrolling
+
+  /// After a rebuild: scroll the active card into view when the active
+  /// session changed (keyboard switch, new session); otherwise put the
+  /// scroll offset back where it was so the list doesn't jump.
+  private func settleScroll(restoring origin: NSPoint, activeIndex: Int) {
+    scrollView.layoutSubtreeIfNeeded()
+    let activeID = SessionManager.shared.activeSession?.id
+    defer { lastRevealedSessionID = activeID }
+    if activeID != lastRevealedSessionID, activeID != nil {
+      for entry in entries {
+        if case .card(_, let container, let index, _) = entry, index == activeIndex {
+          let rect = scrollContent.convert(container.frame, from: cardStack).insetBy(dx: 0, dy: -8)
+          scrollContent.scrollToVisible(rect)
+          return
+        }
+      }
+      // Active card hidden inside a collapsed group: nothing to reveal.
+    }
+    scroll(to: origin)
+  }
+
+  /// Scroll the document to `origin`, clamped to the scrollable range.
+  private func scroll(to origin: NSPoint) {
+    let clip = scrollView.contentView
+    let maxY = max(0, scrollContent.frame.height - clip.bounds.height)
+    let y = min(max(0, origin.y), maxY)
+    guard y != clip.bounds.origin.y else { return }
+    clip.scroll(to: NSPoint(x: 0, y: y))
+    scrollView.reflectScrolledClipView(clip)
+  }
+
+  /// Nudge the list while a drag hovers near the top or bottom edge of the
+  /// visible area, so off-screen cards and groups are reachable as drop
+  /// targets. `draggingUpdated` fires periodically while the pointer is
+  /// still, so holding at the edge keeps scrolling.
+  private func autoscrollForDrag(_ info: NSDraggingInfo) {
+    let clip = scrollView.contentView
+    let visible = clip.bounds
+    let point = clip.convert(info.draggingLocation, from: nil)
+    let edge: CGFloat = 32
+    let step: CGFloat = 10
+    var origin = visible.origin
+    if point.y < visible.minY + edge {
+      origin.y -= step
+    } else if point.y > visible.maxY - edge {
+      origin.y += step
+    } else {
+      return
+    }
+    scroll(to: origin)
   }
 
   // MARK: - Group actions
@@ -335,6 +425,7 @@ final class DFSessionBar: NSView {
   }
 
   override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    autoscrollForDrag(sender)
     if let groupID = sourceGroupID(from: sender) {
       if let target = groupDropTarget(for: sender, dragging: groupID) {
         showDropLine(before: target.lineBefore)
@@ -561,21 +652,21 @@ final class DFSessionBar: NSView {
       return
     }
 
-    let stackFrame = cardStack.frame
+    // Work in the stack's (unflipped) coordinates, then convert into the
+    // flipped document view that hosts the indicator.
     let lineY: CGFloat
     if index <= 0 {
-      lineY = views[0].frame.maxY + stackFrame.minY + 2
+      lineY = views[0].frame.maxY + 2
     } else if index >= views.count {
-      lineY = views[views.count - 1].frame.minY + stackFrame.minY - 3
+      lineY = views[views.count - 1].frame.minY - 3
     } else {
       let above = views[index - 1]
       let below = views[index]
-      let gapMid = (above.frame.minY + below.frame.maxY) / 2
-      lineY = gapMid + stackFrame.minY
+      lineY = (above.frame.minY + below.frame.maxY) / 2
     }
 
-    dropIndicator.frame = NSRect(
-      x: stackFrame.minX, y: lineY - 1, width: stackFrame.width, height: 2)
+    let line = NSRect(x: 0, y: lineY - 1, width: cardStack.bounds.width, height: 2)
+    dropIndicator.frame = scrollContent.convert(line, from: cardStack)
     dropIndicator.isHidden = false
     lastDropIndex = index
   }
@@ -684,6 +775,11 @@ final class DFSessionBar: NSView {
       SessionEvents.postListChanged()
     }
   }
+}
+
+/// Flipped so Auto Layout content starts at the top of the scroll view.
+private final class FlippedContentView: NSView {
+  override var isFlipped: Bool { true }
 }
 
 /// Payload for a group header's menu items (see the card payload below for
