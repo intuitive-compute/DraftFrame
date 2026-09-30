@@ -149,6 +149,7 @@ final class WorktreeManager {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     proc.arguments = ["worktree", "add", "-b", branchName, worktreePath, resolvedBase]
+    proc.environment = Self.gitEnvironment()
     proc.currentDirectoryURL = URL(fileURLWithPath: root)
     let errPipe = Pipe()
     proc.standardError = errPipe
@@ -165,6 +166,7 @@ final class WorktreeManager {
         let proc2 = Process()
         proc2.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         proc2.arguments = ["-C", root, "worktree", "add", worktreePath, branchName]
+        proc2.environment = Self.gitEnvironment()
         proc2.standardError = Pipe()
         proc2.standardOutput = Pipe()
         try proc2.run()
@@ -217,13 +219,28 @@ final class WorktreeManager {
   ///   the same worktree; an opportunistic lock there makes those commands
   ///   fail with "Unable to create '.git/index.lock': File exists". Commands
   ///   that actually mutate the index still take the mandatory lock as usual.
+  /// - PATH gains the Homebrew/local bin dirs. A GUI app launched from the
+  ///   Dock inherits launchd's minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`),
+  ///   so git can't find helpers like `git-lfs` installed via Homebrew.
+  ///   Checking out an LFS repo then dies with "git-lfs filter-process:
+  ///   git-lfs: command not found" and `worktree add` fails.
   static func gitEnvironment() -> [String: String] {
     var env = ProcessInfo.processInfo.environment
       .filter { !$0.key.hasPrefix("GIT_") }
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_OPTIONAL_LOCKS"] = "0"
+    env["PATH"] = composedPATH
     return env
   }
+
+  /// PATH with Homebrew and `~/.local/bin` prepended (deduplicated), computed once.
+  nonisolated private static let composedPATH: String = {
+    let home = NSHomeDirectory()
+    let extra = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", home + "/.local/bin"]
+    let inherited = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+    let parts = inherited.split(separator: ":").map(String.init)
+    return (extra.filter { !parts.contains($0) } + parts).joined(separator: ":")
+  }()
 
   /// Run git with `args`; returns nil on success, stderr text on failure.
   private func runGit(_ args: [String], in dir: String) -> String? {
