@@ -421,6 +421,9 @@ final class DFTerminalPane: NSView {
 
     let sessionID = session.id
 
+    // Escape skips the wait and reveals the terminal right away.
+    overlay.onDismiss = { [weak self] in self?.finishLoading(for: sessionID) }
+
     // Claude's TUI painting is the "its UI is up" signal; reveal a touch
     // later so the first frame has settled.
     session.ptyAnalyzer.onClaudeReady = { [weak self] in

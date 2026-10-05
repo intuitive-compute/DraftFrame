@@ -5,7 +5,8 @@ import AppKit
 /// swallows all keyboard/mouse input so
 /// typed-ahead characters can't interleave with the bootstrap command (which
 /// would corrupt the `cd` path). Removed by `fadeOut` once the owner decides
-/// the terminal is ready.
+/// the terminal is ready, or early when the user presses Escape (see
+/// `onDismiss`), so a startup that stalls behind the overlay can be skipped.
 final class TerminalLoadingOverlay: NSView {
   /// Which matrix animation to show.
   enum Style {
@@ -16,8 +17,21 @@ final class TerminalLoadingOverlay: NSView {
     case zoom
   }
 
+  /// Invoked when the user presses Escape while the overlay has focus. The
+  /// owner should treat this exactly like the ready signal (tear down timers
+  /// and fade the overlay out). Not called more than once.
+  var onDismiss: (() -> Void)?
+
+  /// How long the overlay has to be up before the "Press Esc to skip" hint
+  /// appears. Normal startups finish before this, so the hint only shows
+  /// when something is taking a while.
+  private static let hintDelay: TimeInterval = 1.5
+
   private let message: String
   private let animation: MatrixAnimationView
+  private let hint = NSTextField(labelWithString: "Press Esc to skip")
+  private var hintTimer: Timer?
+  private var dismissed = false
 
   init(message: String, style: Style = .scalingWave) {
     self.message = message
@@ -26,10 +40,15 @@ final class TerminalLoadingOverlay: NSView {
     wantsLayer = true
     layer?.backgroundColor = Theme.bg.withAlphaComponent(0.85).cgColor
     buildContent()
+    scheduleHint()
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
+
+  deinit {
+    hintTimer?.invalidate()
+  }
 
   private func buildContent() {
     animation.translatesAutoresizingMaskIntoConstraints = false
@@ -40,14 +59,46 @@ final class TerminalLoadingOverlay: NSView {
     label.alignment = .center
     label.translatesAutoresizingMaskIntoConstraints = false
 
+    hint.font = Theme.mono(10)
+    hint.textColor = Theme.text3.withAlphaComponent(0.6)
+    hint.alignment = .center
+    hint.alphaValue = 0
+    hint.translatesAutoresizingMaskIntoConstraints = false
+
     addSubview(animation)
     addSubview(label)
+    addSubview(hint)
     NSLayoutConstraint.activate([
       animation.centerXAnchor.constraint(equalTo: centerXAnchor),
       animation.centerYAnchor.constraint(equalTo: centerYAnchor),
       label.centerXAnchor.constraint(equalTo: centerXAnchor),
       label.topAnchor.constraint(equalTo: animation.bottomAnchor, constant: 18),
+      hint.centerXAnchor.constraint(equalTo: centerXAnchor),
+      hint.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 8),
     ])
+  }
+
+  /// Fade the Escape hint in once the overlay has been up a while.
+  private func scheduleHint() {
+    hintTimer = Timer.scheduledTimer(withTimeInterval: Self.hintDelay, repeats: false) {
+      [weak self] _ in
+      // Timers fire on the main run loop, matching the view's isolation.
+      MainActor.assumeIsolated {
+        guard let self = self, !self.dismissed else { return }
+        NSAnimationContext.runAnimationGroup { ctx in
+          ctx.duration = 0.3
+          self.hint.animator().alphaValue = 1
+        }
+      }
+    }
+  }
+
+  /// Escape pressed: hand off to the owner once.
+  private func dismiss() {
+    guard !dismissed else { return }
+    dismissed = true
+    hintTimer?.invalidate()
+    onDismiss?()
   }
 
   override func viewDidMoveToWindow() {
@@ -60,6 +111,8 @@ final class TerminalLoadingOverlay: NSView {
 
   /// Fade out, detach from the view hierarchy, then run `completion`.
   func fadeOut(completion: @escaping @MainActor @Sendable () -> Void) {
+    dismissed = true
+    hintTimer?.invalidate()
     NSAnimationContext.runAnimationGroup(
       { ctx in
         ctx.duration = 0.22
@@ -81,11 +134,17 @@ final class TerminalLoadingOverlay: NSView {
   // the terminal, so the terminal's local key monitor sees `firstResponder
   // !== terminalView` and passes keystrokes straight through to us, where we
   // drop them. Sitting on top of the terminal also intercepts mouse events.
+  // The one exception is Escape, which lets the user skip the wait.
 
   override var acceptsFirstResponder: Bool { true }
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-  override func keyDown(with event: NSEvent) {}
+  /// Virtual key code for Escape (kVK_Escape).
+  private static let escapeKeyCode: UInt16 = 53
+
+  override func keyDown(with event: NSEvent) {
+    if event.keyCode == Self.escapeKeyCode { dismiss() }
+  }
   override func keyUp(with event: NSEvent) {}
   override func mouseDown(with event: NSEvent) {}
   override func mouseDragged(with event: NSEvent) {}
