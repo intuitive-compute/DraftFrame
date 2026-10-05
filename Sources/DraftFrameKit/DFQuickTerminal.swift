@@ -645,6 +645,8 @@ final class DFQuickTerminal {
     // overlay is mounted by paneWrapper() and torn down by finishLoading().
     let overlay = TerminalLoadingOverlay(message: "Starting terminal…", style: .zoom)
     overlay.translatesAutoresizingMaskIntoConstraints = false
+    // Escape skips the wait and reveals the shell right away.
+    overlay.onDismiss = { [weak self] in self?.finishLoading(for: paneID) }
     loads[paneID] = LoadState(overlay: overlay, terminalView: tv)
 
     startShell(in: tv, paneID: paneID, workingDirectory: workingDirectory)
