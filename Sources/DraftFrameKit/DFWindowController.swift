@@ -9,6 +9,8 @@ final class DFWindowController: NSWindowController {
   let statusBar = DFStatusBar()
   let dashboard = DFDashboard()
   let diffOverlay = DFDiffOverlay()
+  /// Find bar for the active session's terminal, floating top-right.
+  let terminalSearch = DFTerminalSearchBar()
 
   private var editorVisible = false
 
@@ -70,6 +72,10 @@ final class DFWindowController: NSWindowController {
 
     contentView.addSubview(vStack)
 
+    // Terminal find bar, floating in the window's top-right corner. Added
+    // before the dashboard and diff overlays so those still cover it.
+    contentView.addSubview(terminalSearch)
+
     // Dashboard overlay (on top of everything)
     dashboard.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(dashboard)
@@ -86,6 +92,9 @@ final class DFWindowController: NSWindowController {
       vStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
 
       statusBar.heightAnchor.constraint(equalToConstant: 28),
+
+      terminalSearch.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+      terminalSearch.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10),
 
       // Dashboard fills the entire content area
       dashboard.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -139,6 +148,52 @@ final class DFWindowController: NSWindowController {
       self, selector: #selector(handleShowFileDiff(_:)),
       name: .showFileDiff, object: nil
     )
+
+    // Keep an open find bar pointed at the active session's terminal.
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(retargetTerminalSearch),
+      name: .activeSessionDidChange, object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(retargetTerminalSearch),
+      name: .sessionListDidChange, object: nil
+    )
+  }
+
+  // MARK: - Terminal search
+
+  @objc private func retargetTerminalSearch() {
+    terminalSearch.target = SessionManager.shared.activeSession?.terminalView
+  }
+
+  /// Route a find request to whichever search owns the focus: the quick
+  /// terminal's bar when that window is key, the code editor's own search
+  /// when the editor has focus, otherwise the main terminal's bar.
+  func performFind(_ action: DFTerminalSearchBar.Action) {
+    if DFQuickTerminal.shared.isFocused {
+      DFQuickTerminal.shared.performFind(action)
+      return
+    }
+    guard let win = window, win.isKeyWindow else { return }
+    if !codeEditor.isHidden, let responder = win.firstResponder as? NSView,
+      responder.isDescendant(of: codeEditor)
+    {
+      // The editor keeps its own Cmd+F; it has no next/previous shortcuts.
+      if action == .open { codeEditor.toggleSearch() }
+      return
+    }
+    // Full-window overlays cover the bar; don't open it (or steal focus)
+    // underneath them.
+    guard dashboard.isHidden, diffOverlay.isHidden else { return }
+    findInTerminal(action)
+  }
+
+  /// Apply a find request to the main terminal's bar, pointed at the active
+  /// session. Skips the focus routing above — used once that has resolved,
+  /// and by QABridge, which drives the bar without a key window.
+  func findInTerminal(_ action: DFTerminalSearchBar.Action) {
+    retargetTerminalSearch()
+    terminalSearch.perform(action)
   }
 
   @objc private func handleShowFileDiff(_ notification: Notification) {
@@ -250,6 +305,10 @@ final class DFWindowController: NSWindowController {
 
     shortcuts.onQuickTerminalJumpTo = { index in
       DFQuickTerminal.shared.jumpTo(index: index)
+    }
+
+    shortcuts.onFind = { [weak self] action in
+      self?.performFind(action)
     }
 
     shortcuts.install()
