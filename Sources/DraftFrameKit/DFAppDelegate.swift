@@ -162,6 +162,11 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
     editMenu.addItem(
       withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    editMenu.addItem(NSMenuItem.separator())
+    editMenu.addItem(withTitle: "Find\u{2026}", action: #selector(menuFind), keyEquivalent: "f")
+    editMenu.addItem(withTitle: "Find Next", action: #selector(menuFindNext), keyEquivalent: "g")
+    editMenu.addItem(
+      withTitle: "Find Previous", action: #selector(menuFindPrevious), keyEquivalent: "G")
     editMenuItem.submenu = editMenu
     mainMenu.addItem(editMenuItem)
 
@@ -276,6 +281,18 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
   @objc private func menuToggleQuickTerminal() {
     DFQuickTerminal.shared.toggle()
+  }
+
+  @objc private func menuFind() {
+    windowController?.performFind(.open)
+  }
+
+  @objc private func menuFindNext() {
+    windowController?.performFind(.next)
+  }
+
+  @objc private func menuFindPrevious() {
+    windowController?.performFind(.previous)
   }
 
   @objc private func menuRenameSession() {

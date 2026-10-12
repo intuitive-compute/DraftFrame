@@ -66,6 +66,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for DMG packaging, signing, and notarizatio
 | Cmd+N | New session with worktree |
 | Cmd+O | Open project |
 | Cmd+Shift+V | Voice input |
+| Cmd+F | Find in the focused terminal (Cmd+G / Cmd+Shift+G for next / previous match) |
 | Cmd+` | Toggle quick terminal (floating shell in the session's worktree) |
 
 ### Quick Terminal

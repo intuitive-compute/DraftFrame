@@ -20,6 +20,9 @@ final class DFQuickTerminal {
   /// The quick terminal's window, for QABridge screenshots.
   var qaWindow: NSWindow? { window }
   private var container: NSView?
+  /// Find bar floating top-right of the window, targeting the focused pane
+  /// of the active tab. Stays in the container across content rebuilds.
+  let searchBar = DFTerminalSearchBar()
   private var sessionStates: [UUID: QTSessionState] = [:]
   private var currentlyInstalledSessionID: UUID?
   private var clickMonitor: Any?
@@ -159,9 +162,45 @@ final class DFQuickTerminal {
     container.layer?.backgroundColor = Theme.bg.cgColor
     win.contentView = container
 
+    container.addSubview(searchBar)
+    NSLayoutConstraint.activate([
+      searchBar.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+      searchBar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+    ])
+
     self.container = container
     self.window = win
     installClickTracking()
+  }
+
+  /// Route a find request (Cmd+F / Cmd+G / Cmd+Shift+G while this window is
+  /// key) to the bar, pointed at the focused pane of the active tab.
+  func performFind(_ action: DFTerminalSearchBar.Action) {
+    syncSearchTarget()
+    searchBar.perform(action)
+  }
+
+  /// Point the find bar at the focused pane of the installed session's
+  /// active tab (or at nothing, which closes an open bar).
+  private func syncSearchTarget() {
+    guard let sessionID = currentlyInstalledSessionID,
+      let state = sessionStates[sessionID],
+      let tab = state.activeTab,
+      let pane = tab.focusedPane()
+    else {
+      searchBar.target = nil
+      return
+    }
+    searchBar.target = pane.terminalView
+  }
+
+  /// Remove the tab bar and pane tree from the window, keeping the find bar
+  /// (closed, since there's nothing left to search).
+  private func clearContent() {
+    for sub in container?.subviews ?? [] where sub !== searchBar {
+      sub.removeFromSuperview()
+    }
+    searchBar.target = nil
   }
 
   /// Track which pane the user last clicked, independent of (and in
@@ -233,14 +272,15 @@ final class DFQuickTerminal {
       let tab = state.activeTab
     else { return }
 
-    for sub in container.subviews { sub.removeFromSuperview() }
+    for sub in container.subviews where sub !== searchBar { sub.removeFromSuperview() }
     paneWrappers.removeAll()
 
     let tabBar = buildTabBar(for: state)
     let content = buildView(for: tab.root)
     content.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(tabBar)
-    container.addSubview(content)
+    // Slot the content under the find bar so it keeps floating on top.
+    container.addSubview(tabBar, positioned: .below, relativeTo: searchBar)
+    container.addSubview(content, positioned: .below, relativeTo: searchBar)
 
     NSLayoutConstraint.activate([
       tabBar.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.titlebarInset),
@@ -267,6 +307,7 @@ final class DFQuickTerminal {
     // across rebuilds anyway (tab switches, other splits/closes) today.
     container.layoutSubtreeIfNeeded()
     equalizeSplitPositions(in: content)
+    syncSearchTarget()
   }
 
   /// Recursively center every split divider in `view`'s subtree, laying out
@@ -385,6 +426,7 @@ final class DFQuickTerminal {
   private func focusPane(_ pane: QTPane, in tab: QTTab) {
     tab.lastFocusedPaneID = pane.id
     updateFocusBorders(for: tab)
+    syncSearchTarget()
     focusPaneOrOverlay(pane)
   }
 
@@ -681,7 +723,7 @@ final class DFQuickTerminal {
       sessionStates.removeValue(forKey: sessionID)
       if currentlyInstalledSessionID == sessionID {
         currentlyInstalledSessionID = nil
-        for sub in container?.subviews ?? [] { sub.removeFromSuperview() }
+        clearContent()
         window?.orderOut(nil)
       }
       return
@@ -703,7 +745,7 @@ final class DFQuickTerminal {
     guard let win = window, win.isVisible else { return }
     guard let active = SessionManager.shared.activeSession else {
       currentlyInstalledSessionID = nil
-      for sub in container?.subviews ?? [] { sub.removeFromSuperview() }
+      clearContent()
       win.orderOut(nil)
       return
     }
@@ -729,7 +771,7 @@ final class DFQuickTerminal {
       sessionStates.removeValue(forKey: id)
       if currentlyInstalledSessionID == id {
         currentlyInstalledSessionID = nil
-        for sub in container?.subviews ?? [] { sub.removeFromSuperview() }
+        clearContent()
         window?.orderOut(nil)
       }
     }

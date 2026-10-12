@@ -21,6 +21,9 @@ final class ShortcutManager {
   var onQuickTerminalCloseFocusedPane: (() -> Void)?
   var onQuickTerminalCloseTab: (() -> Void)?
   var onQuickTerminalJumpTo: ((Int) -> Void)?
+  /// Cmd+F / Cmd+G / Cmd+Shift+G. Routed by the window controller to the
+  /// focused terminal's search bar (or the code editor's own search).
+  var onFind: ((DFTerminalSearchBar.Action) -> Void)?
 
   private var keyDownMonitor: Any?
   private var keyUpMonitor: Any?
@@ -95,6 +98,22 @@ final class ShortcutManager {
     // Cmd+` : toggle floating quick terminal
     if flags == .command, event.keyCode == 50 {  // '`'
       onToggleQuickTerminal?()
+      return true
+    }
+
+    // Cmd+F: find in the focused terminal (or the code editor)
+    if flags == .command, event.keyCode == 3 {  // 'f'
+      onFind?(.open)
+      return true
+    }
+
+    // Cmd+G / Cmd+Shift+G: next / previous search match
+    if flags == .command, event.keyCode == 5 {  // 'g'
+      onFind?(.next)
+      return true
+    }
+    if flags == [.command, .shift], event.keyCode == 5 {  // 'g'
+      onFind?(.previous)
       return true
     }
 

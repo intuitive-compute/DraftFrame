@@ -331,6 +331,47 @@ import SwiftTerm
         if dashboard.isHidden { dashboard.toggle() }
         return ["ok": true]
 
+      case "find":
+        // Drive a terminal find bar as the shortcuts would: open it, set
+        // the term (incremental search), step, or close. "window" picks the
+        // main window (default) or the quick terminal.
+        let which = params["window"] as? String ?? "main"
+        let bar: DFTerminalSearchBar
+        switch which {
+        case "main":
+          guard let wc = appDelegate?.windowController else {
+            return ["ok": false, "error": "no window"]
+          }
+          wc.findInTerminal(.open)
+          bar = wc.terminalSearch
+        case "quick":
+          guard DFQuickTerminal.shared.isVisible else {
+            return ["ok": false, "error": "quick terminal is not visible"]
+          }
+          DFQuickTerminal.shared.performFind(.open)
+          bar = DFQuickTerminal.shared.searchBar
+        default:
+          return ["ok": false, "error": "window must be main|quick"]
+        }
+        if let text = params["text"] as? String {
+          bar.setTerm(text)
+        }
+        switch params["direction"] as? String {
+        case "next": bar.findNext()
+        case "previous": bar.findPrevious()
+        case nil: break
+        default: return ["ok": false, "error": "direction must be next|previous"]
+        }
+        if params["close"] as? Bool == true {
+          bar.hide()
+        }
+        var result: [String: Any] = [
+          "ok": true, "open": bar.isOpen, "status": bar.statusText,
+          "fieldFocused": bar.isFieldFocused,
+        ]
+        if let found = bar.lastFound { result["found"] = found }
+        return result
+
       case "quit":
         DispatchQueue.main.async { NSApp.terminate(nil) }
         return ["ok": true]
