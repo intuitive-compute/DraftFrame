@@ -95,9 +95,12 @@ final class DFTerminalSearchBar: NSView, NSTextFieldDelegate {
     statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
     addSubview(statusLabel)
 
-    let prevBtn = makeButton("\u{25B2}", action: #selector(findPreviousClicked), tip: "Previous match (⇧⌘G)")
-    let nextBtn = makeButton("\u{25BC}", action: #selector(findNextClicked), tip: "Next match (⌘G)")
-    let closeBtn = makeButton("\u{00D7}", action: #selector(closeClicked), tip: "Close search (⎋)")
+    let prevBtn = makeButton(
+      "\u{25B2}", action: #selector(findPreviousClicked), tip: "Previous match (⇧⌘G)")
+    let nextBtn = makeButton(
+      "\u{25BC}", action: #selector(findNextClicked), tip: "Next match (⌘G)")
+    let closeBtn = makeButton(
+      "\u{00D7}", action: #selector(closeClicked), tip: "Close search (⎋)")
     closeBtn.font = Theme.mono(12, weight: .medium)
     closeBtn.contentTintColor = Theme.text3
     addSubview(prevBtn)
