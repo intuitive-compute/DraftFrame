@@ -56,6 +56,7 @@ final class HookEventTests: XCTestCase {
     XCTAssertEqual(event("PostToolUse").stateTransition, .generating)
     XCTAssertEqual(event("Stop").stateTransition, .userInput)
     XCTAssertEqual(event("SessionEnd", ["reason": "logout"]).stateTransition, .idle)
+    XCTAssertNil(event("SessionEnd", ["reason": "clear"]).stateTransition, "process lives on")
     XCTAssertNil(event("PreCompact").stateTransition)
   }
 

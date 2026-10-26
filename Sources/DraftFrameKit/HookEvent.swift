@@ -68,7 +68,8 @@ struct HookEvent: Equatable, Sendable {
     case "Stop":
       return .userInput
     case "SessionEnd":
-      return .idle
+      // `/clear` keeps the process running; a new SessionStart follows.
+      return reason == "clear" ? nil : .idle
     default:
       return nil
     }

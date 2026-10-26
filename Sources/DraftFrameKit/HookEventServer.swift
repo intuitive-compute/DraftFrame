@@ -110,6 +110,9 @@ final class HookEventServer: @unchecked Sendable {
       let client = accept(fd, nil, nil)
       guard client >= 0 else {
         if errno == EBADF || errno == EINVAL { return }  // socket closed
+        // EMFILE, ECONNABORTED and friends: back off instead of spinning
+        // the accept thread at full speed until the condition clears.
+        usleep(100_000)
         continue
       }
       _ = fcntl(client, F_SETFD, FD_CLOEXEC)

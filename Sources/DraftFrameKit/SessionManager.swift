@@ -279,15 +279,7 @@ final class Session {
       jsonl.pinnedTranscriptPath = hookBinding?.transcriptPath
       usageWatcher = jsonl
       statusWatcher = SessionStatusWatcher(cwd: directory) { [weak self] newState in
-        guard let self = self else { return }
-        if let binding = self.hookBinding {
-          // Hooks own this tab's transitions. The pid-file scan contributes
-          // only its "no live claude in this directory" verdict, and only
-          // until hooks have confirmed a pid the sweep can probe directly.
-          guard newState == .idle, binding.trustedPid == nil else { return }
-          self.hookBinding = nil
-        }
-        self.setState(newState)
+        self?.applyRegistryState(newState)
       }
     case .codex:
       // Codex writes no per-pid status file. Working/idle comes from the
@@ -330,6 +322,28 @@ final class Session {
   }
 
   /// Record a state change and notify observers. No-op when unchanged.
+  /// Apply a verdict from the pid-file registry. While hooks own the tab
+  /// the registry is demoted to the two things hooks cannot report: the
+  /// process is gone (until hooks have confirmed a pid the sweep probes
+  /// directly), and a turn ended without a `Stop` event. Claude Code fires
+  /// no `Stop` when the user interrupts with Esc, and local slash commands
+  /// fire `UserPromptSubmit` with no `Stop` at all, so "generating" would
+  /// otherwise stick until the next prompt.
+  func applyRegistryState(_ newState: SessionState) {
+    if let binding = hookBinding {
+      switch newState {
+      case .idle:
+        guard binding.trustedPid == nil else { return }
+        hookBinding = nil
+      case .userInput:
+        guard state == .generating else { return }
+      default:
+        return
+      }
+    }
+    setState(newState)
+  }
+
   func setState(_ newState: SessionState) {
     let old = state
     guard old != newState else { return }
@@ -374,6 +388,10 @@ final class Session {
     }
 
     if event.name == "SessionEnd" {
+      // `/clear` ends the conversation but not the process; the following
+      // `SessionStart` rebinds. Releasing here would flash the tab to idle
+      // and raise a spurious "session finished" notification.
+      if event.reason == "clear" { return }
       hookBinding = nil
     }
     if let next = event.stateTransition {

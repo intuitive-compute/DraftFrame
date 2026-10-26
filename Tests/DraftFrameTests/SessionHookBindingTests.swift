@@ -110,6 +110,56 @@ final class SessionHookBindingTests: XCTestCase {
     XCTAssertEqual(dead.state, .idle)
   }
 
+  func testClearDoesNotIdleTheTab() {
+    let s = Session(name: "a", agent: .claude)
+    s.applyHookEvent(event("SessionStart", tab: s.id, sessionId: "first"))
+    s.applyHookEvent(event("UserPromptSubmit", tab: s.id, sessionId: "first"))
+    // `/clear` fires SessionEnd(clear) and then SessionStart(clear) under a
+    // new id. The process never exits, so the tab must not flash to idle.
+    s.applyHookEvent(event("SessionEnd", tab: s.id, sessionId: "first", extra: ["reason": "clear"]))
+    XCTAssertTrue(s.isHookDriven)
+    XCTAssertEqual(s.state, .generating)
+    s.applyHookEvent(
+      event("SessionStart", tab: s.id, sessionId: "second", extra: ["source": "clear"]))
+    XCTAssertEqual(s.agentSessionId, "second")
+    XCTAssertEqual(s.state, .userInput)
+  }
+
+  func testRegistryCanEndATurnButNotStartOne() {
+    let s = Session(name: "a", agent: .claude)
+    s.applyHookEvent(event("SessionStart", tab: s.id))
+    s.applyHookEvent(event("UserPromptSubmit", tab: s.id))
+    // Esc interrupt: no Stop fires, but the pid file flips to idle.
+    s.applyRegistryState(.userInput)
+    XCTAssertEqual(s.state, .userInput)
+    XCTAssertTrue(s.isHookDriven)
+    // The registry may not claim activity or a prompt; hooks report those.
+    s.applyRegistryState(.generating)
+    XCTAssertEqual(s.state, .userInput)
+    s.applyRegistryState(.needsAttention)
+    XCTAssertEqual(s.state, .userInput)
+    // Nor may it demote a permission prompt hooks reported.
+    s.applyHookEvent(
+      event("Notification", tab: s.id, extra: ["notification_type": "permission_prompt"]))
+    s.applyRegistryState(.userInput)
+    XCTAssertEqual(s.state, .needsAttention)
+  }
+
+  func testRegistryIdleReleasesOnlyWithoutTrustedPid() {
+    let s = Session(name: "a", agent: .claude)
+    s.applyHookEvent(event("SessionStart", tab: s.id, ppid: getpid()))
+    s.applyRegistryState(.idle)
+    XCTAssertFalse(s.isHookDriven, "no trusted pid yet: registry verdict stands")
+    XCTAssertEqual(s.state, .idle)
+
+    let t = Session(name: "b", agent: .claude)
+    t.applyHookEvent(event("SessionStart", tab: t.id, ppid: getpid()))
+    t.applyHookEvent(event("UserPromptSubmit", tab: t.id, ppid: getpid()))
+    t.applyRegistryState(.idle)
+    XCTAssertTrue(t.isHookDriven, "trusted pid: the sweep decides, not the cwd scan")
+    XCTAssertEqual(t.state, .generating)
+  }
+
   func testCodexSessionsIgnoreHookEvents() {
     let s = Session(name: "c", agent: .codex)
     s.applyHookEvent(event("UserPromptSubmit", tab: s.id))

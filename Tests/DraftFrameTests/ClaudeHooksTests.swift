@@ -83,6 +83,12 @@ final class ClaudeHooksTests: XCTestCase {
     XCTAssertEqual(merged["Stop"] as? String, "oops")
   }
 
+  func testStopAndSessionBoundariesAreSynchronous() {
+    // An async Stop can race a still-running async PostToolUse and lose.
+    let sync = Set(ClaudeHooks.events.filter { !$0.async }.map(\.name))
+    XCTAssertEqual(sync, ["SessionStart", "Stop", "SessionEnd"])
+  }
+
   func testBridgeScriptInvariants() {
     let script = ClaudeHooks.bridgeScript
     XCTAssertTrue(script.hasPrefix("#!/bin/sh\n"))

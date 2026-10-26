@@ -15,17 +15,18 @@ import Foundation
 enum ClaudeHooks {
 
   /// Lifecycle events DraftFrame subscribes to, and whether each runs
-  /// asynchronously. Session boundaries stay synchronous so the payload is
-  /// delivered before the process moves on (SessionEnd fires right before
-  /// exit); the chatty mid-turn events run in the background so they can
-  /// never delay a tool call or the prompt returning.
+  /// asynchronously. Session boundaries and `Stop` stay synchronous:
+  /// SessionEnd fires right before exit, and an async `Stop` could race a
+  /// still-running async `PostToolUse` so the later arrival (generating)
+  /// overwrites the turn's end. The chatty mid-turn events run in the
+  /// background so they can never delay a tool call.
   static let events: [(name: String, async: Bool)] = [
     ("SessionStart", false),
     ("UserPromptSubmit", true),
     ("PreToolUse", true),
     ("PostToolUse", true),
     ("Notification", true),
-    ("Stop", true),
+    ("Stop", false),
     ("SessionEnd", false),
   ]
 
@@ -116,11 +117,14 @@ enum ClaudeHooks {
 
   enum InstallError: LocalizedError {
     case settingsUnreadable(String)
+    case settingsReadFailed(String)
 
     var errorDescription: String? {
       switch self {
       case .settingsUnreadable(let path):
         return "\(path) exists but is not valid JSON; fix or remove it and try again."
+      case .settingsReadFailed(let path):
+        return "\(path) exists but could not be read; check its permissions and try again."
       }
     }
   }
@@ -222,9 +226,20 @@ enum ClaudeHooks {
 
   // MARK: - settings.json I/O
 
+  /// settings.json with any symlink resolved, so writes land in the file
+  /// the link points at (a dotfiles repo, say) instead of replacing the
+  /// link with a regular file.
+  private static var resolvedSettingsURL: URL {
+    URL(fileURLWithPath: settingsPath).resolvingSymlinksInPath()
+  }
+
   private static func readSettings() -> Result<[String: Any], Error> {
-    guard let data = FileManager.default.contents(atPath: settingsPath) else {
-      return .success([:])
+    let path = resolvedSettingsURL.path
+    guard FileManager.default.fileExists(atPath: path) else { return .success([:]) }
+    guard let data = FileManager.default.contents(atPath: path) else {
+      // Exists but unreadable: never treat as empty, or install() would
+      // replace the user's whole configuration with just our entries.
+      return .failure(InstallError.settingsReadFailed(settingsPath))
     }
     if data.allSatisfy({ $0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09 }) {
       return .success([:])
@@ -236,10 +251,11 @@ enum ClaudeHooks {
   }
 
   private static func writeSettings(_ settings: [String: Any]) throws {
-    let dir = (settingsPath as NSString).deletingLastPathComponent
-    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    let target = resolvedSettingsURL
+    try FileManager.default.createDirectory(
+      at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
     let data = try JSONSerialization.data(
       withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-    try data.write(to: URL(fileURLWithPath: settingsPath), options: .atomic)
+    try data.write(to: target, options: .atomic)
   }
 }
