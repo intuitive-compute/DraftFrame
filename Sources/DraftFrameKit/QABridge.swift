@@ -372,6 +372,44 @@ import SwiftTerm
         if let found = bar.lastFound { result["found"] = found }
         return result
 
+      case "hook-event":
+        // Inject a Claude Code hook event for a session as if the bridge
+        // script had forwarded it, so status/transcript binding can be
+        // exercised without editing the real ~/.claude/settings.json.
+        guard let session = resolveSession(params) else {
+          return ["ok": false, "error": "no such session"]
+        }
+        guard let name = params["name"] as? String else {
+          return ["ok": false, "error": "hook-event requires \"name\" (e.g. Stop)"]
+        }
+        var payload: [String: Any] = [
+          "hook_event_name": name,
+          "session_id": params["sessionId"] as? String ?? "qa-\(session.id.uuidString.prefix(8))",
+          "cwd": session.worktreePath ?? "",
+        ]
+        if let t = params["transcriptPath"] as? String { payload["transcript_path"] = t }
+        if let t = params["notificationType"] as? String { payload["notification_type"] = t }
+        if let t = params["source"] as? String { payload["source"] = t }
+        if let t = params["reason"] as? String { payload["reason"] = t }
+        var message: [String: Any] = ["tab": session.id.uuidString, "event": payload]
+        if let ppid = params["ppid"] as? Int { message["ppid"] = ppid }
+        guard let data = try? JSONSerialization.data(withJSONObject: message),
+          let event = HookEvent.parse(data)
+        else { return ["ok": false, "error": "could not build hook event"] }
+        HookEventServer.shared.deliver(event)
+        return ["ok": true, "transition": event.stateTransition?.rawValue ?? NSNull()]
+
+      case "hooks-status":
+        return [
+          "ok": true,
+          "enabled": AppSettings.claudeHooksEnabled,
+          "installed": ClaudeHooks.status().isInstalled,
+          "listening": HookEventServer.shared.isListening,
+          "socketPath": HookEventServer.shared.socketPath ?? NSNull(),
+          "eventCount": HookEventServer.shared.eventCount,
+          "report": ClaudeHooksSettings.healthReport(),
+        ]
+
       case "quit":
         DispatchQueue.main.async { NSApp.terminate(nil) }
         return ["ok": true]
@@ -421,6 +459,7 @@ import SwiftTerm
           "maxContextTokens": s.maxContextTokens,
           "worktreePath": s.worktreePath ?? NSNull(),
           "agentSessionId": s.agentSessionId ?? NSNull(),
+          "hookDriven": s.isHookDriven,
           "group": s.groupID.flatMap { mgr.group(withID: $0)?.name } ?? NSNull(),
           "active": i == mgr.activeSessionIndex,
         ]

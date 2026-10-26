@@ -14,6 +14,10 @@ final class DFSettingsWindow: NSObject, NSWindowDelegate {
   /// sidebar toggle while this window is open) can be reflected back.
   private var watchdogSwitches: [String: NSSwitch] = [:]
   private var prSwitches: [PRDefaultKey: NSSwitch] = [:]
+  private var hooksSwitch: NSSwitch?
+  private var hooksStatusLabel: NSTextField?
+  /// Refreshes the hooks status line while the window is up.
+  private var hooksStatusTimer: Timer?
 
   private enum PRDefaultKey {
     case autoFix, autoMerge, autoArchive
@@ -32,6 +36,16 @@ final class DFSettingsWindow: NSObject, NSWindowDelegate {
     syncFromState()
     window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+    if hooksStatusTimer == nil {
+      hooksStatusTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+        MainActor.assumeIsolated { DFSettingsWindow.shared.refreshHooksStatus() }
+      }
+    }
+  }
+
+  func windowWillClose(_ notification: Notification) {
+    hooksStatusTimer?.invalidate()
+    hooksStatusTimer = nil
   }
 
   // MARK: - Window
@@ -111,6 +125,29 @@ final class DFSettingsWindow: NSObject, NSWindowDelegate {
       switchFor: .pr(.autoArchive)
     )
 
+    addSection(
+      to: stack,
+      title: "Claude Code hooks",
+      subtitle: "Lets Claude Code report session status and transcript directly instead of "
+        + "DraftFrame inferring it. Adds DraftFrame-tagged entries to ~/.claude/settings.json; "
+        + "your own hooks are left alone."
+    )
+    addSwitchRow(
+      to: stack,
+      title: "Use hooks for session status",
+      detail: "Installs the hook bridge for sessions started from now on. Turning off removes "
+        + "only DraftFrame's entries.",
+      switchFor: .hooks
+    )
+    // Seeded before the window is sized: an empty wrapping label measures
+    // zero height and the status line would never get room.
+    let status = NSTextField(wrappingLabelWithString: ClaudeHooksSettings.summaryLine())
+    status.font = Theme.mono(10)
+    status.textColor = Theme.text3
+    stack.addArrangedSubview(status)
+    status.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    hooksStatusLabel = status
+
     NSLayoutConstraint.activate([
       stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 36),
       stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
@@ -140,6 +177,7 @@ final class DFSettingsWindow: NSObject, NSWindowDelegate {
   private enum SwitchTarget {
     case watchdog(String)
     case pr(PRDefaultKey)
+    case hooks
   }
 
   private func addSection(to stack: NSStackView, title: String, subtitle: String) {
@@ -184,6 +222,9 @@ final class DFSettingsWindow: NSObject, NSWindowDelegate {
     case .pr(let key):
       toggle.action = #selector(prSwitchChanged(_:))
       prSwitches[key] = toggle
+    case .hooks:
+      toggle.action = #selector(hooksSwitchChanged(_:))
+      hooksSwitch = toggle
     }
 
     for v in [titleLabel, detailLabel, toggle] {
@@ -222,6 +263,22 @@ final class DFSettingsWindow: NSObject, NSWindowDelegate {
     prSwitches[.autoFix]?.state = config.autoFix ? .on : .off
     prSwitches[.autoMerge]?.state = config.autoMerge ? .on : .off
     prSwitches[.autoArchive]?.state = config.autoArchive ? .on : .off
+
+    hooksSwitch?.state = AppSettings.claudeHooksEnabled ? .on : .off
+    refreshHooksStatus()
+  }
+
+  private func refreshHooksStatus() {
+    guard window?.isVisible == true else { return }
+    hooksStatusLabel?.stringValue = ClaudeHooksSettings.summaryLine()
+  }
+
+  @objc private func hooksSwitchChanged(_ sender: NSSwitch) {
+    if let error = ClaudeHooksSettings.setEnabled(sender.state == .on) {
+      ClaudeHooksSettings.presentError(error)
+    }
+    hooksSwitch?.state = AppSettings.claudeHooksEnabled ? .on : .off
+    refreshHooksStatus()
   }
 
   @objc private func watchdogSwitchChanged(_ sender: NSSwitch) {

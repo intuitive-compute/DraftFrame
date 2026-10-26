@@ -22,7 +22,7 @@ Grab the latest DMG from [GitHub Releases](https://github.com/intuitive-compute/
 - **Multi-tab terminal** — SwiftTerm-based terminal with full ANSI color support
 - **Parallel agent sessions** — Run multiple Claude Code or Codex instances side by side (Session → Agent for New Sessions)
 - **Git worktree isolation** — Each session gets its own worktree branch
-- **Live session status** — Real-time detection of thinking/generating/idle/needs-attention states via PTY stream analysis
+- **Live session status** — Real-time thinking/generating/idle/needs-attention states. Opt in to Claude Code hooks (Settings) for exact events straight from Claude Code, with status-file and PTY analysis as the fallback
 - **Session cards** — Visual dashboard showing each session's status, model, and cost
 - **Cost tracking** — Reads the agent's JSONL session files (Claude transcripts, Codex rollouts) for real token/cost data
 - **Project management** — Persistent project list with expandable worktree trees

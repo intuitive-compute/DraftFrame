@@ -12,6 +12,22 @@ enum AppSettings {
   private static let autoMergeKey = "DFDefaultPRAutoMerge"
   private static let autoArchiveKey = "DFDefaultPRAutoArchive"
   private static let watchdogKeyPrefix = "DFWatchdogEnabled."
+  private static let claudeHooksEnabledKey = "DFClaudeHooksEnabled"
+  private static let claudeHooksPromptedKey = "DFClaudeHooksPrompted"
+
+  /// Whether DraftFrame keeps its Claude Code hook entries installed in
+  /// `~/.claude/settings.json` (see `ClaudeHooks`). Off until the user opts
+  /// in, since enabling edits a user-global file.
+  static var claudeHooksEnabled: Bool {
+    get { defaults.bool(forKey: claudeHooksEnabledKey) }
+    set { defaults.set(newValue, forKey: claudeHooksEnabledKey) }
+  }
+
+  /// Whether the one-time first-launch offer to install hooks has been shown.
+  static var claudeHooksPrompted: Bool {
+    get { defaults.bool(forKey: claudeHooksPromptedKey) }
+    set { defaults.set(newValue, forKey: claudeHooksPromptedKey) }
+  }
 
   /// PR automation config applied to any worktree the user hasn't
   /// explicitly configured via the sidebar rows.

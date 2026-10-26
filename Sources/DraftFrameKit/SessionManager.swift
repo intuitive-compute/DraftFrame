@@ -174,12 +174,35 @@ final class Session {
   /// rollout JSONL) for cost/token updates.
   var usageWatcher: UsageWatcher?
 
-  /// The agent CLI's own session id, once the transcript watcher has seen
-  /// it. Saved across app restarts so the session can relaunch with
-  /// `claude --resume` instead of starting a fresh conversation. Until the
-  /// watcher has read a transcript, falls back to the id this session was
-  /// itself resumed from, so back-to-back restarts don't lose the thread.
-  var agentSessionId: String? { usageWatcher?.agentSessionId ?? resumedFromSessionId }
+  /// The agent CLI's own session id. Saved across app restarts so the
+  /// session can relaunch with `claude --resume` instead of starting a fresh
+  /// conversation. A Claude Code hook event names it exactly; otherwise it
+  /// is whatever the transcript watcher has read, and until then the id this
+  /// session was itself resumed from, so back-to-back restarts don't lose
+  /// the thread.
+  var agentSessionId: String? {
+    hookSessionId ?? usageWatcher?.agentSessionId ?? resumedFromSessionId
+  }
+
+  /// Live binding to the Claude Code session reporting through hooks.
+  /// Present from the first hook event for this tab until `SessionEnd` or
+  /// the process is found dead; while present, hook events own the status
+  /// transitions and the pid-file watcher is demoted (see `startWatchers`).
+  struct HookBinding {
+    var sessionId: String
+    var transcriptPath: String?
+    /// Parent pid reported by the bridge, trusted for liveness probing only
+    /// once two events agree on it (hook spawning may interpose a shell).
+    var pid: Int32?
+    var pidSightings = 0
+    var lastEventAt: Date
+    var trustedPid: Int32? { pidSightings >= 2 ? pid : nil }
+  }
+  private(set) var hookBinding: HookBinding?
+  /// Last session id learned from hooks. Outlives the binding so persistence
+  /// can still resume a conversation whose process has already exited.
+  private(set) var hookSessionId: String?
+  var isHookDriven: Bool { hookBinding != nil }
 
   /// The id passed to `--resume` when this session was restored, if any.
   var resumedFromSessionId: String?
@@ -247,17 +270,25 @@ final class Session {
     }
 
     let applyState: @MainActor @Sendable (SessionState) -> Void = { [weak self] newState in
-      guard let self = self else { return }
-      let old = self.state
-      guard old != newState else { return }
-      self.state = newState
-      SessionEvents.postStateChanged(id: self.id, old: old, new: newState)
+      self?.setState(newState)
     }
 
     switch agent {
     case .claude:
-      usageWatcher = SessionJSONLWatcher(workingDirectory: directory, onUpdate: applyUsage)
-      statusWatcher = SessionStatusWatcher(cwd: directory, onUpdate: applyState)
+      let jsonl = SessionJSONLWatcher(workingDirectory: directory, onUpdate: applyUsage)
+      jsonl.pinnedTranscriptPath = hookBinding?.transcriptPath
+      usageWatcher = jsonl
+      statusWatcher = SessionStatusWatcher(cwd: directory) { [weak self] newState in
+        guard let self = self else { return }
+        if let binding = self.hookBinding {
+          // Hooks own this tab's transitions. The pid-file scan contributes
+          // only its "no live claude in this directory" verdict, and only
+          // until hooks have confirmed a pid the sweep can probe directly.
+          guard newState == .idle, binding.trustedPid == nil else { return }
+          self.hookBinding = nil
+        }
+        self.setState(newState)
+      }
     case .codex:
       // Codex writes no per-pid status file. Working/idle comes from the
       // rollout's persisted turn lifecycle events; the PTY stream covers
@@ -296,6 +327,71 @@ final class Session {
     statusWatcher?.stop()
     ptyAnalyzer.onStateChange = nil
     ptyAnalyzer.onModelDetected = nil
+  }
+
+  /// Record a state change and notify observers. No-op when unchanged.
+  func setState(_ newState: SessionState) {
+    let old = state
+    guard old != newState else { return }
+    state = newState
+    SessionEvents.postStateChanged(id: id, old: old, new: newState)
+  }
+
+  // MARK: - Claude Code hooks
+
+  /// Apply a hook event forwarded for this tab. The first event binds the
+  /// tab to Claude Code's session id and transcript; a later event carrying
+  /// a different id (after `/clear`, a resume, or a fork in the same
+  /// terminal) rebinds so cost and status follow the conversation the tab
+  /// is actually showing. `SessionEnd` releases the binding.
+  func applyHookEvent(_ event: HookEvent) {
+    guard agent == .claude else { return }
+    let now = Date()
+    if var binding = hookBinding, binding.sessionId == event.sessionId {
+      binding.lastEventAt = now
+      if let ppid = event.ppid {
+        if ppid == binding.pid {
+          binding.pidSightings += 1
+        } else {
+          binding.pid = ppid
+          binding.pidSightings = 1
+        }
+      }
+      if binding.transcriptPath == nil, let path = event.transcriptPath {
+        binding.transcriptPath = path
+        pinTranscript(path)
+      }
+      hookBinding = binding
+    } else if event.name != "SessionEnd" {
+      hookBinding = HookBinding(
+        sessionId: event.sessionId, transcriptPath: event.transcriptPath,
+        pid: event.ppid, pidSightings: event.ppid == nil ? 0 : 1, lastEventAt: now)
+      hookSessionId = event.sessionId
+      if let path = event.transcriptPath { pinTranscript(path) }
+    } else {
+      // The end of a session this tab never tracked (or already released).
+      return
+    }
+
+    if event.name == "SessionEnd" {
+      hookBinding = nil
+    }
+    if let next = event.stateTransition {
+      setState(next)
+    }
+  }
+
+  private func pinTranscript(_ path: String) {
+    (usageWatcher as? SessionJSONLWatcher)?.pinnedTranscriptPath = path
+  }
+
+  /// Periodic liveness check for sessions whose `SessionEnd` never fired
+  /// (process killed, machine slept through it). Releases the binding and
+  /// reports idle when the hook-confirmed process is gone.
+  func sweepHookProcess() {
+    guard let pid = hookBinding?.trustedPid, kill(pid, 0) != 0 else { return }
+    hookBinding = nil
+    setState(.idle)
   }
 }
 
@@ -500,6 +596,14 @@ final class SessionManager {
     for key in ["LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "DISPLAY"] {
       if let v = parentEnv[key] { envDict[key] = v }
     }
+    // Tag the shell so Claude Code hooks (which inherit the agent's
+    // environment) can name this tab, and point the bridge at whichever
+    // socket this app instance is listening on. Inert when hooks aren't
+    // installed; the bridge script also exits early without the tag.
+    envDict[ClaudeHooks.tabEnvVar] = session.id.uuidString
+    if let socketPath = HookEventServer.shared.socketPath {
+      envDict[ClaudeHooks.socketEnvVar] = socketPath
+    }
     let env: [String] = envDict.map { "\($0.key)=\($0.value)" }
 
     // Resolve the agent command to an absolute path so we don't depend
@@ -647,6 +751,29 @@ final class SessionManager {
       move(sessionID: fresh.id, toGroup: g, at: idx)
     } else {
       move(sessionID: fresh.id, toGroup: nil, at: idx)
+    }
+  }
+
+  // MARK: - Claude Code hooks
+
+  private var hookSweepTimer: Timer?
+
+  /// Deliver a hook event to the tab it names. Events for tabs that no
+  /// longer exist (closed before the agent exited) are dropped.
+  func routeHookEvent(_ event: HookEvent) {
+    guard let session = sessions.first(where: { $0.id == event.tabID }) else { return }
+    session.applyHookEvent(event)
+    startHookSweepIfNeeded()
+  }
+
+  /// A 5s sweep catches hook-bound sessions whose process died without a
+  /// `SessionEnd`. Started on the first hook event; idle otherwise.
+  private func startHookSweepIfNeeded() {
+    guard hookSweepTimer == nil else { return }
+    hookSweepTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+      MainActor.assumeIsolated {
+        for session in SessionManager.shared.sessions { session.sweepHookProcess() }
+      }
     }
   }
 
