@@ -40,6 +40,8 @@ Sources/
     SessionPersistence.swift # Save/restore sessions
     SessionJSONLWatcher.swift # Parse Claude JSONL for cost/model
     PTYStreamAnalyzer.swift # Detect session state from PTY output
+    ClaudeHooks.swift      # Install/remove Claude Code hook entries (opt-in)
+    HookEventServer.swift  # Unix socket receiving forwarded hook events
     ProjectManager.swift   # Project list persistence
     WorktreeManager.swift  # Git worktree operations
     WatchdogManager.swift  # Semi-autonomous session monitors
@@ -78,7 +80,7 @@ See the [README](README.md#package-as-a-signed-dmg) for DMG build instructions.
 ## Key Concepts
 
 - **Sessions** — each tab is a terminal running a Claude Code process. `SessionManager` handles lifecycle; `SessionPersistence` saves/restores across app restarts.
-- **PTY stream analysis** — `PTYStreamAnalyzer` watches raw terminal output to detect whether Claude is thinking, generating, idle, or needs attention.
+- **Session status sources** — In priority order: Claude Code hook events (`HookEventServer`, opt-in via `ClaudeHooks`, which installs a bridge script into `~/.claude/settings.json`), the per-pid status file Claude Code writes under `~/.claude/sessions` (`SessionStatusRegistry`), and raw terminal output (`PTYStreamAnalyzer`, the only source for Codex). Session shells carry `DRAFTFRAME_SESSION_ID` so a hook event maps to its tab without guessing; the first hook event for a tab makes hooks authoritative for it, and `SessionEnd` or a liveness sweep hands control back.
 - **JSONL watching** — `SessionJSONLWatcher` reads Claude's `~/.claude/projects/*/session.jsonl` files to extract token counts, costs, and model info.
 - **Worktrees** — `WorktreeManager` creates isolated git worktrees so parallel sessions don't conflict.
 - **Watchdogs** — `WatchdogManager` monitors sessions and can auto-respond to events (e.g., send input when Claude asks for confirmation).

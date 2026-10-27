@@ -43,5 +43,6 @@
 - [ ] **Font bundling** — Bundle IBM Plex Mono / Archivo instead of system mono
 - [ ] **Preferences window** — Configure theme, font size, default model, keybindings
 - [ ] **Scroll performance** — Ensure terminal stays responsive with long output
-- [ ] **Session status tuning** — Verify thinking/generating/idle transitions across different Claude interactions
+- [x] Claude Code hooks as the primary session event source (opt-in), with status-file/PTY fallback
+- [ ] **Session status tuning** — Verify thinking/generating/idle transitions for sessions without hooks (Codex, older Claude Code builds)
 - [ ] **App bundle** — Package as proper .app with Info.plist for notifications/permissions

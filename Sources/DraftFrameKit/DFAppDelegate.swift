@@ -50,6 +50,16 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     // QA automation bridge — no-op unless DRAFTFRAME_QA_SOCKET is set.
     QABridge.startIfEnabled(appDelegate: self)
 
+    // Claude Code hook events. The listener is always up; whether Claude
+    // Code sends anything depends on the opt-in installation below.
+    HookEventServer.shared.startForApp()
+    ClaudeHooks.repairIfNeeded()
+    if !AppSettings.claudeHooksPrompted, !AppSettings.claudeHooksEnabled, !QABridge.isQAMode {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+        self?.offerClaudeHooksInstall()
+      }
+    }
+
     // Check for updates in the background (throttled to once per day).
     // Deferred a few seconds past launch so the update modal can't blot
     // out the main window mid-startup — clicking "Download" while the
@@ -243,6 +253,10 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     helpMenu.addItem(withTitle: "About DraftFrame", action: #selector(showAbout), keyEquivalent: "")
     helpMenu.addItem(
       withTitle: "Keyboard Shortcuts", action: #selector(showKeyboardShortcuts), keyEquivalent: "")
+    helpMenu.addItem(NSMenuItem.separator())
+    helpMenu.addItem(
+      withTitle: "Claude Code Hooks Status\u{2026}", action: #selector(showClaudeHooksStatus),
+      keyEquivalent: "")
     helpMenuItem.submenu = helpMenu
     mainMenu.addItem(helpMenuItem)
 
@@ -372,6 +386,36 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
 
   @objc private func showKeyboardShortcuts() {
     DFShortcutsWindow.shared.show()
+  }
+
+  // MARK: - Claude Code hooks
+
+  /// One-time first-launch offer. Installing edits `~/.claude/settings.json`,
+  /// so it never happens silently.
+  private func offerClaudeHooksInstall() {
+    AppSettings.claudeHooksPrompted = true
+    let alert = NSAlert()
+    alert.messageText = "Use Claude Code hooks for session status?"
+    alert.informativeText = ClaudeHooksSettings.explanation
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Enable Hooks")
+    alert.addButton(withTitle: "Not Now")
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    if let error = ClaudeHooksSettings.setEnabled(true) {
+      ClaudeHooksSettings.presentError(error)
+    }
+  }
+
+  @objc private func showClaudeHooksStatus() {
+    let alert = NSAlert()
+    alert.messageText = "Claude Code Hooks"
+    alert.informativeText = ClaudeHooksSettings.healthReport()
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "OK")
+    alert.addButton(withTitle: "Open Settings")
+    if alert.runModal() == .alertSecondButtonReturn {
+      DFSettingsWindow.shared.show()
+    }
   }
 
   @objc private func showAbout() {

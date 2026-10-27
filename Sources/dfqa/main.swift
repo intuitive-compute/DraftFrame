@@ -91,7 +91,7 @@ func parseOptions(_ args: [String], flags: Set<String>) -> ([String: Any], [Stri
         guard i + 1 < args.count else { fail("missing value for --\(key)") }
         i += 1
         let value = args[i]
-        if let n = Int(value), key == "index" || key == "lines" {
+        if let n = Int(value), key == "index" || key == "lines" || key == "ppid" {
           opts[key] = n
         } else {
           opts[key] = value
@@ -124,6 +124,9 @@ let usage = """
     toggle-group --group NAME | delete-group --group NAME
     move-group --group NAME --to N   (N = position in the group list, 0 = first)
     find [--text STR] [--direction next|previous] [--window main|quick] [--close]
+    hooks-status
+    hook-event --name EVENT [--index N] [--sessionId ID] [--transcriptPath P]
+               [--notificationType T] [--source S] [--reason R] [--ppid PID]
     raw '{"cmd": "..."}'
   Socket: $DRAFTFRAME_QA_SOCKET (default /tmp/draftframe-qa.sock)
   """
@@ -134,12 +137,12 @@ let rest = Array(argv.dropFirst())
 
 var request: [String: Any]
 switch command {
-case "ping", "sessions", "state", "quit", "groups", "new-group-dialog":
+case "ping", "sessions", "state", "quit", "groups", "new-group-dialog", "hooks-status":
   request = ["cmd": command]
 
 case "new-session", "select", "close-session", "send", "read", "open-project",
   "new-group", "group-preset", "move-to-group", "toggle-group", "delete-group", "move-group",
-  "find":
+  "find", "hook-event":
   let (opts, _) = parseOptions(rest, flags: ["enter", "close"])
   request = opts
   request["cmd"] = command

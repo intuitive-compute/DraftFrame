@@ -41,6 +41,9 @@ final class JSONLTailer: @unchecked Sendable {
   private var pollTimer: DispatchSourceTimer?
   private var discoveryTimer: DispatchSourceTimer?
   private var watchedPath: String?
+  /// The file currently tailed, for `findLatest` closures that want to keep
+  /// it. Read on the tailer's queue (where `findLatest` runs).
+  var currentPath: String? { watchedPath }
   /// Write events fire many times per second while the agent streams;
   /// without this throttle each one would re-run the full newest-file scan.
   private var lastNewestScan = Date.distantPast

@@ -37,7 +37,11 @@ normal launches, and QA mode never writes to the user's persisted state
      capture (no screen-recording permission needed). Read the PNG to verify
      visually.
    - `dfqa menu "View>Toggle Dashboard"` — invoke any menu item by title path
-     (fires async, so items that open modals won't hang the bridge).
+     (fires async, so items that open modals won't hang the bridge). The app
+     menu has no title: use `dfqa raw '{"cmd":"menu","path":["","Settings…"]}'`.
+   - `dfqa hooks-status` / `dfqa hook-event --name Stop [--index N] ...` —
+     Claude Code hook health, and injection of a synthetic hook event for a
+     tab (state binding without touching the real `~/.claude/settings.json`).
 4. **Always finish with** `dfqa quit` (QA mode skips the worktree-cleanup
    modal and persistence writes). If the app hangs, `kill -9` it — never let a
    wedged QA instance linger.

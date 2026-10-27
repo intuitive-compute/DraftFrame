@@ -101,6 +101,17 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   var captureSessionIds = true
   private let watcherStartedAt = Date()
 
+  /// Transcript path named by a Claude Code `SessionStart` hook. When set,
+  /// the tailer follows exactly this file instead of guessing the newest
+  /// transcript in the project folder, which is what makes per-tab cost
+  /// correct when several tabs share a directory. Written on the main
+  /// thread, read on the tailer's queue, hence the lock.
+  var pinnedTranscriptPath: String? {
+    get { assistantTextLock.withLock { _pinnedTranscriptPath } }
+    set { assistantTextLock.withLock { _pinnedTranscriptPath = newValue } }
+  }
+  private var _pinnedTranscriptPath: String?
+
   // MARK: - Private
 
   private let onUpdate: UpdateCallback
@@ -122,7 +133,7 @@ final class SessionJSONLWatcher: @unchecked Sendable {
     self.workingDirectory = workingDirectory
     self.onUpdate = onUpdate
     tailer = JSONLTailer(
-      findLatest: { [weak self] in self?.findLatestJSONL() },
+      findLatest: { [weak self] in self?.resolveTranscriptPath() },
       onSwitch: { [weak self] in self?.resetRunTotals() },
       onLines: { [weak self] lines in self?.process(lines) }
     )
@@ -184,6 +195,24 @@ final class SessionJSONLWatcher: @unchecked Sendable {
   static func transcriptExists(sessionId: String, workingDirectory: String) -> Bool {
     guard let dir = claudeProjectDir(forWorkingDirectory: workingDirectory) else { return false }
     return FileManager.default.fileExists(atPath: "\(dir)/\(sessionId).jsonl")
+  }
+
+  /// The transcript to tail: the hook-pinned file once it exists on disk
+  /// (Claude Code writes it asynchronously, so a fresh session's file can
+  /// lag the hook by a moment), otherwise the newest transcript in the
+  /// project folder. Internal for testing.
+  func resolveTranscriptPath() -> String? {
+    if let pinned = pinnedTranscriptPath {
+      if FileManager.default.fileExists(atPath: pinned) {
+        // The pinned file is this tab's own conversation by construction.
+        captureSessionIds = true
+        return pinned
+      }
+      // Pinned but not written yet: keep whatever we have rather than
+      // switching to some other session's transcript in the meantime.
+      return tailer?.currentPath
+    }
+    return findLatestJSONL()
   }
 
   private func findLatestJSONL() -> String? {
