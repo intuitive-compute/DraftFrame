@@ -17,7 +17,10 @@ enum PRConclusion: String {
   case neutral = "NEUTRAL"
   case timedOut = "TIMED_OUT"
 
-  static let failing: Set<PRConclusion> = [.failure, .cancelled, .timedOut]
+  /// Conclusions that count as a verdict against the code. `.cancelled` is
+  /// deliberately absent: a cancelled run (typically superseded by a
+  /// `concurrency` group) says nothing about whether the code is good.
+  static let failing: Set<PRConclusion> = [.failure, .timedOut]
 }
 
 struct PRCheck: Equatable {
@@ -290,14 +293,8 @@ final class PRMonitor {
     }
 
     let rollupArr = obj["statusCheckRollup"] as? [[String: Any]] ?? []
-    let checks = rollupArr.map { entry -> PRCheck in
-      PRCheck(
-        name: entry["name"] as? String ?? (entry["context"] as? String ?? "check"),
-        status: entry["status"] as? String ?? "UNKNOWN",
-        conclusion: (entry["conclusion"] as? String).flatMap { PRConclusion(rawValue: $0) }
-      )
-    }
-    let rollup = computeRollup(checks: checks)
+    let checks = Self.parseChecks(rollupArr)
+    let rollup = Self.computeRollup(checks: checks)
     // `autoMergeRequest` is a JSON object when auto-merge is armed and
     // `null` otherwise (which JSONSerialization surfaces as NSNull).
     let autoMergeQueued = obj["autoMergeRequest"] is [String: Any]
@@ -314,7 +311,51 @@ final class PRMonitor {
     }
   }
 
-  nonisolated private func computeRollup(checks: [PRCheck]) -> PRRollup {
+  /// Reduces a raw `statusCheckRollup` array to one entry per check.
+  ///
+  /// GitHub keeps every check run ever recorded against the head commit, so
+  /// a workflow re-triggered by a second event (or cancelled by a
+  /// `concurrency` group) leaves its superseded runs beside the current one.
+  /// The checks tab only shows the latest run per check; we do the same by
+  /// grouping on workflow + name and keeping the most recently started run.
+  /// Later array entries win ties so that a missing timestamp still favours
+  /// the newer run.
+  nonisolated static func parseChecks(_ rollupArr: [[String: Any]]) -> [PRCheck] {
+    struct Candidate {
+      let check: PRCheck
+      let startedAt: Date
+    }
+    let formatter = ISO8601DateFormatter()
+    var latest: [String: Candidate] = [:]
+    var keyOrder: [String] = []
+    for entry in rollupArr {
+      let name = entry["name"] as? String ?? (entry["context"] as? String ?? "check")
+      let check = PRCheck(
+        name: name,
+        status: entry["status"] as? String ?? "UNKNOWN",
+        conclusion: (entry["conclusion"] as? String).flatMap { PRConclusion(rawValue: $0) }
+      )
+      let workflow = entry["workflowName"] as? String ?? ""
+      let key = "\(workflow)\u{0}\(name)"
+      let stamp =
+        (entry["startedAt"] as? String)
+        ?? (entry["completedAt"] as? String)
+        ?? (entry["createdAt"] as? String)
+      let startedAt = stamp.flatMap { formatter.date(from: $0) } ?? .distantPast
+      let candidate = Candidate(check: check, startedAt: startedAt)
+      if let existing = latest[key] {
+        if candidate.startedAt >= existing.startedAt {
+          latest[key] = candidate
+        }
+      } else {
+        latest[key] = candidate
+        keyOrder.append(key)
+      }
+    }
+    return keyOrder.compactMap { latest[$0]?.check }
+  }
+
+  nonisolated static func computeRollup(checks: [PRCheck]) -> PRRollup {
     if checks.isEmpty { return .none }
     if checks.contains(where: { c in c.conclusion.map { PRConclusion.failing.contains($0) } ?? false
     }) {
@@ -322,6 +363,11 @@ final class PRMonitor {
     }
     let pendingStates: Set<String> = ["IN_PROGRESS", "QUEUED", "PENDING"]
     if checks.contains(where: { pendingStates.contains($0.status.uppercased()) }) {
+      return .pending
+    }
+    // A cancelled run that no rerun has replaced is not a verdict either
+    // way; surface it as pending rather than passing.
+    if checks.contains(where: { $0.conclusion == .cancelled }) {
       return .pending
     }
     return .passing
