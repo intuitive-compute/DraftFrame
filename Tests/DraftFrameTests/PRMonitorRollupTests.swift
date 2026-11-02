@@ -109,6 +109,46 @@ final class PRMonitorRollupTests: XCTestCase {
     XCTAssertEqual(PRMonitor.computeRollup(checks: checks), .pending)
   }
 
+  func testQueuedRerunWithoutStartedAtSupersedesCompletedRun() {
+    // A re-triggered run that has not started yet has no startedAt; it must
+    // still win over the stale completed run, whatever the array order.
+    let rollup: [[String: Any]] = [
+      ["name": "lint", "status": "QUEUED", "workflowName": "CI"],
+      run("lint", "SUCCESS", startedAt: "2026-10-30T18:00:00Z", workflow: "CI"),
+    ]
+    for variant in [rollup, rollup.reversed()] {
+      let checks = PRMonitor.parseChecks(variant)
+      XCTAssertEqual(checks.map(\.status), ["QUEUED"])
+      XCTAssertEqual(PRMonitor.computeRollup(checks: checks), .pending)
+    }
+  }
+
+  func testInProgressRerunBeatsOlderRunWithLaterCompletion() {
+    // Old long-running job completed after the rerun started; the rerun
+    // still wins because it has not completed.
+    let checks = PRMonitor.parseChecks([
+      run("lint", nil, startedAt: "2026-10-30T18:05:00Z", status: "IN_PROGRESS"),
+      [
+        "name": "lint", "status": "COMPLETED", "conclusion": "FAILURE",
+        "startedAt": "2026-10-30T17:00:00Z", "completedAt": "2026-10-30T18:10:00Z",
+        "workflowName": "PR Hygiene",
+      ],
+    ])
+    XCTAssertEqual(checks.map(\.status), ["IN_PROGRESS"])
+    XCTAssertEqual(PRMonitor.computeRollup(checks: checks), .pending)
+  }
+
+  func testFractionalSecondTimestampsAreParsed() {
+    XCTAssertNotNil(PRMonitor.parseTimestamp("2026-10-30T18:00:01.123Z"))
+    XCTAssertNotNil(PRMonitor.parseTimestamp("2026-10-30T18:00:01Z"))
+    XCTAssertNil(PRMonitor.parseTimestamp("yesterday"))
+    let checks = PRMonitor.parseChecks([
+      run("lint", "SUCCESS", startedAt: "2026-10-30T18:00:09.500Z"),
+      run("lint", "CANCELLED", startedAt: "2026-10-30T18:00:01.250Z"),
+    ])
+    XCTAssertEqual(checks.map(\.conclusion), [.success])
+  }
+
   func testEmptyRollupIsNone() {
     XCTAssertEqual(PRMonitor.computeRollup(checks: []), .none)
   }
