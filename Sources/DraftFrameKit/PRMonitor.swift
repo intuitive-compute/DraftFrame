@@ -17,7 +17,10 @@ enum PRConclusion: String {
   case neutral = "NEUTRAL"
   case timedOut = "TIMED_OUT"
 
-  static let failing: Set<PRConclusion> = [.failure, .cancelled, .timedOut]
+  /// Conclusions that count as a verdict against the code. `.cancelled` is
+  /// deliberately absent: a cancelled run (typically superseded by a
+  /// `concurrency` group) says nothing about whether the code is good.
+  static let failing: Set<PRConclusion> = [.failure, .timedOut]
 }
 
 struct PRCheck: Equatable {
@@ -290,14 +293,8 @@ final class PRMonitor {
     }
 
     let rollupArr = obj["statusCheckRollup"] as? [[String: Any]] ?? []
-    let checks = rollupArr.map { entry -> PRCheck in
-      PRCheck(
-        name: entry["name"] as? String ?? (entry["context"] as? String ?? "check"),
-        status: entry["status"] as? String ?? "UNKNOWN",
-        conclusion: (entry["conclusion"] as? String).flatMap { PRConclusion(rawValue: $0) }
-      )
-    }
-    let rollup = computeRollup(checks: checks)
+    let checks = Self.parseChecks(rollupArr)
+    let rollup = Self.computeRollup(checks: checks)
     // `autoMergeRequest` is a JSON object when auto-merge is armed and
     // `null` otherwise (which JSONSerialization surfaces as NSNull).
     let autoMergeQueued = obj["autoMergeRequest"] is [String: Any]
@@ -314,7 +311,70 @@ final class PRMonitor {
     }
   }
 
-  nonisolated private func computeRollup(checks: [PRCheck]) -> PRRollup {
+  /// Reduces a raw `statusCheckRollup` array to one entry per check.
+  ///
+  /// GitHub keeps every check run ever recorded against the head commit, so
+  /// a workflow re-triggered by a second event (or cancelled by a
+  /// `concurrency` group) leaves its superseded runs beside the current one.
+  /// The checks tab only shows the latest run per check; we do the same by
+  /// grouping on workflow + name and keeping the newest run. A run that has
+  /// not completed yet is by definition the newest, regardless of timestamp
+  /// (a QUEUED run has no `startedAt` at all). Completed runs are ordered by
+  /// `startedAt` (check runs) or `createdAt` (commit statuses); later array
+  /// entries win ties so that a missing timestamp still favours the newer run.
+  nonisolated static func parseChecks(_ rollupArr: [[String: Any]]) -> [PRCheck] {
+    struct Candidate {
+      let check: PRCheck
+      let completed: Bool
+      let timestamp: Date
+
+      /// True when `self` should replace `other` as the current run.
+      func supersedes(_ other: Candidate) -> Bool {
+        if completed != other.completed { return !completed }
+        return timestamp >= other.timestamp
+      }
+    }
+    var latest: [String: Candidate] = [:]
+    var keyOrder: [String] = []
+    for entry in rollupArr {
+      let name = entry["name"] as? String ?? (entry["context"] as? String ?? "check")
+      let status = entry["status"] as? String ?? "UNKNOWN"
+      let check = PRCheck(
+        name: name,
+        status: status,
+        conclusion: (entry["conclusion"] as? String).flatMap { PRConclusion(rawValue: $0) }
+      )
+      let workflow = entry["workflowName"] as? String ?? ""
+      let key = "\(workflow)\u{0}\(name)"
+      let stamp = (entry["startedAt"] as? String) ?? (entry["createdAt"] as? String)
+      let candidate = Candidate(
+        check: check,
+        completed: status.uppercased() == "COMPLETED" || entry["status"] == nil,
+        timestamp: stamp.flatMap(parseTimestamp) ?? .distantPast
+      )
+      if let existing = latest[key] {
+        if candidate.supersedes(existing) { latest[key] = candidate }
+      } else {
+        latest[key] = candidate
+        keyOrder.append(key)
+      }
+    }
+    return keyOrder.compactMap { latest[$0]?.check }
+  }
+
+  nonisolated(unsafe) private static let fractionalFormatter: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+  }()
+  nonisolated(unsafe) private static let plainFormatter = ISO8601DateFormatter()
+
+  /// Parses GitHub's ISO 8601 timestamps with or without fractional seconds.
+  nonisolated static func parseTimestamp(_ s: String) -> Date? {
+    fractionalFormatter.date(from: s) ?? plainFormatter.date(from: s)
+  }
+
+  nonisolated static func computeRollup(checks: [PRCheck]) -> PRRollup {
     if checks.isEmpty { return .none }
     if checks.contains(where: { c in c.conclusion.map { PRConclusion.failing.contains($0) } ?? false
     }) {
@@ -322,6 +382,11 @@ final class PRMonitor {
     }
     let pendingStates: Set<String> = ["IN_PROGRESS", "QUEUED", "PENDING"]
     if checks.contains(where: { pendingStates.contains($0.status.uppercased()) }) {
+      return .pending
+    }
+    // A cancelled run that no rerun has replaced is not a verdict either
+    // way; surface it as pending rather than passing.
+    if checks.contains(where: { $0.conclusion == .cancelled }) {
       return .pending
     }
     return .passing
