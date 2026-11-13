@@ -33,6 +33,9 @@ normal launches, and QA mode never writes to the user's persisted state
      PTY. Control characters work via `raw` with JSON escapes (e.g.
      `{"cmd":"send","text":""}` for Escape).
    - `dfqa read [--lines N] [--index N]` — the visible terminal screen as text.
+   - `dfqa select-all [--index N]` then `dfqa reply [--index N]` — select the
+     session terminal's buffer and quote it into the agent's input (the Reply
+     context-menu action). `read` afterwards to confirm it landed unsubmitted.
    - `dfqa screenshot PATH [--window main|quick|key]` — pixel-perfect window
      capture (no screen-recording permission needed). Read the PNG to verify
      visually.

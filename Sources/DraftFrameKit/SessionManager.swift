@@ -571,6 +571,10 @@ final class SessionManager {
     // The copy re-wrap heuristic models Claude Code's Ink renderer; Codex
     // draws its own full-screen TUI and gets SwiftTerm's plain copy.
     tv.joinsWrappedRowsOnCopy = agent == .claude
+    // Both agents take a quoted reply into their input. Codex gets it as one
+    // bracketed paste; Claude Code would collapse that into a placeholder.
+    tv.supportsReply = true
+    tv.sendsReplyAsTypedLines = agent == .claude
     session.terminalView = tv
 
     // Wire PTY data stream to the analyzer for real-time state detection

@@ -1064,6 +1064,13 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       menu.addItem(quoteItem)
       menu.addItem(NSMenuItem.separator())
     }
+    if canReplyToSelection {
+      let replyItem = NSMenuItem(
+        title: "Reply", action: #selector(replyToSelection(_:)), keyEquivalent: "")
+      replyItem.target = self
+      replyItem.image = Self.replyMenuIcon
+      menu.addItem(replyItem)
+    }
     let copyItem = NSMenuItem(
       title: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
     copyItem.target = self
@@ -1096,22 +1103,113 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   /// on screen would otherwise paste into a shell as several broken commands.
   /// `LogicalLineJoiner` re-joins those rows using the wrap column inferred
   /// from the selection and the visible screen, then drops the gutter indent
-  /// Claude Code puts in front of its output. Reached by Cmd+C (Edit menu)
-  /// and the context menu's Copy item alike.
+  /// Claude Code puts in front of its output (see `selectionAsLogicalText`).
+  /// Reached by Cmd+C (Edit menu) and the context menu's Copy item alike.
   override func copy(_ sender: Any) {
-    guard let raw = getSelection() else { return }
-    var text = raw
-    if joinsWrappedRowsOnCopy {
-      // Single-row selections have nothing to join; skip the screen scan.
-      if raw.contains("\n") {
-        let term = getTerminal()
-        let screen = (0..<term.rows).map { copyRow($0) }
-        text = LogicalLineJoiner.join(raw, columns: term.cols, screenRows: screen)
-      }
-      text = LogicalLineJoiner.stripCommonIndent(text)
-    }
+    guard let text = selectionAsLogicalText() else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
+  }
+
+  /// The selection as the text it stands for, or nil with no selection. In a
+  /// Claude Code session that means logical lines with the gutter indent
+  /// removed; elsewhere it is SwiftTerm's selection untouched. Shared by Copy
+  /// and Reply.
+  func selectionAsLogicalText() -> String? {
+    guard let raw = getSelection() else { return nil }
+    guard joinsWrappedRowsOnCopy else { return raw }
+    let term = getTerminal()
+    return LogicalLineJoiner.logicalText(fromSelection: raw, columns: term.cols) {
+      (0..<term.rows).map { self.copyRow($0) }
+    }
+  }
+
+  // MARK: - Reply to selection
+
+  /// The reply arrow shown beside Reply in the context and Edit menus.
+  static let replyMenuIcon = NSImage(
+    systemSymbolName: "arrowshape.turn.up.left", accessibilityDescription: "Reply")
+
+  /// Whether this terminal hosts an agent whose input can take a quoted
+  /// reply. Off by default; `SessionManager` turns it on for agent sessions,
+  /// which leaves it off for the Quick Terminal's plain shells.
+  var supportsReply = false
+
+  /// Whether Reply types the quote in rather than pasting it. Off by
+  /// default; `SessionManager` turns it on for Claude Code, which swaps any
+  /// paste holding more than two line breaks for a `[Pasted text #1 +N
+  /// lines]` placeholder and so would hide the quote the user is about to
+  /// reply to.
+  var sendsReplyAsTypedLines = false
+
+  /// Reply needs something selected and a program that asked for bracketed
+  /// paste. Without bracketed paste every quoted line would arrive as typed
+  /// input followed by Enter: an agent would submit each as its own prompt,
+  /// and a shell (once the agent has exited) would run `> text` as a
+  /// redirect that truncates a file.
+  var canReplyToSelection: Bool {
+    guard supportsReply, terminal.bracketedPasteMode, let text = getSelection() else {
+      return false
+    }
+    return text.contains { !$0.isWhitespace }
+  }
+
+  /// Quote the selection into the agent's input as a markdown blockquote and
+  /// leave the cursor after it, unsubmitted, for the user to type the reply.
+  /// Reached by the context menu's Reply item and Edit > Reply to Selection.
+  @objc func replyToSelection(_ sender: Any?) {
+    guard canReplyToSelection, let text = selectionAsLogicalText(),
+      let quote = ReplyQuote.format(text)
+    else {
+      NSSound.beep()
+      return
+    }
+    if sendsReplyAsTypedLines {
+      sendAsTypedLines(quote)
+    } else {
+      sendAsPaste(quote)
+    }
+    selectNone()
+    // The quote landed in the input at the bottom; bring it into view the
+    // same way a keypress would.
+    stickyScrollGuardActive = false
+    if scrollPosition < 1.0 {
+      scroll(toPosition: 1.0)
+    }
+    window?.makeFirstResponder(self)
+  }
+
+  override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+    if item.action == #selector(replyToSelection(_:)) {
+      return canReplyToSelection
+    }
+    return super.validateUserInterfaceItem(item)
+  }
+
+  /// Send `text` so a multi-line block stays visible in Claude Code's input:
+  /// as typed characters, with the bare LF that Shift+Enter sends for each
+  /// line break, which inserts a newline without submitting. No paste
+  /// markers at all: Claude Code handles a paste asynchronously, and a paste
+  /// per line interleaved with LF keystrokes intermittently lost the first
+  /// line. Tabs become spaces because a typed Tab triggers completion.
+  private func sendAsTypedLines(_ text: String) {
+    send(txt: text.replacingOccurrences(of: "\t", with: "    "))
+  }
+
+  /// Send `text` to the child process as one pasted block: wrapped in
+  /// bracketed-paste markers when the program asked for them, so newlines in
+  /// it are not read as Enter. Falls back to plain input otherwise.
+  func sendAsPaste(_ text: String) {
+    guard terminal.bracketedPasteMode else {
+      send(txt: text)
+      return
+    }
+    // ESC [ 200~ … ESC [ 201~ — inlined rather than referencing SwiftTerm's
+    // EscapeSequences statics, which are declared as mutable global state
+    // and trip strict-concurrency checking.
+    send(data: Array("\u{1b}[200~".utf8)[0...])
+    send(txt: text)
+    send(data: Array("\u{1b}[201~".utf8)[0...])
   }
 
   /// A visible row as the selection text would render it: the zero-width
@@ -1124,7 +1222,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       .replacingOccurrences(of: "\u{0}", with: " ")
   }
 
-  /// Whether `copy(_:)` re-joins rows Claude Code hard-wrapped. Off by
+  /// Whether Copy and Reply re-join rows Claude Code hard-wrapped. Off by
   /// default; `SessionManager` turns it on for Claude Code sessions only. A
   /// plain shell (the Quick Terminal) or Codex relies on terminal wrapping,
   /// which SwiftTerm already joins, and the heuristic would only risk gluing
@@ -1167,17 +1265,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     // Send paths as a bracketed paste so Claude Code treats the drop the
     // same way iTerm2 does — it detects image file paths and renders them
     // as [Image #N], and attaches other files as context.
-    let text = paths.joined(separator: " ")
-    if terminal.bracketedPasteMode {
-      // ESC [ 200~ … ESC [ 201~ — inlined rather than referencing
-      // SwiftTerm's EscapeSequences statics, which are declared as mutable
-      // global state and trip strict-concurrency checking.
-      send(data: Array("\u{1b}[200~".utf8)[0...])
-      send(txt: text)
-      send(data: Array("\u{1b}[201~".utf8)[0...])
-    } else {
-      send(txt: text)
-    }
+    sendAsPaste(paths.joined(separator: " "))
     return true
   }
 }
