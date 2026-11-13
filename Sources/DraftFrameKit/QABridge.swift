@@ -235,7 +235,9 @@ import SwiftTerm
           return ["ok": false, "error": "no such session"]
         }
         guard tv.canReplyToSelection else {
-          return ["ok": false, "error": "nothing to reply to (no selection, or no bracketed paste)"]
+          return [
+            "ok": false, "error": "nothing to reply to (no selection, or no bracketed paste)",
+          ]
         }
         tv.replyToSelection(nil)
         return ["ok": true]
