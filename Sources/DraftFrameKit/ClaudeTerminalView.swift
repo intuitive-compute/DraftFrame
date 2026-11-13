@@ -1068,6 +1068,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
       let replyItem = NSMenuItem(
         title: "Reply", action: #selector(replyToSelection(_:)), keyEquivalent: "")
       replyItem.target = self
+      replyItem.image = Self.replyMenuIcon
       menu.addItem(replyItem)
     }
     let copyItem = NSMenuItem(
@@ -1124,6 +1125,10 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   }
 
   // MARK: - Reply to selection
+
+  /// The reply arrow shown beside Reply in the context and Edit menus.
+  static let replyMenuIcon = NSImage(
+    systemSymbolName: "arrowshape.turn.up.left", accessibilityDescription: "Reply")
 
   /// Whether this terminal hosts an agent whose input can take a quoted
   /// reply. Off by default; `SessionManager` turns it on for agent sessions,
