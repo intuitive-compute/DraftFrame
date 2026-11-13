@@ -114,6 +114,8 @@ let usage = """
     close-session --index N
     send --text STR [--index N] [--enter]
     read [--index N] [--lines N]
+    select-all [--index N]
+    reply [--index N]   (quote the terminal selection into the agent's input)
     screenshot PATH [--window main|quick|key|sheet] [--method pixels|cache]
     menu "View>Toggle Dashboard"
     dashboard-mode grid|summary|graph [--index N]
@@ -140,7 +142,8 @@ switch command {
 case "ping", "sessions", "state", "quit", "groups", "new-group-dialog", "hooks-status":
   request = ["cmd": command]
 
-case "new-session", "select", "close-session", "send", "read", "open-project",
+case "new-session", "select", "close-session", "send", "read", "select-all", "reply",
+  "open-project",
   "new-group", "group-preset", "move-to-group", "toggle-group", "delete-group", "move-group",
   "find", "hook-event":
   let (opts, _) = parseOptions(rest, flags: ["enter", "close"])

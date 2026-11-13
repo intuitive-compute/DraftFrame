@@ -220,6 +220,26 @@ import SwiftTerm
         let requested = params["lines"] as? Int
         return readBuffer(tv: tv, requestedLines: requested)
 
+      case "select-all":
+        // Selection can't be driven through the Edit menu when the QA
+        // instance isn't the frontmost app (no first responder to route to).
+        guard let tv = resolveSession(params)?.terminalView else {
+          return ["ok": false, "error": "no such session"]
+        }
+        tv.selectAll()
+        return ["ok": true]
+
+      case "reply":
+        // Same action as the context menu's Reply / Edit > Reply to Selection.
+        guard let tv = resolveSession(params)?.terminalView else {
+          return ["ok": false, "error": "no such session"]
+        }
+        guard tv.canReplyToSelection else {
+          return ["ok": false, "error": "nothing to reply to (no selection, or no bracketed paste)"]
+        }
+        tv.replyToSelection(nil)
+        return ["ok": true]
+
       case "screenshot":
         guard let path = params["path"] as? String else {
           return ["ok": false, "error": "screenshot requires \"path\""]

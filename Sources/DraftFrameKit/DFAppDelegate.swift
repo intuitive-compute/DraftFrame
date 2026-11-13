@@ -172,6 +172,11 @@ public final class DFAppDelegate: NSObject, NSApplicationDelegate {
     editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
     editMenu.addItem(
       withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    // Cmd+Shift+R. Sent up the responder chain; the focused session terminal
+    // enables it only while it has a selection it can quote.
+    editMenu.addItem(
+      withTitle: "Reply to Selection",
+      action: #selector(ClaudeTerminalView.replyToSelection(_:)), keyEquivalent: "R")
     editMenu.addItem(NSMenuItem.separator())
     editMenu.addItem(withTitle: "Find\u{2026}", action: #selector(menuFind), keyEquivalent: "f")
     editMenu.addItem(withTitle: "Find Next", action: #selector(menuFindNext), keyEquivalent: "g")

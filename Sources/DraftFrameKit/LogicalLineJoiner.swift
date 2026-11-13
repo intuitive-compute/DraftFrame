@@ -52,6 +52,18 @@ enum LogicalLineJoiner {
         endingWith: String(head[0]), followedBy: String(head[1]), in: screenRows))
   }
 
+  /// The text a selection stands for in a Claude Code session: wrapped rows
+  /// re-joined into logical lines, then the gutter indent dropped. Copy and
+  /// Reply both go through this so they agree on what was selected.
+  /// `screenRows` is only evaluated when there is more than one row to join.
+  static func logicalText(
+    fromSelection raw: String, columns: Int, screenRows: () -> [String?]
+  ) -> String {
+    // Single-row selections have nothing to join; skip the screen scan.
+    let joined = raw.contains("\n") ? join(raw, columns: columns, screenRows: screenRows()) : raw
+    return stripCommonIndent(joined)
+  }
+
   /// Core of `join`. `screenWrapColumn` is the wrap column inferred from the
   /// screen (nil if unknown); the widest selected row is also consulted, so a
   /// wrapped command selected while scrolled into scrollback still joins.

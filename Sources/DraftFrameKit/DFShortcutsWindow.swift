@@ -58,6 +58,7 @@ final class DFShortcutsWindow: NSObject, NSWindowDelegate {
         Shortcut(keys: ["⌘", "⇧", "V"], detail: "Hold for voice transcription"),
         Shortcut(keys: ["⇧", "↩"], detail: "Insert newline instead of submitting"),
         Shortcut(keys: ["⌘", "Click"], detail: "Open link, file path, or PR/issue ref"),
+        Shortcut(keys: ["⌘", "⇧", "R"], detail: "Reply to selected text as a quote"),
         Shortcut(keys: ["⌘", "F"], detail: "Find in terminal"),
         Shortcut(keys: ["⌘", "G"], detail: "Next match"),
         Shortcut(keys: ["⌘", "⇧", "G"], detail: "Previous match"),
