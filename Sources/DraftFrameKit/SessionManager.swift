@@ -5,8 +5,8 @@ import SwiftTerm
 /// that affect what they render, replacing the old catch-all
 /// `.sessionsDidChange` that woke every observer for every cost tick.
 extension Notification.Name {
-  /// Membership, order, or naming of the session list changed
-  /// (create, close, move, rename, worktree rename).
+  /// Membership, order, naming, or tagging of the session list changed
+  /// (create, close, move, rename, worktree rename, tag).
   static let sessionListDidChange = Notification.Name("DFSessionListDidChange")
   /// One session's `SessionState` changed. Payload via `SessionEvents`.
   static let sessionStateDidChange = Notification.Name("DFSessionStateDidChange")
@@ -113,6 +113,10 @@ final class Session {
   /// The session group this session sits in, or nil when ungrouped. Set
   /// through `SessionManager` so the display-order invariant holds.
   var groupID: UUID?
+  /// Emoji tags shown on the session card, in the order they were added.
+  /// Cosmetic only. Set through `SessionManager` so the `SessionTags` rules
+  /// hold and the card and saved state follow.
+  var tags: [String] = []
   var terminalView: ClaudeTerminalView?
 
   /// Label shown in the UI. When the session is on `main`/`master`, the bare
@@ -768,12 +772,43 @@ final class SessionManager {
     let groupID = old.groupID
     closeSession(at: idx)
     let fresh = createSession(name: old.name, worktreePath: old.worktreePath, agent: old.agent)
+    fresh.tags = old.tags
     // Keep the restarted session where it was in the bar.
     if let g = groupID, groups.contains(where: { $0.id == g }) {
       move(sessionID: fresh.id, toGroup: g, at: idx)
     } else {
       move(sessionID: fresh.id, toGroup: nil, at: idx)
     }
+  }
+
+  // MARK: - Tags
+
+  /// Toggle an emoji tag on a session: removes it when present, adds it
+  /// otherwise. Returns false when nothing changed (not a single emoji, the
+  /// session is at `SessionTags.maxTags`, or there is no such session).
+  @discardableResult
+  func toggleTag(_ emoji: String, sessionID: UUID) -> Bool {
+    guard let session = sessions.first(where: { $0.id == sessionID }),
+      let tags = SessionTags.toggling(emoji, in: session.tags)
+    else { return false }
+    let added = tags.count > session.tags.count
+    session.tags = tags
+    // QA runs share UserDefaults with real launches; keep their throwaway
+    // tags out of the user's recents.
+    if added, let emoji = tags.last, !QABridge.isQAMode {
+      AppSettings.recentTagEmojis = SessionTags.recording(
+        emoji, in: AppSettings.recentTagEmojis)
+    }
+    SessionEvents.postListChanged()
+    return true
+  }
+
+  /// Remove every tag from a session.
+  func clearTags(sessionID: UUID) {
+    guard let session = sessions.first(where: { $0.id == sessionID }), !session.tags.isEmpty
+    else { return }
+    session.tags = []
+    SessionEvents.postListChanged()
   }
 
   // MARK: - Claude Code hooks

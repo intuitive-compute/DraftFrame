@@ -125,6 +125,8 @@ let usage = """
     move-to-group [--index N] [--group NAME]   (no --group = ungroup)
     toggle-group --group NAME | delete-group --group NAME
     move-group --group NAME --to N   (N = position in the group list, 0 = first)
+    tag --emoji E [--index N]   (toggle: adds the emoji, or removes it if present)
+    clear-tags [--index N] | tag-picker [--index N]
     find [--text STR] [--direction next|previous] [--window main|quick] [--close]
     hooks-status
     hook-event --name EVENT [--index N] [--sessionId ID] [--transcriptPath P]
@@ -145,7 +147,7 @@ case "ping", "sessions", "state", "quit", "groups", "new-group-dialog", "hooks-s
 case "new-session", "select", "close-session", "send", "read", "select-all", "reply",
   "open-project",
   "new-group", "group-preset", "move-to-group", "toggle-group", "delete-group", "move-group",
-  "find", "hook-event":
+  "tag", "clear-tags", "tag-picker", "find", "hook-event":
   let (opts, _) = parseOptions(rest, flags: ["enter", "close"])
   request = opts
   request["cmd"] = command

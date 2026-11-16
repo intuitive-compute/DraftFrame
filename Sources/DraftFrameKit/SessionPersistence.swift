@@ -36,6 +36,9 @@ final class SessionPersistence {
     let agentSessionId: String?
     /// `SessionGroup.id` this session sits in; nil/absent = ungrouped.
     var groupID: UUID? = nil
+    /// Emoji tags on the session card. Optional so files written before
+    /// tags existed still decode; nil/absent = untagged.
+    var tags: [String]? = nil
   }
 
   struct SavedGroup: Codable {
@@ -80,7 +83,8 @@ final class SessionPersistence {
           name: session.name, worktreePath: session.worktreePath,
           agent: session.agent.rawValue,
           agentSessionId: session.agentSessionId,
-          groupID: session.groupID)
+          groupID: session.groupID,
+          tags: session.tags.isEmpty ? nil : session.tags)
       })
     let groups = SessionManager.shared.groups.map { g in
       SavedGroup(
@@ -145,7 +149,7 @@ final class SessionPersistence {
       guard let id = s.agentSessionId, !seen.insert(id).inserted else { return s }
       return SavedSession(
         name: s.name, worktreePath: s.worktreePath, agent: s.agent, agentSessionId: nil,
-        groupID: s.groupID)
+        groupID: s.groupID, tags: s.tags)
     }
   }
 
@@ -225,6 +229,7 @@ final class SessionPersistence {
         name: entry.name, worktreePath: workDir, agent: agent,
         resumeSessionId: resumeId)
       session.groupID = entry.groupID
+      session.tags = SessionTags.sanitized(entry.tags ?? [])
     }
 
     // Installing the groups re-sorts sessions into their blocks. The saved
