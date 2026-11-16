@@ -23,6 +23,8 @@ final class DFSessionBar: NSView {
   private var lastRevealedSessionID: UUID?
   private var lastDropIndex: Int?
   private weak var highlightedHeader: SessionGroupHeader?
+  /// The open "Choose Emoji…" popover, if any.
+  private var tagPopover: NSPopover?
 
   /// What `cardStack` currently holds, top to bottom. Drag and drop maps a
   /// pointer location onto this list to decide which group and index a
@@ -752,6 +754,45 @@ final class DFSessionBar: NSView {
     }
   }
 
+  // MARK: Tags
+
+  @objc fileprivate func toggleTagFromMenu(_ sender: NSMenuItem) {
+    guard let payload = payload(from: sender), let emoji = payload.emoji else { return }
+    SessionManager.shared.toggleTag(emoji, sessionID: payload.session.id)
+  }
+
+  @objc fileprivate func chooseTagEmojiFromMenu(_ sender: NSMenuItem) {
+    guard let payload = payload(from: sender) else { return }
+    presentTagPicker(for: payload.session)
+  }
+
+  @objc fileprivate func clearTagsFromMenu(_ sender: NSMenuItem) {
+    guard let payload = payload(from: sender) else { return }
+    SessionManager.shared.clearTags(sessionID: payload.session.id)
+  }
+
+  /// Open the "Choose Emoji…" popover beside a session's card and bring up
+  /// the system emoji picker aimed at its field. Anchored to the bar rather
+  /// than the card, since cards are rebuilt underneath an open popover.
+  /// Also reachable from the QA bridge.
+  func presentTagPicker(for session: Session) {
+    tagPopover?.close()
+    let popover = NSPopover()
+    // Semitransient: clicking in the emoji picker (another window) must not
+    // dismiss the popover it is typing into.
+    popover.behavior = .semitransient
+    let sessionID = session.id
+    popover.contentViewController = TagPickerController { [weak popover] emoji in
+      popover?.close()
+      SessionManager.shared.toggleTag(emoji, sessionID: sessionID)
+    }
+    let anchor =
+      allCards.first { $0.sessionID == sessionID }.map { $0.convert($0.bounds, to: self) }
+      ?? NSRect(x: 0, y: bounds.maxY - 40, width: bounds.width, height: 1)
+    popover.show(relativeTo: anchor, of: self, preferredEdge: .minX)
+    tagPopover = popover
+  }
+
   /// Rename dialog for a session. Lives on the bar (not the card) so the
   /// sheet's completion survives card rebuilds; `session` is retained by
   /// the closure and updated in place.
@@ -1088,10 +1129,78 @@ private final class SessionCardMenuPayload: NSObject {
   let prURL: URL?
   /// Destination for a "Move to Group" item; nil = ungrouped.
   let targetGroupID: UUID?
-  init(session: Session, prURL: URL?, targetGroupID: UUID? = nil) {
+  /// Emoji a Tag item toggles on the session.
+  let emoji: String?
+  init(session: Session, prURL: URL?, targetGroupID: UUID? = nil, emoji: String? = nil) {
     self.session = session
     self.prURL = prURL
     self.targetGroupID = targetGroupID
+    self.emoji = emoji
+  }
+}
+
+/// Content of the "Choose Emoji…" popover: one small field the system emoji
+/// picker types into. The first emoji to land in it is reported and the
+/// popover closes; anything else typed is discarded.
+private final class TagPickerController: NSViewController, NSTextFieldDelegate {
+  private let onPick: (String) -> Void
+  private let field = NSTextField()
+
+  init(onPick: @escaping (String) -> Void) {
+    self.onPick = onPick
+    super.init(nibName: nil, bundle: nil)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override func loadView() {
+    let label = NSTextField(labelWithString: "Pick an emoji")
+    label.font = Theme.mono(10)
+    label.textColor = Theme.text2
+
+    field.font = NSFont.systemFont(ofSize: 20)
+    field.alignment = .center
+    field.placeholderString = "🙂"
+    field.delegate = self
+    field.setAccessibilityLabel("Tag emoji")
+
+    let stack = NSStackView(views: [label, field])
+    stack.orientation = .vertical
+    stack.alignment = .centerX
+    stack.spacing = 8
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    // Explicit padding around the stack: a stack view used directly as the
+    // popover's content has its edge insets ignored when the popover sizes
+    // itself, leaving the label flush against the popover's border.
+    let container = NSView()
+    container.addSubview(stack)
+    NSLayoutConstraint.activate([
+      field.widthAnchor.constraint(equalToConstant: 64),
+      stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+      stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+      stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+      stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+    ])
+    view = container
+    preferredContentSize = container.fittingSize
+  }
+
+  override func viewDidAppear() {
+    super.viewDidAppear()
+    // The emoji picker inserts into the first responder, so focus the field
+    // before asking for it.
+    view.window?.makeFirstResponder(field)
+    NSApp.orderFrontCharacterPalette(field)
+  }
+
+  func controlTextDidChange(_ obj: Notification) {
+    guard let emoji = SessionTags.lastEmoji(in: field.stringValue) else {
+      field.stringValue = ""
+      return
+    }
+    onPick(emoji)
   }
 }
 
@@ -1116,6 +1225,8 @@ final class SessionCard: NSView {
   private var modelLabel: NSTextField!
   private var costLabel: NSTextField!
   private var contextLabel: NSTextField?
+
+  fileprivate var sessionID: UUID { session.id }
 
   init(session: Session, isActive: Bool, index: Int, bar: DFSessionBar?) {
     self.session = session
@@ -1218,6 +1329,7 @@ final class SessionCard: NSView {
       parent.submenu = submenu
       menu.addItem(parent)
     }
+    menu.addItem(makeTagMenuItem())
     if prURL != nil || session.worktreePath != nil {
       menu.addItem(NSMenuItem.separator())
       if prURL != nil {
@@ -1235,6 +1347,40 @@ final class SessionCard: NSView {
         #selector(DFSessionBar.removeSessionAndWorktreeFromMenu(_:)))
     }
     return menu
+  }
+
+  /// The "Tag" submenu: one-click emojis that toggle (checked when on the
+  /// session), the system picker, and Clear Tags once there is a tag.
+  private func makeTagMenuItem() -> NSMenuItem {
+    let submenu = NSMenu()
+    // Enabled state is set by hand: at the tag cap only removals stay live.
+    submenu.autoenablesItems = false
+    let tags = session.tags
+    let atCap = tags.count >= SessionTags.maxTags
+    func add(_ title: String, _ action: Selector, emoji: String? = nil) -> NSMenuItem {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = bar
+      item.representedObject = SessionCardMenuPayload(
+        session: session, prURL: prURL, emoji: emoji)
+      submenu.addItem(item)
+      return item
+    }
+    for emoji in SessionTags.menuEmojis(tags: tags, recents: AppSettings.recentTagEmojis) {
+      let item = add(emoji, #selector(DFSessionBar.toggleTagFromMenu(_:)), emoji: emoji)
+      let isOn = tags.contains(emoji)
+      item.state = isOn ? .on : .off
+      item.isEnabled = isOn || !atCap
+    }
+    submenu.addItem(NSMenuItem.separator())
+    let choose = add("Choose Emoji…", #selector(DFSessionBar.chooseTagEmojiFromMenu(_:)))
+    choose.isEnabled = !atCap
+    if atCap { choose.toolTip = "A session can have up to \(SessionTags.maxTags) tags" }
+    if !tags.isEmpty {
+      _ = add("Clear Tags", #selector(DFSessionBar.clearTagsFromMenu(_:)))
+    }
+    let parent = NSMenuItem(title: "Tag", action: nil, keyEquivalent: "")
+    parent.submenu = submenu
+    return parent
   }
 
   @objc private func doubleClicked() {
@@ -1271,6 +1417,18 @@ final class SessionCard: NSView {
     nameLabel.maximumNumberOfLines = 1
     nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     nameLabel.translatesAutoresizingMaskIntoConstraints = false
+
+    // Emoji tags, right after the name. The name truncates to make room.
+    let tagsLabel: NSTextField? = {
+      guard !session.tags.isEmpty else { return nil }
+      let label = NSTextField(labelWithString: session.tags.joined())
+      label.font = NSFont.systemFont(ofSize: 12)
+      label.maximumNumberOfLines = 1
+      label.setContentCompressionResistancePriority(.required, for: .horizontal)
+      label.setAccessibilityLabel("Tags: " + session.tags.joined(separator: " "))
+      label.translatesAutoresizingMaskIntoConstraints = false
+      return label
+    }()
 
     // Status dot + label. Color, pulse, and shadow come from
     // `applyStateStyling()`.
@@ -1334,6 +1492,7 @@ final class SessionCard: NSView {
     if let cl = contextLabel { addSubview(cl) }
     if let rl = repoLabel { addSubview(rl) }
     if let badge = numberBadge { addSubview(badge) }
+    if let tl = tagsLabel { addSubview(tl) }
 
     // PR status pill (only if gh reports a PR for this worktree).
     let prStatus = PRMonitor.shared.status(for: session.id)
@@ -1365,7 +1524,8 @@ final class SessionCard: NSView {
 
       nameLabel.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 8),
       nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-      nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: costLabel.leadingAnchor, constant: -8),
+      (tagsLabel ?? costLabel).leadingAnchor.constraint(
+        greaterThanOrEqualTo: nameLabel.trailingAnchor, constant: tagsLabel == nil ? 8 : 4),
 
       costLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
       costLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
@@ -1381,6 +1541,16 @@ final class SessionCard: NSView {
       modelLabel.leadingAnchor.constraint(equalTo: statusLabel.trailingAnchor, constant: 8),
       modelLabel.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
     ]
+    if let tl = tagsLabel {
+      // Hug the name, but stay clear of the cost figure.
+      let hug = tl.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 4)
+      hug.priority = .defaultHigh
+      constraints.append(contentsOf: [
+        hug,
+        tl.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+        tl.trailingAnchor.constraint(lessThanOrEqualTo: costLabel.leadingAnchor, constant: -8),
+      ])
+    }
     if let cl = contextLabel {
       constraints.append(contentsOf: [
         cl.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 8),

@@ -14,6 +14,14 @@ enum AppSettings {
   private static let watchdogKeyPrefix = "DFWatchdogEnabled."
   private static let claudeHooksEnabledKey = "DFClaudeHooksEnabled"
   private static let claudeHooksPromptedKey = "DFClaudeHooksPrompted"
+  private static let recentTagEmojisKey = "DFRecentTagEmojis"
+
+  /// Emojis recently used to tag sessions, newest first. Offered at the top
+  /// of the session card's Tag menu.
+  static var recentTagEmojis: [String] {
+    get { defaults.stringArray(forKey: recentTagEmojisKey) ?? [] }
+    set { defaults.set(newValue, forKey: recentTagEmojisKey) }
+  }
 
   /// Whether DraftFrame keeps its Claude Code hook entries installed in
   /// `~/.claude/settings.json` (see `ClaudeHooks`). Off until the user opts

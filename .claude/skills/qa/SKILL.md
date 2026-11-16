@@ -42,6 +42,10 @@ normal launches, and QA mode never writes to the user's persisted state
    - `dfqa menu "View>Toggle Dashboard"` — invoke any menu item by title path
      (fires async, so items that open modals won't hang the bridge). The app
      menu has no title: use `dfqa raw '{"cmd":"menu","path":["","Settings…"]}'`.
+   - `dfqa tag --emoji 🔥 [--index N]` / `dfqa clear-tags [--index N]` — toggle
+     or clear a session's emoji tags (the card menu's Tag submenu);
+     `dfqa tag-picker` opens the "Choose Emoji…" popover. `sessions` lists
+     each session's `tags`.
    - `dfqa hooks-status` / `dfqa hook-event --name Stop [--index N] ...` —
      Claude Code hook health, and injection of a synthetic hook event for a
      tab (state binding without touching the real `~/.claude/settings.json`).

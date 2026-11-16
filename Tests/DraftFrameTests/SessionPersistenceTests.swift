@@ -129,6 +129,49 @@ final class SessionPersistenceTests: XCTestCase {
     XCTAssertEqual(decoded.activeSessionIndex, 0)
   }
 
+  func testRoundTripsTags() throws {
+    let file = SessionPersistence.SessionsFile(
+      projectDir: "/p",
+      sessions: [
+        SessionPersistence.SavedSession(
+          name: "tagged", worktreePath: nil, agent: "claude", agentSessionId: "abc",
+          tags: ["🔥", "👀"]),
+        SessionPersistence.SavedSession(
+          name: "plain", worktreePath: nil, agent: "claude", agentSessionId: nil),
+      ],
+      activeSessionIndex: 0)
+    let data = try JSONEncoder().encode(file)
+    let decoded = try JSONDecoder().decode(SessionPersistence.SessionsFile.self, from: data)
+    XCTAssertEqual(decoded.sessions[0].tags, ["🔥", "👀"])
+    XCTAssertNil(decoded.sessions[1].tags)
+  }
+
+  func testFileWithoutTagsDecodesToNoTags() throws {
+    let json = """
+      {
+        "projectDir": "/p",
+        "sessions": [
+          {"name": "main", "worktreePath": null, "agent": "claude", "agentSessionId": "x"}
+        ]
+      }
+      """
+    let file = try JSONDecoder().decode(
+      SessionPersistence.SessionsFile.self, from: Data(json.utf8))
+    XCTAssertNil(file.sessions[0].tags)
+    XCTAssertEqual(SessionTags.sanitized(file.sessions[0].tags ?? []), [])
+  }
+
+  func testDedupingResumeIdsKeepsTags() {
+    let sessions = [
+      SessionPersistence.SavedSession(
+        name: "a", worktreePath: "/p", agent: "claude", agentSessionId: "id-1", tags: ["🔥"]),
+      SessionPersistence.SavedSession(
+        name: "b", worktreePath: "/p", agent: "claude", agentSessionId: "id-1", tags: ["🧪"]),
+    ]
+    let deduped = SessionPersistence.dedupingResumeIds(sessions)
+    XCTAssertEqual(deduped.map { $0.tags }, [["🔥"], ["🧪"]])
+  }
+
   func testTranscriptExistsIsFalseForUnknownDirectory() {
     XCTAssertFalse(
       SessionJSONLWatcher.transcriptExists(

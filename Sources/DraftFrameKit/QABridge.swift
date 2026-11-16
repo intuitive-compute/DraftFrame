@@ -329,6 +329,38 @@ import SwiftTerm
         SessionManager.shared.deleteGroup(id: group.id)
         return ["ok": true, "groups": groupList(), "sessions": sessionList()]
 
+      case "tag":
+        // Same toggle as the card menu's Tag items: adds the emoji, or
+        // removes it when the session already carries it.
+        guard let session = resolveSession(params) else {
+          return ["ok": false, "error": "no such session"]
+        }
+        guard let emoji = params["emoji"] as? String else {
+          return ["ok": false, "error": "tag requires \"emoji\""]
+        }
+        guard SessionManager.shared.toggleTag(emoji, sessionID: session.id) else {
+          return [
+            "ok": false,
+            "error": "not a single emoji, or session already has \(SessionTags.maxTags) tags",
+          ]
+        }
+        return ["ok": true, "tags": session.tags]
+
+      case "clear-tags":
+        guard let session = resolveSession(params) else {
+          return ["ok": false, "error": "no such session"]
+        }
+        SessionManager.shared.clearTags(sessionID: session.id)
+        return ["ok": true, "tags": session.tags]
+
+      case "tag-picker":
+        // Opens the same popover as the card menu's "Choose Emoji…".
+        guard let session = resolveSession(params) else {
+          return ["ok": false, "error": "no such session"]
+        }
+        appDelegate?.windowController?.sessionBar.presentTagPicker(for: session)
+        return ["ok": true]
+
       case "dashboard-mode":
         guard let name = params["mode"] as? String else {
           return ["ok": false, "error": "dashboard-mode requires \"mode\" (grid|summary|graph)"]
@@ -483,6 +515,7 @@ import SwiftTerm
           "agentSessionId": s.agentSessionId ?? NSNull(),
           "hookDriven": s.isHookDriven,
           "group": s.groupID.flatMap { mgr.group(withID: $0)?.name } ?? NSNull(),
+          "tags": s.tags,
           "active": i == mgr.activeSessionIndex,
         ]
       }
