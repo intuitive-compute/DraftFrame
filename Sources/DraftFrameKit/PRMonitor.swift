@@ -55,6 +55,46 @@ enum PRRollup: String {
   }
 }
 
+/// Human review outcome for a PR. Only the two outcomes worth surfacing are
+/// modelled; "no reviews", "review required", and comment-only reviews are
+/// all `nil` on `PRStatus.review`.
+enum PRReview: String {
+  case approved
+  case changesRequested
+
+  var color: NSColor {
+    switch self {
+    case .approved: return Theme.green
+    case .changesRequested: return Theme.red
+    }
+  }
+
+  /// Distinct per state so the two never rely on red versus green alone.
+  var glyph: String {
+    switch self {
+    case .approved: return "\u{2713}"
+    case .changesRequested: return "\u{2717}"
+    }
+  }
+
+  var label: String {
+    switch self {
+    case .approved: return "approved"
+    case .changesRequested: return "changes requested"
+    }
+  }
+
+  /// Glyph plus label, e.g. "✓ approved".
+  var displayText: String { "\(glyph) \(label)" }
+
+  var tooltip: String {
+    switch self {
+    case .approved: return "Approved by a reviewer"
+    case .changesRequested: return "A reviewer requested changes"
+    }
+  }
+}
+
 struct PRStatus {
   let number: Int
   let state: PRState
@@ -64,6 +104,9 @@ struct PRStatus {
   /// True when GitHub has an auto-merge request armed for the PR (the
   /// "Queued to merge..." banner). Reported via `autoMergeRequest`.
   var autoMergeQueued: Bool = false
+  /// Review outcome, or nil when there is nothing to show (no decisive
+  /// review, or the PR is merged/closed). Independent of `rollup`.
+  var review: PRReview? = nil
 
   var passingCount: Int {
     checks.filter { $0.conclusion == .success }.count
@@ -98,6 +141,7 @@ struct PRStatus {
     number == other.number && state == other.state
       && checks == other.checks && rollup == other.rollup
       && autoMergeQueued == other.autoMergeQueued
+      && review == other.review
   }
 }
 
@@ -269,7 +313,7 @@ final class PRMonitor {
     }
 
     let output = Self.runGH(
-      args: ["pr", "view", "--json", "number,state,url,statusCheckRollup,autoMergeRequest"],
+      args: ["pr", "view", "--json", Self.prViewFields],
       cwd: worktreePath
     )
     guard let data = output.data(using: .utf8),
@@ -298,10 +342,16 @@ final class PRMonitor {
     // `autoMergeRequest` is a JSON object when auto-merge is armed and
     // `null` otherwise (which JSONSerialization surfaces as NSNull).
     let autoMergeQueued = obj["autoMergeRequest"] is [String: Any]
+    let review = Self.deriveReview(
+      state: state,
+      reviewDecision: obj["reviewDecision"] as? String,
+      latestReviews: obj["latestReviews"] as? [[String: Any]] ?? []
+    )
     let status = PRStatus(
       number: number, state: state, url: url,
       checks: checks, rollup: rollup,
-      autoMergeQueued: autoMergeQueued
+      autoMergeQueued: autoMergeQueued,
+      review: review
     )
 
     DispatchQueue.main.async { [weak self] in
@@ -309,6 +359,35 @@ final class PRMonitor {
         self?.updateStatus(sessionID: sessionID, worktreePath: worktreePath, newStatus: status)
       }
     }
+  }
+
+  /// Fields requested from `gh pr view --json`.
+  nonisolated static let prViewFields =
+    "number,state,url,statusCheckRollup,autoMergeRequest,reviewDecision,latestReviews"
+
+  /// Derives the review outcome to show for a PR, or nil for "show nothing".
+  ///
+  /// `reviewDecision` is GitHub's own verdict and wins whenever it is set:
+  /// `REVIEW_REQUIRED` means the required approval is still outstanding, so
+  /// it yields nil even if some reviewer has approved. GitHub leaves the
+  /// field empty on some repositories without a required-review rule; only
+  /// then do we fall back to `latestReviews` (one entry per reviewer), where
+  /// any change request outranks any approval and `COMMENTED`, `DISMISSED`,
+  /// and `PENDING` entries are ignored.
+  nonisolated static func deriveReview(
+    state: PRState, reviewDecision: String?, latestReviews: [[String: Any]]
+  ) -> PRReview? {
+    guard state == .open else { return nil }
+    switch reviewDecision?.uppercased() ?? "" {
+    case "APPROVED": return .approved
+    case "CHANGES_REQUESTED": return .changesRequested
+    case "": break
+    default: return nil
+    }
+    let states = Set(latestReviews.compactMap { ($0["state"] as? String)?.uppercased() })
+    if states.contains("CHANGES_REQUESTED") { return .changesRequested }
+    if states.contains("APPROVED") { return .approved }
+    return nil
   }
 
   /// Reduces a raw `statusCheckRollup` array to one entry per check.

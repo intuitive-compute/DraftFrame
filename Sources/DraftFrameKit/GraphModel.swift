@@ -33,6 +33,9 @@ struct GraphNode: Equatable, Identifiable {
   let detail: String
   /// Status color: session state, PR rollup, or agent status.
   let accent: NSColor
+  /// Color for the detail line when it reports something other than the
+  /// accent's status (a PR's review outcome); nil draws it in `accent`.
+  let detailColor: NSColor?
   /// Set on session nodes so a click can jump to the terminal.
   let sessionID: UUID?
   /// Set on agent nodes so a click can open the transcript.
@@ -44,8 +47,8 @@ struct GraphNode: Equatable, Identifiable {
 
   init(
     id: String, kind: GraphNodeKind, title: String, subtitle: String = "", detail: String = "",
-    accent: NSColor = Theme.text3, sessionID: UUID? = nil, filePath: String? = nil,
-    isMuted: Bool = false, isActive: Bool = false
+    accent: NSColor = Theme.text3, detailColor: NSColor? = nil, sessionID: UUID? = nil,
+    filePath: String? = nil, isMuted: Bool = false, isActive: Bool = false
   ) {
     self.id = id
     self.kind = kind
@@ -53,6 +56,7 @@ struct GraphNode: Equatable, Identifiable {
     self.subtitle = subtitle
     self.detail = detail
     self.accent = accent
+    self.detailColor = detailColor
     self.sessionID = sessionID
     self.filePath = filePath
     self.isMuted = isMuted
@@ -101,6 +105,8 @@ struct GraphPRInput {
   let text: String
   let color: NSColor
   let isOpen: Bool
+  /// Review outcome shown on the PR node's detail line; nil shows nothing.
+  var review: PRReview? = nil
 }
 
 // MARK: - Builder
@@ -140,7 +146,8 @@ enum GraphModelBuilder {
       model.nodes.append(
         GraphNode(
           id: prID, kind: .pullRequest, title: "PR #\(pr.number)", subtitle: pr.text,
-          accent: pr.color, isMuted: !pr.isOpen))
+          detail: pr.review?.displayText ?? "", accent: pr.color,
+          detailColor: pr.review?.color, isMuted: !pr.isOpen))
       model.edges.append(GraphEdge(from: rootID, to: prID, style: .solid))
     }
 
@@ -221,7 +228,7 @@ enum GraphModelBuilder {
     let pr = PRMonitor.shared.status(for: session.id).map {
       GraphPRInput(
         number: $0.number, text: $0.displayText, color: $0.displayColor,
-        isOpen: $0.state == .open)
+        isOpen: $0.state == .open, review: $0.review)
     }
     let root = GraphSessionInput(
       id: session.id, displayName: session.displayName, branch: session.name,

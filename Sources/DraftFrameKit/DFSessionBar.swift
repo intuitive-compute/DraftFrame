@@ -1215,6 +1215,7 @@ final class SessionCard: NSView {
   private var glowLayer: CALayer?
   private var mouseDownPoint: NSPoint?
   private var prPill: NSTextField?
+  private var prReviewLabel: NSTextField?
   private var prURL: URL?
 
   // Views `refreshDynamic()` updates in place. Everything else on the card
@@ -1286,8 +1287,9 @@ final class SessionCard: NSView {
   @objc private func clicked(_ recognizer: NSClickGestureRecognizer) {
     // The card-level click gesture consumes the mouseUp before the pill's own
     // handlers can see it, so pill clicks have to be routed from here.
-    if let pill = prPill, let url = prURL,
-      pill.frame.contains(recognizer.location(in: self))
+    let point = recognizer.location(in: self)
+    if let url = prURL,
+      [prPill, prReviewLabel].contains(where: { $0?.frame.contains(point) ?? false })
     {
       NSWorkspace.shared.open(url)
       return
@@ -1504,6 +1506,15 @@ final class SessionCard: NSView {
       self.prURL = URL(string: status.url)
       return label
     }
+    // Review outcome, as its own label so the pill's text and click target
+    // are unchanged. Absent unless a reviewer approved or requested changes.
+    let reviewLabel: NSTextField? = prStatus?.review.map { review in
+      let label = makePRReviewLabel(review: review)
+      label.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(label)
+      self.prReviewLabel = label
+      return label
+    }
 
     // The compact card grows to 64pt when a repo label is present: at 56pt
     // the label would butt against the status/PR row.
@@ -1579,6 +1590,12 @@ final class SessionCard: NSView {
         pill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
         pill.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
       ])
+      if let rl = reviewLabel {
+        constraints.append(contentsOf: [
+          rl.trailingAnchor.constraint(equalTo: pill.leadingAnchor, constant: -6),
+          rl.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+        ])
+      }
     }
     if let badge = numberBadge {
       constraints.append(contentsOf: [
@@ -1687,6 +1704,17 @@ final class SessionCard: NSView {
     field.font = Theme.mono(9, weight: .medium)
     field.textColor = status.displayColor
     field.toolTip = status.url
+    return field
+  }
+
+  /// Glyph-only on the card, where the status row is already tight; the
+  /// tooltip names the state in full.
+  private func makePRReviewLabel(review: PRReview) -> NSTextField {
+    let field = PRLinkPill(labelWithString: review.glyph)
+    field.font = Theme.mono(10, weight: .bold)
+    field.textColor = review.color
+    field.toolTip = review.tooltip
+    field.setAccessibilityLabel(review.tooltip)
     return field
   }
 
