@@ -172,7 +172,8 @@ final class DFGraphCanvas: NSView {
       font: Theme.mono(9), color: Theme.text2.withAlphaComponent(alpha), maxWidth: textWidth)
     draw(
       node.detail, at: CGPoint(x: textX, y: r.minY + 53),
-      font: Theme.mono(9, weight: .medium), color: node.accent.withAlphaComponent(alpha),
+      font: Theme.mono(9, weight: .medium),
+      color: (node.detailColor ?? node.accent).withAlphaComponent(alpha),
       maxWidth: textWidth)
   }
 

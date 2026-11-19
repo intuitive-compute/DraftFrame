@@ -430,9 +430,9 @@ final class DashboardCard: NSView {
     addSubview(restartBtn)
 
     // PR / CI section — only shown for sessions with a worktree.
-    let prHeader = NSTextField(labelWithString: prSectionHeader())
-    prHeader.font = Theme.mono(10, weight: .medium)
-    prHeader.textColor = prHeaderColor()
+    let prHeader = NSTextField(labelWithAttributedString: prSectionHeaderAttributed())
+    prHeader.lineBreakMode = .byTruncatingTail
+    prHeader.toolTip = PRMonitor.shared.status(for: session.id)?.review?.tooltip
     prHeader.translatesAutoresizingMaskIntoConstraints = false
     addSubview(prHeader)
 
@@ -531,6 +531,25 @@ final class DashboardCard: NSView {
       return "\(status.displayText) · no checks"
     }
     return "\(status.displayText) · \(status.passingCount)/\(status.checks.count)"
+  }
+
+  /// The PR line in its CI color, followed by the review outcome (when a
+  /// reviewer approved or requested changes) in its own color.
+  private func prSectionHeaderAttributed() -> NSAttributedString {
+    let font = Theme.mono(10, weight: .medium)
+    let text = NSMutableAttributedString(
+      string: prSectionHeader(),
+      attributes: [.font: font, .foregroundColor: prHeaderColor()])
+    if let review = PRMonitor.shared.status(for: session.id)?.review {
+      text.append(
+        NSAttributedString(
+          string: " · ", attributes: [.font: font, .foregroundColor: Theme.text3]))
+      text.append(
+        NSAttributedString(
+          string: review.displayText,
+          attributes: [.font: font, .foregroundColor: review.color]))
+    }
+    return text
   }
 
   private func prHeaderColor() -> NSColor {
