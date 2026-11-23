@@ -184,6 +184,11 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     return win.convertToScreen(convert(visibleRect, to: nil))
   }
 
+  /// Called when the user puts text into the terminal: typing, dictation,
+  /// paste, a dropped file, or a quoted reply. Not called for control keys
+  /// (Enter, Esc, arrows) or for text the app writes itself.
+  var onUserInput: (() -> Void)?
+
   private var markedCompositionLength: Int = 0
 
   private static func extractString(_ any: Any?) -> String {
@@ -221,6 +226,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     sendBackspaces(markedCompositionLength)
     if !newText.isEmpty {
       send(txt: newText)
+      onUserInput?()
     }
     markedCompositionLength = newText.count
 
@@ -243,6 +249,7 @@ class ClaudeTerminalView: LocalProcessTerminalView {
     }
     sendBackspaces(markedCompositionLength)
     markedCompositionLength = 0
+    if !newText.isEmpty { onUserInput?() }
     super.insertText(string, replacementRange: replacementRange)
   }
 
@@ -1193,13 +1200,20 @@ class ClaudeTerminalView: LocalProcessTerminalView {
   /// per line interleaved with LF keystrokes intermittently lost the first
   /// line. Tabs become spaces because a typed Tab triggers completion.
   private func sendAsTypedLines(_ text: String) {
+    onUserInput?()
     send(txt: text.replacingOccurrences(of: "\t", with: "    "))
+  }
+
+  override func paste(_ sender: Any) {
+    onUserInput?()
+    super.paste(sender)
   }
 
   /// Send `text` to the child process as one pasted block: wrapped in
   /// bracketed-paste markers when the program asked for them, so newlines in
   /// it are not read as Enter. Falls back to plain input otherwise.
   func sendAsPaste(_ text: String) {
+    onUserInput?()
     guard terminal.bracketedPasteMode else {
       send(txt: text)
       return
