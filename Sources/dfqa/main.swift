@@ -128,6 +128,8 @@ let usage = """
     tag --emoji E [--index N]   (toggle: adds the emoji, or removes it if present)
     clear-tags [--index N] | tag-picker [--index N]
     find [--text STR] [--direction next|previous] [--window main|quick] [--close]
+    pr-config [--index N] [--autoFix on|off] [--autoMerge on|off] [--autoArchive on|off]
+              (no flags = show; always polls the PR right away)
     hooks-status
     hook-event --name EVENT [--index N] [--sessionId ID] [--transcriptPath P]
                [--notificationType T] [--source S] [--reason R] [--ppid PID]
@@ -147,7 +149,7 @@ case "ping", "sessions", "state", "quit", "groups", "new-group-dialog", "hooks-s
 case "new-session", "select", "close-session", "send", "read", "select-all", "reply",
   "open-project",
   "new-group", "group-preset", "move-to-group", "toggle-group", "delete-group", "move-group",
-  "tag", "clear-tags", "tag-picker", "find", "hook-event":
+  "tag", "clear-tags", "tag-picker", "find", "hook-event", "pr-config":
   let (opts, _) = parseOptions(rest, flags: ["enter", "close"])
   request = opts
   request["cmd"] = command

@@ -107,6 +107,9 @@ struct PRStatus {
   /// Review outcome, or nil when there is nothing to show (no decisive
   /// review, or the PR is merged/closed). Independent of `rollup`.
   var review: PRReview? = nil
+  /// The PR's head commit SHA. Auto-fix keys on it so a rerun that fails
+  /// again on the same commit is not treated as a new failure.
+  var headCommit: String? = nil
 
   var passingCount: Int {
     checks.filter { $0.conclusion == .success }.count
@@ -171,12 +174,23 @@ final class PRMonitor {
 
   private static let configDir = NSHomeDirectory() + "/.config/draftframe"
   private static let configPath = configDir + "/pr-monitor.json"
+  private static let autoFixFiredPath = configDir + "/pr-autofix.json"
 
   /// Live status per session, updated on each poll.
   private var statusBySession: [UUID: PRStatus] = [:]
 
-  /// Throttle for auto-fix so we don't spam Claude on flapping checks.
-  private var lastFailureFiredAt: [UUID: Date] = [:]
+  /// Head commit auto-fix last sent a prompt for, keyed by worktree path.
+  /// Persisted, so relaunching the app does not prompt again for a commit
+  /// that already had its prompt.
+  private var autoFixFiredCommit: [String: String] = [:]
+
+  /// Sessions with an auto-fix prompt waiting for the session to be ready.
+  /// At most one per session; sent on the next transition to `.userInput`
+  /// if the checks are still failing by then.
+  private var autoFixPending: Set<UUID> = []
+
+  /// Sessions whose auto-fix prompt has been written and is being confirmed.
+  private var autoFixSubmitting: Set<UUID> = []
 
   /// Tracks sessions where auto-merge has already been requested.
   /// Cleared if the PR's check rollup drops back out of `passing`.
@@ -207,11 +221,16 @@ final class PRMonitor {
 
   private init() {
     loadConfig()
+    loadAutoFixFired()
     // Timers track session membership and worktree paths, both of which
     // only move on list changes — state/usage ticks are irrelevant here.
     NotificationCenter.default.addObserver(
       self, selector: #selector(sessionsChanged),
       name: .sessionListDidChange, object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(sessionStateChanged(_:)),
+      name: .sessionStateDidChange, object: nil
     )
   }
 
@@ -222,6 +241,11 @@ final class PRMonitor {
 
   func status(for sessionID: UUID) -> PRStatus? {
     statusBySession[sessionID]
+  }
+
+  /// True while an auto-fix prompt is waiting for the session to be ready.
+  func hasPendingAutoFix(sessionID: UUID) -> Bool {
+    autoFixPending.contains(sessionID)
   }
 
   /// Explicit per-worktree config if the user has toggled anything for this
@@ -235,6 +259,16 @@ final class PRMonitor {
     configByWorktree[worktreePath] = config
     saveConfig()
     NotificationCenter.default.post(name: .prStatusDidChange, object: nil)
+    // Turning auto-fix off cancels a waiting prompt right away rather than
+    // at the next poll. Turning it on waits for that poll: the cached status
+    // can be up to a poll interval old, too stale to send a prompt on.
+    guard !config.autoFix else { return }
+    for session in SessionManager.shared.sessions
+    where Self.effectivePath(for: session) == worktreePath {
+      evaluateAutoFix(
+        sessionID: session.id, worktreePath: worktreePath,
+        previousRollup: statusBySession[session.id]?.rollup)
+    }
   }
 
   /// Force an immediate poll for a session. Used after the user toggles a
@@ -284,9 +318,20 @@ final class PRMonitor {
       timers.removeValue(forKey: id)
       timerPaths.removeValue(forKey: id)
       statusBySession.removeValue(forKey: id)
-      lastFailureFiredAt.removeValue(forKey: id)
+      autoFixPending.remove(id)
+      autoFixSubmitting.remove(id)
       mergedAttempted.remove(id)
     }
+  }
+
+  /// A session with a waiting auto-fix prompt reached its input prompt.
+  /// Poll first instead of sending on the cached status: the turn that just
+  /// ended may well have pushed a fix.
+  @objc private func sessionStateChanged(_ note: Notification) {
+    guard let change = SessionEvents.stateChange(note), change.new == .userInput,
+      autoFixPending.contains(change.id)
+    else { return }
+    refreshNow(sessionID: change.id)
   }
 
   // MARK: - Timer
@@ -351,7 +396,8 @@ final class PRMonitor {
       number: number, state: state, url: url,
       checks: checks, rollup: rollup,
       autoMergeQueued: autoMergeQueued,
-      review: review
+      review: review,
+      headCommit: obj["headRefOid"] as? String
     )
 
     DispatchQueue.main.async { [weak self] in
@@ -363,7 +409,7 @@ final class PRMonitor {
 
   /// Fields requested from `gh pr view --json`.
   nonisolated static let prViewFields =
-    "number,state,url,statusCheckRollup,autoMergeRequest,reviewDecision,latestReviews"
+    "number,state,url,statusCheckRollup,autoMergeRequest,reviewDecision,latestReviews,headRefOid"
 
   /// Derives the review outcome to show for a PR, or nil for "show nothing".
   ///
@@ -476,6 +522,7 @@ final class PRMonitor {
   private func clearStatus(sessionID: UUID) {
     guard statusBySession[sessionID] != nil else { return }
     statusBySession.removeValue(forKey: sessionID)
+    autoFixPending.remove(sessionID)
     NotificationCenter.default.post(name: .prStatusDidChange, object: nil)
   }
 
@@ -509,19 +556,12 @@ final class PRMonitor {
       return
     }
 
-    guard newStatus.state == .open else { return }
+    // Before the open-PR guard so a waiting prompt is dropped when the PR
+    // is merged or closed.
+    evaluateAutoFix(
+      sessionID: sessionID, worktreePath: worktreePath, previousRollup: previousRollup)
 
-    // Auto-fix: rollup transitioned into .failing.
-    if config.autoFix && newStatus.rollup == .failing && previousRollup != .failing {
-      let now = Date()
-      let last = lastFailureFiredAt[sessionID] ?? .distantPast
-      // Throttle to at most once per 10 minutes so flapping checks don't
-      // spam the session.
-      if now.timeIntervalSince(last) > 600 {
-        fireAutoFix(sessionID: sessionID, status: newStatus)
-        lastFailureFiredAt[sessionID] = now
-      }
-    }
+    guard newStatus.state == .open else { return }
 
     // Auto-merge: rollup is passing and we haven't already requested merge.
     if config.autoMerge && newStatus.rollup == .passing
@@ -532,23 +572,109 @@ final class PRMonitor {
     }
   }
 
-  private func fireAutoFix(sessionID: UUID, status: PRStatus) {
-    guard let session = SessionManager.shared.sessions.first(where: { $0.id == sessionID })
-    else { return }
+  // MARK: - Auto-fix
+
+  /// Run the auto-fix rules for a session against its latest status and act
+  /// on the result. Called after every poll and when the config changes.
+  private func evaluateAutoFix(sessionID: UUID, worktreePath: String, previousRollup: PRRollup?) {
+    guard let session = SessionManager.shared.sessions.first(where: { $0.id == sessionID }),
+      let status = statusBySession[sessionID]
+    else {
+      autoFixPending.remove(sessionID)
+      return
+    }
+    let config = configByWorktree[worktreePath] ?? AppSettings.defaultPRConfig
+    let decision = AutoFixPolicy.decide(
+      AutoFixInput(
+        enabled: config.autoFix,
+        prOpen: status.state == .open,
+        previousRollup: previousRollup,
+        rollup: status.rollup,
+        headCommit: status.headCommit,
+        lastFiredCommit: autoFixFiredCommit[worktreePath],
+        hasPending: autoFixPending.contains(sessionID),
+        // A prompt still being confirmed counts as busy, so a second one
+        // is never typed in behind it.
+        readiness: autoFixSubmitting.contains(sessionID) ? .busy : session.promptReadiness
+      ))
+
+    switch decision {
+    case .none:
+      break
+    case .cancel:
+      autoFixPending.remove(sessionID)
+      NSLog("[PRMonitor] auto-fix: dropped waiting prompt for %@", session.name)
+    case .queue(let reason):
+      autoFixPending.insert(sessionID)
+      NotificationManager.shared.sendWatchdogNotification(
+        title: "PR #\(status.number) checks failing",
+        body: Self.autoFixWaitingMessage(reason, sessionName: session.name)
+      )
+    case .send:
+      autoFixPending.remove(sessionID)
+      sendAutoFix(session: session, worktreePath: worktreePath, status: status)
+    }
+  }
+
+  nonisolated static func autoFixWaitingMessage(
+    _ reason: PromptReadiness, sessionName: String
+  ) -> String {
+    switch reason {
+    case .draftInInput:
+      return "Auto-fix is waiting on \(sessionName): its input box has unsent text"
+    case .notRunning:
+      return "Auto-fix is waiting on \(sessionName): the agent is not at its prompt yet"
+    case .busy, .ready:
+      return "Auto-fix will start when \(sessionName) is next waiting for input"
+    }
+  }
+
+  nonisolated static func autoFixPrompt(for status: PRStatus) -> String {
     let failed =
       status.checks
       .filter { $0.conclusion.map { PRConclusion.failing.contains($0) } ?? false }
       .map { $0.name }
     let list = failed.isEmpty ? "the CI checks" : failed.joined(separator: ", ")
-    let prompt =
-      "CI is failing on PR #\(status.number) (\(list)). "
+    return "CI is failing on PR #\(status.number) (\(list)). "
       + "Please investigate via `gh pr checks \(status.number)` "
-      + "(or `gh run view --log-failed`) and fix the issue.\r"
-    session.terminalView?.send(txt: prompt)
-    NotificationManager.shared.sendWatchdogNotification(
-      title: "PR #\(status.number) checks failing",
-      body: "Auto-fix triggered on \(session.name)"
-    )
+      + "(or `gh run view --log-failed`) and fix the issue."
+  }
+
+  private func sendAutoFix(session: Session, worktreePath: String, status: PRStatus) {
+    // Recorded on the attempt, not on success: a prompt that could not be
+    // sent must not be retyped on every poll.
+    if let head = status.headCommit {
+      autoFixFiredCommit[worktreePath] = head
+      saveAutoFixFired()
+    }
+    let title = "PR #\(status.number) checks failing"
+    let name = session.name
+    guard let tv = session.terminalView else {
+      NotificationManager.shared.sendWatchdogNotification(
+        title: title, body: "Auto-fix could not be sent: \(name) has no terminal")
+      return
+    }
+    let sessionID = session.id
+    autoFixSubmitting.insert(sessionID)
+    PromptSubmitter.submit(
+      Self.autoFixPrompt(for: status), sessionID: sessionID,
+      write: { [weak tv] in tv?.send(txt: $0) },
+      completion: { [weak self, weak session] outcome in
+        self?.autoFixSubmitting.remove(sessionID)
+        switch outcome {
+        case .started:
+          NotificationManager.shared.sendWatchdogNotification(
+            title: title, body: "Auto-fix started on \(name)")
+        case .notStarted:
+          // The prompt is presumably still in the input box; treat it like a
+          // user draft so nothing else is typed in after it.
+          session?.hasUnsentDraft = true
+          NotificationManager.shared.sendWatchdogNotification(
+            title: title,
+            body: "Auto-fix could not be sent: \(name) did not start a turn. "
+              + "The prompt may still be in its input box")
+        }
+      })
   }
 
   private func fireAutoMerge(sessionID: UUID, worktreePath: String, status: PRStatus) {
@@ -649,6 +775,8 @@ final class PRMonitor {
   // MARK: - Config persistence
 
   private func saveConfig() {
+    // QA runs toggle these on scratch worktrees; keep them out of the user's file.
+    guard !QABridge.isQAMode else { return }
     let fm = FileManager.default
     try? fm.createDirectory(atPath: Self.configDir, withIntermediateDirectories: true)
     let encoder = JSONEncoder()
@@ -656,6 +784,27 @@ final class PRMonitor {
     if let data = try? encoder.encode(configByWorktree) {
       fm.createFile(atPath: Self.configPath, contents: data)
     }
+  }
+
+  private func saveAutoFixFired() {
+    // QA runs use scratch worktrees; keep them out of the user's file.
+    guard !QABridge.isQAMode else { return }
+    let fm = FileManager.default
+    try? fm.createDirectory(atPath: Self.configDir, withIntermediateDirectories: true)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    if let data = try? encoder.encode(autoFixFiredCommit) {
+      fm.createFile(atPath: Self.autoFixFiredPath, contents: data)
+    }
+  }
+
+  private func loadAutoFixFired() {
+    guard !QABridge.isQAMode,
+      let data = FileManager.default.contents(atPath: Self.autoFixFiredPath),
+      let loaded = try? JSONDecoder().decode([String: String].self, from: data)
+    else { return }
+    // Worktrees that no longer exist can never fail again; let them go.
+    autoFixFiredCommit = loaded.filter { FileManager.default.fileExists(atPath: $0.key) }
   }
 
   private func loadConfig() {

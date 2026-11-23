@@ -139,6 +139,14 @@ import SwiftTerm
         out = Data(
           #"{"ok":false,"error":"invalid request: expected JSON with a \"cmd\" field"}"#.utf8)
       }
+      // `send --enter` writes Enter a moment after the text. Hold the reply
+      // (and with it the next command) until that Enter is out, so
+      // back-to-back sends cannot interleave.
+      if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        obj["cmd"] as? String == "send", obj["enter"] as? Bool == true
+      {
+        Thread.sleep(forTimeInterval: PromptSubmitter.Timing().enterDelay + 0.1)
+      }
       out.append(0x0A)
       out.withUnsafeBytes { raw in
         var sent = 0
@@ -206,8 +214,13 @@ import SwiftTerm
         guard let tv = session.terminalView else {
           return ["ok": false, "error": "session has no terminal view"]
         }
-        let enter = params["enter"] as? Bool ?? false
-        tv.send(txt: enter ? text + "\r" : text)
+        // Enter goes out as its own write, as a typed submission does; an
+        // agent TUI reads "text\r" in one burst as a paste with a line break.
+        if params["enter"] as? Bool ?? false {
+          PromptSubmitter.typeThenEnter(text, write: { [weak tv] in tv?.send(txt: $0) })
+        } else {
+          tv.send(txt: text)
+        }
         return ["ok": true]
 
       case "read":
@@ -453,6 +466,39 @@ import SwiftTerm
         HookEventServer.shared.deliver(event)
         return ["ok": true, "transition": event.stateTransition?.rawValue ?? NSNull()]
 
+      case "pr-config":
+        // Read or set the PR automation toggles for a session's worktree
+        // (the sidebar's Auto-fix CI / Auto-merge / Auto-archive rows), then
+        // poll right away so the change is acted on without the 30s wait.
+        guard let session = resolveSession(params) else {
+          return ["ok": false, "error": "no such session"]
+        }
+        guard let path = PRMonitor.effectivePath(for: session) else {
+          return ["ok": false, "error": "session has no worktree path"]
+        }
+        var config = PRMonitor.shared.config(for: path)
+        let before = config
+        if let v = Self.boolParam(params["autoFix"]) { config.autoFix = v }
+        if let v = Self.boolParam(params["autoMerge"]) { config.autoMerge = v }
+        if let v = Self.boolParam(params["autoArchive"]) { config.autoArchive = v }
+        if config != before { PRMonitor.shared.setConfig(config, for: path) }
+        PRMonitor.shared.refreshNow(sessionID: session.id)
+        var result: [String: Any] = [
+          "ok": true,
+          "autoFix": config.autoFix,
+          "autoMerge": config.autoMerge,
+          "autoArchive": config.autoArchive,
+          "autoFixPending": PRMonitor.shared.hasPendingAutoFix(sessionID: session.id),
+          "hasUnsentDraft": session.hasUnsentDraft,
+        ]
+        if let status = PRMonitor.shared.status(for: session.id) {
+          result["pr"] = [
+            "number": status.number, "rollup": status.rollup.rawValue,
+            "headCommit": status.headCommit ?? NSNull(),
+          ]
+        }
+        return result
+
       case "hooks-status":
         return [
           "ok": true,
@@ -474,6 +520,16 @@ import SwiftTerm
     }
 
     // MARK: - Helpers
+
+    /// CLI options arrive as strings ("on", "true"); raw JSON may send a Bool.
+    private static func boolParam(_ value: Any?) -> Bool? {
+      if let b = value as? Bool { return b }
+      switch (value as? String)?.lowercased() {
+      case "on", "true", "yes", "1": return true
+      case "off", "false", "no", "0": return false
+      default: return nil
+      }
+    }
 
     @MainActor private func resolveSession(_ params: [String: Any]) -> Session? {
       let mgr = SessionManager.shared

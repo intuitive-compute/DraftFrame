@@ -296,7 +296,9 @@ final class WatchdogManager {
     case .sendText(let text):
       let msg = "\(logPrefix): sending text \"\(text)\""
       appendLog(msg)
-      session.terminalView?.send(txt: text + "\r")
+      if let tv = session.terminalView {
+        PromptSubmitter.typeThenEnter(text, write: { [weak tv] in tv?.send(txt: $0) })
+      }
 
     case .runCommand(let cmd):
       let msg = "\(logPrefix): running command \"\(cmd)\""

@@ -46,6 +46,11 @@ normal launches, and QA mode never writes to the user's persisted state
      or clear a session's emoji tags (the card menu's Tag submenu);
      `dfqa tag-picker` opens the "Choose Emoji…" popover. `sessions` lists
      each session's `tags`.
+   - `dfqa pr-config [--autoFix on|off] [--autoMerge on|off] [--autoArchive on|off]
+     [--index N]` — show or set a session's PR automation toggles and poll its
+     PR immediately. Reports `autoFixPending` and the polled rollup. To test
+     without a real PR, launch the app with a stub `gh` first on `PATH` that
+     prints `gh pr view --json` output from a file you edit.
    - `dfqa hooks-status` / `dfqa hook-event --name Stop [--index N] ...` —
      Claude Code hook health, and injection of a synthetic hook event for a
      tab (state binding without touching the real `~/.claude/settings.json`).

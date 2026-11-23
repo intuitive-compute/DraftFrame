@@ -211,6 +211,36 @@ final class Session {
   /// The id passed to `--resume` when this session was restored, if any.
   var resumedFromSessionId: String?
 
+  /// True when the user has put text into the agent's input box (typed,
+  /// pasted, dictated, dropped, or quoted) since a turn last started from
+  /// it. There is no way to read the input box itself, so this errs toward
+  /// true: deleting the text again does not clear it. Automated prompts
+  /// consult it so they never append to, or submit, the user's own text.
+  var hasUnsentDraft = false
+
+  /// Record user input headed for the agent's input box. Keys pressed while
+  /// the agent is asking something answer that prompt instead.
+  func noteUserInput() {
+    guard state != .needsAttention else { return }
+    hasUnsentDraft = true
+  }
+
+  /// Whether the session can take a prompt right now.
+  var promptReadiness: PromptReadiness {
+    switch state {
+    case .generating, .thinking, .needsAttention:
+      return .busy
+    case .userInput:
+      return hasUnsentDraft ? .draftInInput : .ready
+    case .idle:
+      // Also covers a Codex session that has not run a turn yet: Codex
+      // reports turn state only from its rollout, and guessing from the
+      // screen is not safe. Its update, trust, and session-picker screens
+      // take typed characters as menu choices.
+      return .notRunning
+    }
+  }
+
   /// Watches `~/.claude/sessions/<pid>.json` for authoritative session state.
   /// Claude sessions only — Codex has no equivalent, so its state comes from
   /// the PTY stream analyzer instead.
@@ -352,6 +382,11 @@ final class Session {
     let old = state
     guard old != newState else { return }
     state = newState
+    // A turn starting from the input prompt means the input box was
+    // submitted, so whatever the user had typed is no longer sitting in it.
+    if (old == .userInput || old == .idle) && (newState == .generating || newState == .thinking) {
+      hasUnsentDraft = false
+    }
     SessionEvents.postStateChanged(id: id, old: old, new: newState)
   }
 
@@ -580,6 +615,7 @@ final class SessionManager {
     tv.supportsReply = true
     tv.sendsReplyAsTypedLines = agent == .claude
     session.terminalView = tv
+    tv.onUserInput = { [weak session] in session?.noteUserInput() }
 
     // Wire PTY data stream to the analyzer for real-time state detection
     tv.onPtyData = { [weak session] bytes in

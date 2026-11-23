@@ -127,7 +127,9 @@ final class VoiceManager {
     // Send to active terminal session
     if !text.isEmpty {
       DispatchQueue.main.async {
-        SessionManager.shared.activeSession?.terminalView?.send(txt: text)
+        let session = SessionManager.shared.activeSession
+        session?.terminalView?.send(txt: text)
+        session?.noteUserInput()
       }
     }
 
